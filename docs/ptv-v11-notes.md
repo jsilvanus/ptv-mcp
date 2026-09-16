@@ -1,12 +1,16 @@
 # PTV v11 API – findings for read and write support
 
 > Source: `https://api.palvelutietovaranto.suomi.fi/swagger/v11/swagger.json`
-> (OpenAPI 3.0.4, 88 operations, 126 schemas), fetched and reviewed
-> 2026-09-16. This document feeds Track 3B ("v11 write adapter") and
-> Phase 1C ("v11 discovery spike") in [`docs/phase-plan.md`](./phase-plan.md).
-> It supersedes the speculative auth guesses in `docs/plan.md`'s original
-> v11 section — those were wrong on the specifics, right that v12 and v11
-> would differ.
+> (OpenAPI 3.0.4, 88 operations, 126 schemas) and the live OIDC discovery
+> document at `palveluhallinta.suomi.fi`, fetched and reviewed 2026-09-16.
+> This document feeds `PtvV11Adapter`'s design in
+> [`docs/phase-plan.md`](./phase-plan.md) (Phase 2B). It supersedes the
+> speculative auth guesses in `docs/plan.md`'s original v11 section — those
+> were wrong on the specifics, right that v12 and v11 would differ. The
+> OAuth grant-type question flagged in the first pass of this document is
+> now resolved (see "Auth model" below): it's confirmed, not merely
+> suspected, that the implicit grant is the *only* mechanism, and that the
+> resulting credential is personal to a user, not scoped to a tenant.
 
 ## Headline answer: is v11 read similar to v12 read?
 
@@ -32,7 +36,7 @@ show what's already sitting in PTV as a draft before your own proposal
 flow touches it) or you're building the write adapter anyway and want to
 verify a write against v11's own view of the entity.
 
-## Auth model — the real divergence, with a caveat
+## Auth model — confirmed against the live OIDC discovery document
 
 v11 declares a single security scheme:
 
@@ -54,28 +58,105 @@ Applied per-operation: **all POST/PUT (write) operations and all
 `POST /Service`, `GET /Common/Translation` — both `[{"oauth2": []}]` — vs.
 `GET /Service/{id}` — `None`).
 
-**Caveat worth flagging before building anything on this:** the scope name
-`dataEventRecords` is the literal example scope name from IdentityServer4's
-official quickstart documentation. That strongly suggests PTV's Swagger
-config was adapted from an IdentityServer/Duende sample without
-customizing it, which means:
+The scope name `dataEventRecords` is the literal example scope from
+IdentityServer4's quickstart docs, which originally read as a sign this
+might be unmodified boilerplate rather than the real mechanism. **That
+suspicion is resolved — checked directly, 2026-09-16** against the live
+discovery document:
 
-- The declared flow (`implicit`) may not reflect what's actually usable
-  for a **server-to-server** integration. Implicit grant is a
-  browser/front-channel flow with no refresh token and short-lived
-  access tokens — workable for a human clicking through PTV's own admin
-  UI, awkward for an unattended backend service.
-- Real-world PTV integrators (municipalities, existing vendors) almost
-  certainly use a different practical mechanism — possibly
-  `client_credentials`, possibly a registered client with a long-lived
-  secret issued through `palveluhallinta.suomi.fi`'s own onboarding, not
-  literally the browser implicit flow as declared.
+```
+GET https://palveluhallinta.suomi.fi/api/auth/.well-known/openid-configuration
+```
+```json
+{
+  "issuer": "https://palveluhallinta.suomi.fi",
+  "jwks_uri": "",
+  "token_endpoint": "",
+  "userinfo_endpoint": "",
+  "introspection_endpoint": "https://palveluhallinta.suomi.fi/api/auth/introspect",
+  "revocation_endpoint": "https://palveluhallinta.suomi.fi/api/auth/revoke"
+}
+```
 
-**This is exactly what Phase 1C's discovery spike needs to resolve before
-Track 3B writes any code**: register (or find documentation for) an actual
-API client in `palveluhallinta.suomi.fi`, and determine the real grant
-type and token lifetime in practice, rather than trusting the Swagger
-document's `implicit` declaration at face value.
+**`token_endpoint` is empty.** That's decisive: there is no
+`client_credentials` or `authorization_code`+refresh path hiding behind
+the declared flow — no token endpoint exists at all, so no other grant
+type is possible. The implicit grant, with the access token returned
+directly on the browser redirect, **is genuinely the only door in**. This
+isn't leftover boilerplate; it's a deliberately narrow configuration. Two
+consequences, now confirmed rather than hypothesized:
+
+1. **No refresh token can ever exist here** (not just "implicit grant
+   doesn't issue one" — there's no token endpoint to refresh against even
+   in principle). A v11 write credential has to be periodically
+   re-obtained by a human, full stop.
+2. **The credential is personal, not organizational.** The token comes
+   from a human logging into `palveluhallinta.suomi.fi` with their own PTV
+   account — there is no service-account or client-credentials path for a
+   backend to authenticate as "the organization." Whatever PTV
+   organizations that person is authorized for on PTV's own side is what
+   the resulting token can write to. This lines up with the `userName`
+   field on v11's write schema ([see below](#write-model--key-structural-findings)) — PTV expects
+   writes attributed to a named individual, not an anonymous API client.
+
+### What this means for the integration: a link, not a client secret
+
+Because there's no server-to-server option, `PtvV11Adapter`'s write path
+is built as a **per-user consent flow**, not a background credential:
+
+1. The user (whoever holds Publisher role and has their own PTV login) is
+   shown an authorization link:
+   `authorizationUrl` + our registered `client_id` + our `redirect_uri`.
+2. They click it, log into `palveluhallinta.suomi.fi` with their personal
+   PTV credentials, and are redirected back with the token in the **URL
+   fragment** (`#access_token=...`) — implicit grant never sends it to the
+   server directly, so the redirect target needs a small page that reads
+   `location.hash` client-side and POSTs it to our backend.
+3. The backend validates the captured token against the **introspection
+   endpoint** (`/api/auth/introspect`) before trusting it, and can later
+   use the **revocation endpoint** (`/api/auth/revoke`) if the user
+   disconnects their PTV account from our system.
+4. When the stored token has expired (no refresh possible), the apply-step
+   UI shows "reconnect to PTV" instead of failing silently. This costs
+   nothing extra in practice: `ptv_apply_changes` already requires a human
+   Publisher to approve before anything is written, so there's always
+   someone present at exactly the moment a fresh token would be needed —
+   this was never going to be a fully unattended background write path,
+   and the two-phase approval design already assumed that.
+
+### Do we still need `tenant_id` here, if the credential is personal?
+
+**Yes for authorization and audit — no for the credential itself.**
+`PtvV11Adapter`'s credential is best modeled as `(user_id, environment)`,
+completely decoupled from `tenant_id`: a person who is a Publisher for two
+different tenants in our system connects their PTV account **once**, and
+the same token is reusable for both, because PTV — not our tenant model —
+decides which organizations that person can write to. Forcing a separate
+"connect PTV" per tenant would just mean logging into the same PTV account
+twice for no reason.
+
+What still needs `tenant_id`, independent of where the credential lives:
+
+- **Authorization**: we check the acting user holds Publisher role *for
+  this tenant* before ever looking up their PTV connection — that gate is
+  entirely ours and doesn't move.
+- **Audit**: the log entry records `tenant_id` (which church's data was
+  touched) and `user_id` (whose PTV identity performed the write) side by
+  side — the write attribution PTV wants via `userName` and the tenant
+  attribution our audit model wants are the same underlying fact, just
+  logged for two different reasons.
+- **A safety net, not a substitute**: if the user's PTV-side access
+  doesn't actually cover this tenant's organization, PTV's own write call
+  rejects it — a useful backstop, but our own tenant/role check always
+  runs first and is what we actually rely on.
+
+This also means **credential scope is adapter-defined, not uniform**:
+v12's credential (a static API key) is naturally organization/tenant-scoped
+— one tenant admin enters one key for the whole organization. v11's
+credential is naturally user-scoped. `PtvAdapter`'s credential-resolution
+contract needs to express this explicitly (e.g. a
+`credentialScope: 'tenant' | 'user'` on the adapter's capabilities) rather
+than assuming every adapter's secret lives on the same tenant-keyed row.
 
 ## Write model — key structural findings
 
@@ -127,25 +208,34 @@ document's `implicit` declaration at face value.
    to a specific national register's integrators and are **out of scope** —
    don't build against them.
 
-## Revised scope for Track 3B
+## Scope for `PtvV11Adapter`'s write support
 
-Given the above, Track 3B's discovery step (Phase 1C) should produce three
-concrete answers, not just a go/no-go:
+The grant-type question is now settled (confirmed against the live OIDC
+discovery document, see above) — it's a per-user consent link, not a
+background credential, and that fits the product's existing
+human-approves-every-write design rather than fighting it. What's left to
+build, not merely discover:
 
-1. **Real grant type** for OAuth2 against `palveluhallinta.suomi.fi` (see
-   caveat above) — this decides whether Track 3B is even operable
-   unattended.
+1. **The consent-link + callback flow**: authorization link generation,
+   the fragment-capturing callback page, token storage keyed by
+   `(user_id, environment)`, introspection-based validation, and the
+   "reconnect to PTV" UI path for an expired token at the apply step.
 2. **Whether v11 read is needed at all**, beyond what v12 already covers —
    likely yes, narrowly, for the "restricted" draft-visibility endpoints
    (`Service/active/{id}`, `ServiceChannel/active/{id}`) so a proposal can
    be diffed against a draft that already exists in PTV, not just against
-   the last published version.
+   the last published version. These restricted reads need the same
+   per-user token as writes do.
 3. **Delete-flag mapping table** for each writable entity type, built
    before any `ptv_apply_changes` v11 code is written, so approved
    deletions aren't silently swallowed.
+4. **Per-tenant authorization stays separate from the credential**: verify
+   the acting user's Publisher role for the target tenant before resolving
+   their PTV connection — the connection itself carries no tenant context
+   of its own (see "Do we still need `tenant_id`" above).
 
-If (1) comes back as "genuinely browser-only, no viable unattended grant,"
-Track 3B should be dropped — an OAuth flow that requires a human to
-re-authenticate periodically doesn't fit an autonomous MCP write path, and
-MVP-0's manual-export flow remains the right production path until v12
-write ships.
+None of this is a go/no-go gate anymore — the mechanism is confirmed
+workable, just personal rather than organizational. The only real
+per-tenant fallback path that remains is: a user with no PTV connection of
+their own (or an expired one, mid-approval) still has MVP-0's manual
+export available as an immediate alternative.
