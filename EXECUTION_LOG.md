@@ -135,3 +135,50 @@ Deviations:
   dev server's request handling; not shipped to production; fixing would
   mean downgrading `drizzle-kit` to `0.18.1`, a much larger regression
   than the advisory's real-world risk here).
+
+---
+
+## 2026-09-16 — Phase 1, Stream B (`PtvAdapter` contract and domain model) closed ✅ 🔒
+
+Owned files:
+- src/ptv/domain.ts
+- src/ptv/adapter.ts
+- src/ptv/registry.ts
+- src/ptv/contract.test.ts
+- src/ptv/testing/inMemoryAdapter.ts
+- src/ptv/testing/contractTests.ts
+
+Sync point verified (Phase 1's stated goal: "the PtvAdapter interface and
+domain model compile and are documented; the contract test suite runs
+against a fake in-memory adapter and is ready to run against real
+implementations"):
+- [x] `npm run typecheck`, `lint`, `format`, and `build` all pass.
+- [x] `runPtvAdapterContractTests` (13 assertions) executed twice against
+      `InMemoryPtvAdapter` — once configured as `supportsWrite: true`
+      (tenant-scoped), once as `supportsWrite: false` (user-scoped) — 26
+      tests total, all passing, confirming the suite correctly exercises
+      both the write-capable and read-only branches of
+      `applyServiceChange`'s contract.
+- [x] Domain model and `PtvAdapter` interface reviewed against the actual
+      field-level findings in docs/ptv-v11-notes.md (3 service subtypes,
+      5 channel subtypes, `publishingStatus`, connections with no
+      dedicated v11 read endpoint) rather than only the phase plan's
+      prose summary.
+
+Both Phase 1 streams are now closed — **Phase 1 as a whole is done.**
+Sync point for the phase (`npm run db:migrate` succeeds on a fresh
+Postgres; a real v12 search call was not yet made — that's Phase 2's
+`PtvV12Adapter`, not Phase 1's domain-model-only scope) is met.
+
+Deviations:
+- `PtvAdapter`'s methods take no explicit auth/context parameters —
+  `PtvAdapterRegistry.resolve()` hands back an already-credentialed
+  instance. The phase plan didn't spell this division of responsibility
+  out explicitly; recorded here so Phase 3 Stream D's registry
+  implementation and Phase 2's two adapters agree on it without
+  re-deriving it from scratch.
+- Domain model fields are pragmatically scoped to what Phase 4's tool
+  layer needs (search/get/propose/validate/export/apply), not a
+  field-for-field mirror of either wire format's full schema. Adapters
+  are free to carry additional version-specific detail internally as long
+  as they map cleanly to/from this shape at the boundary.

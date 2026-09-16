@@ -17,7 +17,7 @@
 - [x] Env/config loader (per-environment secrets, master-key placeholder)
 - [x] CI pipeline skeleton (lint + test on push)
 
-## Phase 1: Data layer, adapter contract, and domain model 🔄
+## Phase 1: Data layer, adapter contract, and domain model ✅ 🔒
 **Stream A — Data layer** ✅ 🔒
 - [x] Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvAdapterConfig`, `UserPtvConnection`, `AuditEntry`
 - [x] `TenantEnvironment` polymorphic encrypted credential blob (tenant-scoped, e.g. v12's API key)
@@ -26,11 +26,11 @@
 - [x] Row-Level Security policies keyed on `tenant_id`; `UserPtvConnection` restricted to owning user
 - [x] Seed script for local dev
 
-**Stream B — `PtvAdapter` contract and domain model**
-- [ ] Define `PtvAdapter` TypeScript interface
-- [ ] Define shared domain model (Service ×3 subtypes, ServiceChannel ×5 subtypes, Organization, GeneralDescription, ServiceCollection, Connection, code lists)
-- [ ] Define `PtvAdapterRegistry` resolution contract `(tenant, environment, operation, actingUser)`
-- [ ] Contract test suite stub (fixture-driven, runs against a fake in-memory adapter)
+**Stream B — `PtvAdapter` contract and domain model** ✅ 🔒
+- [x] Define `PtvAdapter` TypeScript interface
+- [x] Define shared domain model (Service ×3 subtypes, ServiceChannel ×5 subtypes, Organization, GeneralDescription, ServiceCollection, Connection, code lists)
+- [x] Define `PtvAdapterRegistry` resolution contract `(tenant, environment, operation, actingUser)`
+- [x] Contract test suite stub (fixture-driven, runs against a fake in-memory adapter)
 
 ## Phase 2: Adapter implementations — v11 and v12, side by side ⏸
 **Stream 2A — `PtvV12Adapter`**
