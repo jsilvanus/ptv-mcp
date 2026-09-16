@@ -3,7 +3,6 @@ import { eq, inArray } from 'drizzle-orm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
@@ -148,16 +147,20 @@ describe('Phase 6 sync point', () => {
 
   async function connectedClient(token: string): Promise<Client> {
     const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseUrl), {
-      requestInit: { headers: { Authorization: `****** } },
+      requestInit: { headers: { Authorization: 'Bearer ' + token } },
     });
     const client = new Client({ name: 'phase6-sync-point', version: '1.0.0' });
     await client.connect(transport as unknown as Transport);
     return client;
   }
 
-  function parseToolResult<T>(result: CallToolResult): T {
-    const content = result.content as Array<{ type: string; text: string }>;
-    return JSON.parse(content[0]!.text) as T;
+  function parseToolResult<T>(result: unknown): T {
+    const content = (result as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
+    const [first] = content;
+    if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+      throw new Error('Expected text tool content');
+    }
+    return JSON.parse(first.text) as T;
   }
 
   it('runs propose/validate/export/apply flows with role-specific authorization behavior', async () => {
