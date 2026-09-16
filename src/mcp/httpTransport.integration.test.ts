@@ -115,6 +115,9 @@ describe('MCP HTTP transport', () => {
         'ptv_search_connections',
         'ptv_list_codes',
         'ptv_propose_changes',
+        'ptv_list_proposals',
+        'ptv_get_proposal',
+        'ptv_resolve_proposal',
         'ptv_validate_changes',
         'ptv_export_for_manual_publish',
         'ptv_apply_changes',
@@ -182,6 +185,50 @@ describe('MCP HTTP transport', () => {
     expect(result.isError).toBe(true);
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content[0]?.text).toContain('not_authorized');
+    await client.close();
+  });
+
+  it('lists get-by-id resource templates and reads one service resource', async () => {
+    const { token, tenantId } = await registeredUserWithTenant();
+    await configService.upsert(tenantId, 'test', 'v11', {
+      authMode: 'oauth2',
+      credentialScope: 'user',
+      supportsRead: true,
+      supportsWrite: false,
+      supportsDraftRead: false,
+    });
+
+    const client = await connectedClient(token);
+    const templates = await client.listResourceTemplates();
+    const templateUris = templates.resourceTemplates.map((template) => template.uriTemplate);
+    expect(templateUris).toEqual(
+      expect.arrayContaining([
+        'ptv://{tenantId}/{environment}/services/{serviceId}',
+        'ptv://{tenantId}/{environment}/channels/{channelId}',
+        'ptv://{tenantId}/{environment}/organisations/{organisationId}',
+        'ptv://{tenantId}/{environment}/organisations/{organisationId}/hierarchy',
+        'ptv://{tenantId}/{environment}/code-lists/{codeListName}',
+      ]),
+    );
+
+    const resources = await client.listResources();
+    const resourceUris = resources.resources.map((resource) => resource.uri);
+    expect(resourceUris).toEqual(
+      expect.arrayContaining([
+        'ptv://{tenantId}/{environment}/services/{serviceId}',
+        'ptv://{tenantId}/{environment}/channels/{channelId}',
+        'ptv://{tenantId}/{environment}/organisations/{organisationId}',
+        'ptv://{tenantId}/{environment}/organisations/{organisationId}/hierarchy',
+        'ptv://{tenantId}/{environment}/code-lists/{codeListName}',
+      ]),
+    );
+
+    const read = await client.readResource({
+      uri: `ptv://${tenantId}/test/services/af60add0-c3be-40f6-9c22-3e29c2b8da0a`,
+    });
+    const first = read.contents[0];
+    expect(first?.mimeType).toBe('application/json');
+    expect(first?.uri).toBe(`ptv://${tenantId}/test/services/af60add0-c3be-40f6-9c22-3e29c2b8da0a`);
     await client.close();
   });
 });

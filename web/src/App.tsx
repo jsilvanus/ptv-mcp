@@ -9,6 +9,7 @@ import { MembersPage } from './pages/MembersPage';
 import { PtvConnectionsPage } from './pages/PtvConnectionsPage';
 import { PtvCallbackPage } from './pages/PtvCallbackPage';
 import { AuditLogPage } from './pages/AuditLogPage';
+import { ProposalQueuePage } from './pages/ProposalQueuePage';
 
 function ProtectedRoutes() {
   const { isAuthenticated } = useAuth();
@@ -45,8 +46,10 @@ export default function App() {
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/tenants/:tenantId/members" element={<MembersPage />} />
             <Route path="/tenants/:tenantId/audit-log" element={<AuditLogPage />} />
+            <Route path="/tenants/:tenantId/proposals" element={<ProposalQueuePage />} />
             <Route path="/members" element={<CurrentTenantRedirect suffix="/members" />} />
             <Route path="/audit-log" element={<CurrentTenantRedirect suffix="/audit-log" />} />
+            <Route path="/proposals" element={<CurrentTenantRedirect suffix="/proposals" />} />
             <Route path="/ptv-connections" element={<PtvConnectionsPage />} />
           </Route>
 

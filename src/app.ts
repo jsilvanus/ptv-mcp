@@ -12,11 +12,13 @@ import { DbPtvAdapterRegistry } from './ptv/dbAdapterRegistry.js';
 import type { AdapterFactory } from './ptv/dbAdapterRegistry.js';
 import { AuditService } from './audit/auditService.js';
 import { V11ChangeValidator } from './validation/changeValidator.js';
+import { ProposalService } from './proposals/proposalService.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { tenantRoutes } from './routes/tenants.js';
 import { ptvConnectionRoutes } from './routes/ptvConnections.js';
 import { auditLogRoutes } from './routes/auditLog.js';
+import { proposalRoutes } from './routes/proposals.js';
 import { webUiRoutes } from './routes/webUi.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 
@@ -65,6 +67,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     options.adapterFactories,
   );
   const validator = new V11ChangeValidator();
+  const proposalService = new ProposalService(db);
 
   await app.register(sensible);
   await app.register(healthRoutes);
@@ -83,9 +86,17 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
-    serverDeps: { db, registry, auditService, validator },
+    serverDeps: { db, registry, auditService, validator, proposalService },
   });
   await app.register(auditLogRoutes, { auditService, jwtSecret: config.jwtSecret, db });
+  await app.register(proposalRoutes, {
+    db,
+    jwtSecret: config.jwtSecret,
+    proposalService,
+    registry,
+    auditService,
+    validator,
+  });
   await app.register(webUiRoutes, { nodeEnv: config.nodeEnv });
 
   return app;

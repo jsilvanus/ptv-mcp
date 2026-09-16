@@ -1,0 +1,217 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { ApiError, apiFetch } from '../api/client';
+import type {
+  ProposalDetails,
+  ProposalResolveAction,
+  ProposalStatus,
+  ProposalSummary,
+} from '../api/types';
+import { useTenants } from '../tenants/TenantContext';
+import { DiffView } from './DiffView';
+
+const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
+
+export function ProposalQueuePage() {
+  const { tenantId } = useParams<{ tenantId: string }>();
+  const { currentTenant } = useTenants();
+  const [status, setStatus] = useState<ProposalStatus>('pending');
+  const [items, setItems] = useState<ProposalSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ProposalDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [resolvingAction, setResolvingAction] = useState<ProposalResolveAction | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
+
+  const canReview = useMemo(() => {
+    if (!currentTenant) return false;
+    return ['editor', 'publisher', 'tenant_admin'].includes(currentTenant.role);
+  }, [currentTenant]);
+
+  const loadList = useCallback(async () => {
+    if (!tenantId || !canReview) return;
+    setLoading(true);
+    setError(null);
+    setForbidden(false);
+    try {
+      const list = await apiFetch<ProposalSummary[]>(
+        `/tenants/${tenantId}/proposals?status=${status}`,
+      );
+      setItems(list);
+      if (list.length === 0) {
+        setSelectedId(null);
+        setSelected(null);
+      } else if (!selectedId || !list.some((proposal) => proposal.id === selectedId)) {
+        setSelectedId(list[0]?.id ?? null);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setForbidden(true);
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load proposal queue.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, status, selectedId, canReview]);
+
+  const loadSelected = useCallback(async () => {
+    if (!tenantId || !selectedId || !canReview) return;
+    setLoadingDetails(true);
+    setError(null);
+    try {
+      const details = await apiFetch<ProposalDetails>(`/tenants/${tenantId}/proposals/${selectedId}`);
+      setSelected(details);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        setForbidden(true);
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load proposal details.');
+      }
+    } finally {
+      setLoadingDetails(false);
+    }
+  }, [tenantId, selectedId, canReview]);
+
+  useEffect(() => {
+    void loadList();
+  }, [loadList]);
+
+  useEffect(() => {
+    void loadSelected();
+  }, [loadSelected]);
+
+  async function resolve(action: ProposalResolveAction): Promise<void> {
+    if (!tenantId || !selectedId) return;
+    setResolvingAction(action);
+    setError(null);
+    try {
+      const updated = await apiFetch<ProposalDetails>(
+        `/tenants/${tenantId}/proposals/${selectedId}/resolve`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ action }),
+        },
+      );
+      setSelected(updated);
+      await loadList();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not resolve proposal.');
+    } finally {
+      setResolvingAction(null);
+    }
+  }
+
+  if (!canReview) {
+    return (
+      <div>
+        <h1>Proposal queue</h1>
+        <p className="error">You need at least Editor role to review proposals.</p>
+      </div>
+    );
+  }
+
+  if (forbidden) {
+    return (
+      <div>
+        <h1>Proposal queue</h1>
+        <p className="error">You don't have permission to review this tenant's proposals.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h1>Proposal queue</h1>
+
+      <label htmlFor="proposal-status">Status filter</label>
+      <br />
+      <select
+        id="proposal-status"
+        value={status}
+        onChange={(e) => setStatus(e.target.value as ProposalStatus)}
+      >
+        {STATUSES.map((value) => (
+          <option key={value} value={value}>
+            {value}
+          </option>
+        ))}
+      </select>
+
+      {error && <p className="error">{error}</p>}
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 360px) 1fr', gap: 16 }}>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Proposals</h2>
+            {items.length === 0 ? (
+              <p className="muted">No proposals with status "{status}".</p>
+            ) : (
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                {items.map((proposal) => (
+                  <li key={proposal.id}>
+                    <button
+                      onClick={() => setSelectedId(proposal.id)}
+                      style={{ width: '100%', textAlign: 'left' }}
+                    >
+                      <strong>{proposal.serviceId}</strong>
+                      <br />
+                      <span className="muted">{proposal.status}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Review</h2>
+            {loadingDetails ? (
+              <p className="muted">Loading details…</p>
+            ) : !selected ? (
+              <p className="muted">Select a proposal to review.</p>
+            ) : (
+              <>
+                <p>
+                  <strong>Service:</strong> {selected.serviceId}
+                  <br />
+                  <strong>Status:</strong> {selected.status}
+                  <br />
+                  <strong>Correlation:</strong> {selected.correlationId}
+                </p>
+                <DiffView diff={selected.diff} />
+                {selected.status === 'pending' && (
+                  <p style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="primary"
+                      disabled={resolvingAction !== null}
+                      onClick={() => void resolve('approve_and_export')}
+                    >
+                      {resolvingAction === 'approve_and_export' ? 'Resolving…' : 'Approve + export'}
+                    </button>
+                    <button
+                      className="primary"
+                      disabled={resolvingAction !== null}
+                      onClick={() => void resolve('approve_and_apply')}
+                    >
+                      {resolvingAction === 'approve_and_apply' ? 'Resolving…' : 'Approve + apply'}
+                    </button>
+                    <button
+                      disabled={resolvingAction !== null}
+                      onClick={() => void resolve('reject')}
+                    >
+                      {resolvingAction === 'reject' ? 'Resolving…' : 'Reject'}
+                    </button>
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -11,17 +12,27 @@ import type { SearchParams, Service } from '../ptv/domain.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { NotAuthorizedError } from './authorization.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import * as searchTools from './searchTools.js';
-import { proposeChanges, ServiceNotFoundError } from './proposeChanges.js';
+import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
 import type { ToolContext } from './toolContext.js';
+import {
+  getProposal,
+  InvalidResolveActionError,
+  isProposalQueueError,
+  listProposals,
+  queueProposal,
+  resolveProposal,
+} from './proposalQueue.js';
 
 export interface McpServerDeps {
   db: Database;
   registry: PtvAdapterRegistry;
   auditService: AuditService;
   validator: ChangeValidator;
+  proposalService: ProposalService;
 }
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -47,7 +58,9 @@ function describeError(err: unknown): string {
   if (
     err instanceof ServiceNotFoundError ||
     err instanceof ValidationFailedError ||
-    err instanceof NotAuthorizedError
+    err instanceof NotAuthorizedError ||
+    err instanceof InvalidResolveActionError ||
+    isProposalQueueError(err)
   ) {
     return err.message;
   }
@@ -109,7 +122,7 @@ function searchParams(args: {
  * the real state (DB connections, adapters) lives in `deps`.
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
-  const { db, registry, auditService, validator } = deps;
+  const { db, registry, auditService, validator, proposalService } = deps;
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(db, tenantId, userId);
   const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
@@ -309,14 +322,97 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await proposeChanges(
+          await queueProposal(
             resolveRole,
             registry,
             auditService,
+            proposalService,
             toolContext(args, extra),
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_list_proposals',
+    {
+      description: 'List queued service proposals for a tenant. Requires Editor+ role.',
+      inputSchema: {
+        tenantId: z.string(),
+        environment: environmentSchema,
+        status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
+      },
+    },
+    async (args, extra) => {
+      try {
+        return textResult(
+          await listProposals(resolveRole, proposalService, toolContext(args, extra), args.status),
+        );
+      } catch (err) {
+        return errorResult(describeError(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_get_proposal',
+    {
+      description:
+        'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
+      inputSchema: {
+        tenantId: z.string(),
+        environment: environmentSchema,
+        proposalId: z.string(),
+      },
+    },
+    async (args, extra) => {
+      try {
+        return textResult(
+          await getProposal(
+            resolveRole,
+            registry,
+            proposalService,
+            auditService,
+            toolContext(args, extra),
+            args.proposalId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_resolve_proposal',
+    {
+      description:
+        "Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.",
+      inputSchema: {
+        tenantId: z.string(),
+        environment: environmentSchema,
+        proposalId: z.string(),
+        action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
+      },
+    },
+    async (args, extra) => {
+      try {
+        return textResult(
+          await resolveProposal(
+            resolveRole,
+            registry,
+            proposalService,
+            auditService,
+            validator,
+            toolContext(args, extra),
+            args.proposalId,
+            args.action,
           ),
         );
       } catch (err) {
@@ -416,6 +512,153 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       } catch (err) {
         return errorResult(describeError(err));
       }
+    },
+  );
+
+  function templatedResource(uriTemplate: string, name: string, description: string): ResourceTemplate {
+    return new ResourceTemplate(uriTemplate, {
+      list: async () => ({
+        resources: [{ uri: uriTemplate, name, description, mimeType: 'application/json' }],
+      }),
+    });
+  }
+
+  const serviceTemplate = templatedResource(
+    'ptv://{tenantId}/{environment}/services/{serviceId}',
+    'PTV service',
+    'Get one PTV service by id.',
+  );
+  server.registerResource(
+    'ptv_resource_service',
+    serviceTemplate,
+    { description: 'Get one PTV service by id.', mimeType: 'application/json' },
+    async (_uri, variables, extra) => {
+      const ctx = toolContext(
+        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        extra,
+      );
+      const service = await searchTools.getService(registry, ctx, variables.serviceId as string);
+      return {
+        contents: [
+          {
+            uri: `ptv://${ctx.tenantId}/${ctx.environment}/services/${variables.serviceId as string}`,
+            mimeType: 'application/json',
+            text: JSON.stringify(service, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  const channelTemplate = templatedResource(
+    'ptv://{tenantId}/{environment}/channels/{channelId}',
+    'PTV service channel',
+    'Get one PTV service channel by id.',
+  );
+  server.registerResource(
+    'ptv_resource_channel',
+    channelTemplate,
+    { description: 'Get one PTV service channel by id.', mimeType: 'application/json' },
+    async (_uri, variables, extra) => {
+      const ctx = toolContext(
+        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        extra,
+      );
+      const channel = await searchTools.getChannel(registry, ctx, variables.channelId as string);
+      return {
+        contents: [
+          {
+            uri: `ptv://${ctx.tenantId}/${ctx.environment}/channels/${variables.channelId as string}`,
+            mimeType: 'application/json',
+            text: JSON.stringify(channel, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  const organisationTemplate = templatedResource(
+    'ptv://{tenantId}/{environment}/organisations/{organisationId}',
+    'PTV organisation',
+    'Get one PTV organisation by id.',
+  );
+  server.registerResource(
+    'ptv_resource_organisation',
+    organisationTemplate,
+    { description: 'Get one PTV organisation by id.', mimeType: 'application/json' },
+    async (_uri, variables, extra) => {
+      const ctx = toolContext(
+        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        extra,
+      );
+      const organisation = await searchTools.getOrganisation(registry, ctx, variables.organisationId as string);
+      return {
+        contents: [
+          {
+            uri: `ptv://${ctx.tenantId}/${ctx.environment}/organisations/${variables.organisationId as string}`,
+            mimeType: 'application/json',
+            text: JSON.stringify(organisation, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  const hierarchyTemplate = templatedResource(
+    'ptv://{tenantId}/{environment}/organisations/{organisationId}/hierarchy',
+    'PTV organisation hierarchy',
+    'Get one PTV organisation hierarchy by id.',
+  );
+  server.registerResource(
+    'ptv_resource_organisation_hierarchy',
+    hierarchyTemplate,
+    { description: 'Get one PTV organisation hierarchy by id.', mimeType: 'application/json' },
+    async (_uri, variables, extra) => {
+      const ctx = toolContext(
+        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        extra,
+      );
+      const hierarchy = await searchTools.getOrganisationHierarchy(
+        registry,
+        ctx,
+        variables.organisationId as string,
+      );
+      return {
+        contents: [
+          {
+            uri: `ptv://${ctx.tenantId}/${ctx.environment}/organisations/${variables.organisationId as string}/hierarchy`,
+            mimeType: 'application/json',
+            text: JSON.stringify(hierarchy, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  const codeListTemplate = templatedResource(
+    'ptv://{tenantId}/{environment}/code-lists/{codeListName}',
+    'PTV code list',
+    'List entries in one PTV code list by name.',
+  );
+  server.registerResource(
+    'ptv_resource_code_list',
+    codeListTemplate,
+    { description: 'List entries in one PTV code list by name.', mimeType: 'application/json' },
+    async (_uri, variables, extra) => {
+      const ctx = toolContext(
+        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        extra,
+      );
+      const codes = await searchTools.listCodes(registry, ctx, variables.codeListName as string);
+      return {
+        contents: [
+          {
+            uri: `ptv://${ctx.tenantId}/${ctx.environment}/code-lists/${variables.codeListName as string}`,
+            mimeType: 'application/json',
+            text: JSON.stringify(codes, null, 2),
+          },
+        ],
+      };
     },
   );
 
