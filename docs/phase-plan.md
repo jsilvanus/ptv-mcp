@@ -20,11 +20,17 @@ API organisations currently use for production writes, whose only fixed
 deadline is PTV's planned 04/2027 sunset (same document PTV published: `04/2027`
 = v12 write GA in production *and* v11 fully retired). Because v11 is live
 today, this track can deliver production writes **well before** Phase 7's
-v12-based MVP-2 — but it starts from a genuine unknown (v11's auth model
-and write-request shapes haven't been reviewed, unlike v12's beta schemas),
-so it opens with a discovery spike and a go/no-go gate before any adapter
-code is written. It is retired again inside Phase 7, once v12 production
-write is proven and tenants have migrated off it.
+v12-based MVP-2 — but it opens with a discovery spike and a go/no-go gate
+before any adapter code is written, because v11's actual API
+([reviewed in detail](./ptv-v11-notes.md)) raises one serious open
+question: its write and restricted-read endpoints require OAuth2, declared
+in its spec as the **implicit** grant — a browser/front-channel flow with
+no refresh token, a poor fit for an unattended backend. The scope name in
+that same spec (`dataEventRecords`) is IdentityServer4's stock quickstart
+example, which suggests the declared flow may just be boilerplate rather
+than what real integrators actually use — Phase 1C exists specifically to
+find out. It is retired again inside Phase 7, once v12 production write is
+proven and tenants have migrated off it.
 
 Critical path: **Phase 0 → 1A → 2 → 3 → 5 → (external wait) → 6 → (external
 wait) → 7.** Phase 1B, Phase 4, and Track 3B all hang off this spine without
@@ -87,10 +93,11 @@ write support is worth building and what shape it needs.
 - Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvApiCapabilities`, `AuditEntry`
 - `TenantEnvironment` stores credentials as a **polymorphic encrypted blob**
   (JSON, shape keyed by `api_version`) rather than a single
-  `encrypted_api_key` string — so v11's credential shape (likely
-  username+password "API user", to be confirmed by Stream C) never forces
-  a schema migration, and removing v11 later is a data cleanup, not a
-  schema change
+  `encrypted_api_key` string — v12 needs a static `x-api-key` string, v11
+  needs an OAuth2 client registration plus whatever token/refresh state
+  its real (as opposed to declared) grant type produces (see Stream C).
+  Keeping this polymorphic means removing v11 later is a data cleanup, not
+  a schema change
 - Row-Level Security policies keyed on `tenant_id`
 - Seed script for local dev (fake tenants/users)
 
@@ -100,13 +107,26 @@ write support is worth building and what shape it needs.
 - Capability-gate stub (reads `PtvApiCapabilities` shape, hardcoded config until Stream A's table lands)
 
 **Stream C — v11 write-path discovery (spike)**
-- Obtain v11's API documentation/spec; confirm its actual auth model —
-  don't assume it matches v12's simple API key
-- Confirm v11's write request/response shapes well enough to gauge how far
-  they diverge from the v12 beta Post/Put schemas already reviewed
+(v11's spec is now reviewed — see [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md) —
+so this stream is about resolving the three things the spec alone can't answer)
+- **Confirm the real OAuth grant type** against `palveluhallinta.suomi.fi` —
+  its Swagger declares the `implicit` flow with a scope name
+  (`dataEventRecords`) that looks like unmodified IdentityServer4
+  boilerplate, so it's unverified whether that's actually usable for an
+  unattended backend or whether real integrators use something else
+  (e.g. `client_credentials`)
+- **Decide if v11 read is needed at all**, narrowly for its
+  draft-visibility endpoints (`Service/active/{id}`,
+  `ServiceChannel/active/{id}`) that v12 has no equivalent for — not for
+  ordinary published-content search, which v12 already covers
+- **Build the delete-flag mapping table**: v11's PUT is a partial update
+  where omitting a field does *not* clear it — removal requires an
+  explicit `deleteX: true` flag per field group. Get this wrong and an
+  approved deletion silently no-ops against PTV
 - **Go/no-go decision**, reported back into Stream A before its schema is
-  finalized: is v11 support worth building, or does MVP-0's manual export
-  cover the gap acceptably until 04/2027?
+  finalized: if the OAuth grant genuinely requires a human in the loop,
+  drop the track — MVP-0's manual export remains the production path
+  until 04/2027
 
 **Sync point:** `npm run db:migrate` succeeds on a fresh Postgres; a script
 calls the v12 search equivalent against the real test environment and
@@ -260,7 +280,8 @@ things to cut or defer if the internal timeline needs compressing.
 - **RLS false confidence** — RLS policies wrongly scoped (e.g., missing on a join table) silently reintroduce the cross-tenant leak they're meant to prevent. Mitigation: the isolation tests in Phase 5 must attempt real cross-tenant access, not just check policy existence.
 - **Phase 4 Stream C / Phase 3 Stream B contract drift** — UI diff viewer built against a guessed shape before the diff engine is final. Mitigation: freeze the diff JSON contract at the start of Phase 3/4, not at their sync point.
 - **External-gate slippage** — PTV's 10/2026 and 04/2027 dates are the vendor's own projected roadmap, not commitments. Mitigation: keep Phase 6/7 fully spec'd but don't staff them until PTV's test/prod environments actually expose the endpoints — check via a scheduled probe against the live OpenAPI JSON rather than trusting the calendar.
-- **v11 unknown territory (Track 3B)** — v11's auth model and write shapes are unverified as of this writing. Mitigation: Phase 1C is a hard go/no-go gate before any adapter code is written; if discovery reveals a heavy onboarding process (e.g., per-organization manual approval) or a data model that diverges sharply from v12, drop the track rather than force it.
+- **v11's declared OAuth flow may not be real (Track 3B)** — its spec declares the `implicit` grant with a boilerplate-looking scope, which if taken literally would require a human in the loop for token refresh. Mitigation: Phase 1C must verify the actual usable grant type against `palveluhallinta.suomi.fi` before any adapter code is written; if it's genuinely browser-only, drop the track rather than force it.
+- **v11's partial-update semantics (Track 3B)** — PUT requests don't clear a field just because it's omitted; each field group needs an explicit `deleteX: true` flag to remove it. Mitigation: build and test the delete-flag mapping table in Phase 1C, before wiring `ptv_apply_changes`'s diff-to-request translation, so an approved deletion can't silently no-op.
 - **v11/v12 cutover risk (Phase 7)** — removing v11 before every tenant is confirmed working on v12 production risks breaking live publishing for whoever's still on it. Mitigation: the side-by-side transition window and per-tenant migration in Phase 7 steps 3–4 are not optional, even under schedule pressure.
 
 ## Recommended Starting Point
