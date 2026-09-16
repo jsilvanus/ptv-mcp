@@ -6,8 +6,11 @@ A multi-tenant MCP server bridging Suomi.fi Palvelutietovaranto (PTV) and
 AI agents. See [`docs/plan.md`](./docs/plan.md) for the architecture,
 [`docs/phase-plan.md`](./docs/phase-plan.md) for the build sequence, and
 [`docs/ptv-v11-notes.md`](./docs/ptv-v11-notes.md) for the PTV v11 API
-findings. `PLAN.md` and `EXECUTION_LOG.md` track live implementation
-progress against the phase plan.
+findings, [`docs/deployment-guide.md`](./docs/deployment-guide.md) for
+deployment, and
+[`docs/adapter-onboarding-runbook.md`](./docs/adapter-onboarding-runbook.md)
+for new adapter bring-up. `PLAN.md` and `EXECUTION_LOG.md` track live
+implementation progress against the phase plan.
 
 ## Local development
 
@@ -34,6 +37,12 @@ Or via Docker Compose, which runs the bootstrap script automatically:
 ```bash
 docker compose up
 ```
+
+## Production
+
+- Use `docker-compose.production.yml` for production container runtime.
+- Production database is external (`DATABASE_URL`), not bundled in compose.
+- CI/CD image build + publish workflow: `.github/workflows/deploy.yml`.
 
 Common tasks:
 

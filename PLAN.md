@@ -62,14 +62,14 @@
 - [x] Stream B — Credential management UI: personal "connect PTV" screen only (v11); tenant-admin API-key screen deferred to Phase 7 ✅
 - [x] Stream C — Audit log viewer / proposal review UI (filterable by resource type / correlation id, expandable diff view) ✅
 
-## Phase 6: Integration hardening & MVP-0 launch ⏸
-- [ ] End-to-end tests, per role (v11 only)
-- [ ] Multi-tenant isolation tests (incl. same-user-different-tenant reuse test)
-- [ ] Security review
-- [ ] Docs: deployment guide, **adapter onboarding runbook** (formalized from Phase 2, to be run again in Phase 7)
-- [ ] Production Docker/Compose + CI/CD
-- [ ] Staged `PtvV11Adapter` write rollout
-- [ ] **MVP-0 SHIPS — v11-only**
+## Phase 6: Integration hardening & MVP-0 launch ✅
+- [x] End-to-end tests, per role (v11 only)
+- [x] Multi-tenant isolation tests (incl. same-user-different-tenant reuse test)
+- [x] Security review
+- [x] Docs: deployment guide, **adapter onboarding runbook** (formalized from Phase 2, to be run again in Phase 7)
+- [x] Production Docker/Compose + CI/CD
+- [x] Staged `PtvV11Adapter` write rollout
+- [x] **MVP-0 SHIPS — v11-only**
 
 ## Phase 7: `PtvV12Adapter` implementation (post-MVP-0) ⏸
 - [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators
