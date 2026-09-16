@@ -3,3 +3,5 @@ dist/
 coverage/
 *.md
 drizzle/meta/
+src/ptv/v11/swagger.json
+src/ptv/v11/wire-types.ts

@@ -35,14 +35,14 @@
 - [x] Define `PtvAdapterRegistry` resolution contract `(tenant, environment, operation, actingUser)`
 - [x] Contract test suite stub (fixture-driven, runs against a fake in-memory adapter)
 
-## Phase 2: `PtvV11Adapter` implementation 🔄
-- [ ] Vendor v11 `swagger.json`, generate wire types
-- [ ] Read methods (published + restricted draft-visibility endpoints)
-- [ ] Embedded-connection extraction
-- [ ] Per-user consent flow: auth link, fragment-capturing callback, introspection validation
-- [ ] Delete-flag mapping table for PUT partial updates
-- [ ] `applyServiceChange` against v11's POST/PUT endpoints
-- [ ] Wire `PtvAdapterConfig` for v11 (`credential_scope = user`, `supports_write = true` for production)
+## Phase 2: `PtvV11Adapter` implementation ✅ 🔒
+- [x] Vendor v11 `swagger.json`, generate wire types
+- [x] Read methods (published content — draft-visibility `/active` endpoints not yet wired, tracked as a gap)
+- [x] Embedded-connection extraction
+- [x] Per-user consent flow: auth link, fragment-capturing callback, introspection validation (unit-tested against mocks; live end-to-end untested — needs a registered PTV OAuth client, an external prerequisite)
+- [x] Delete-flag mapping table for PUT partial updates
+- [x] `applyServiceChange` against v11's PUT endpoint (unit-tested; not exercised live — needs a real access token)
+- [ ] Wire `PtvAdapterConfig` for v11 (`credential_scope = user`, `supports_write = true` for production) — deferred to Phase 3, where the registry first reads this table
 
 ## Phase 3: Core platform services ⏸
 - [ ] Stream A — Auth (JWT, Argon2id, refresh rotation + denylist, RBAC)

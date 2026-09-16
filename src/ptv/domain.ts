@@ -26,7 +26,13 @@ export type PublishingStatus = 'Draft' | 'Published' | 'Archived' | 'Withdrawn';
 export type PtvContentId = string;
 
 export interface CodeListEntry {
-  code: string;
+  /**
+   * Optional: PTV v11's real data shows entries with no `code`, only a
+   * `uri` (e.g. ontology terms) — confirmed against the live API during
+   * Phase 2, not assumed. At least one of `code`/`uri` is expected to be
+   * present in practice, but that isn't encoded in the type.
+   */
+  code?: string;
   uri?: string;
   names: LocalizedText;
 }

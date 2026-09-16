@@ -213,3 +213,125 @@ immediate fallback.
 Now resuming execution at Phase 2 (`PtvV11Adapter` implementation, the new
 single-adapter scope) — the next entry will cover its actual sync point
 verification.
+
+---
+
+## 2026-09-16 — Phase 1 reopened: `CodeListEntry.code` made optional
+
+While building Phase 2's v11 mappers against real API responses (not just
+the swagger doc), found that PTV v11's actual data includes code-list
+entries with no `code` at all — ontology terms are identified by `uri`
+only (confirmed live: `GET /api/v11/Service/{id}`'s `ontologyTerms[].code`
+is `null` in production data). Phase 1's `CodeListEntry.code` was typed as
+required (`string`), which the v11 mapper couldn't honestly satisfy
+without fabricating a value.
+
+Fix applied to: src/ptv/domain.ts (`code: string` -> `code?: string`,
+with a comment recording why).
+Re-verified: `npm run typecheck` and `npm test` (27/27) both pass
+unchanged; this is a pure widening of an existing field, not a shape
+change, so nothing that already matched the old type stops matching.
+Phase 1 re-locked — no other Phase 1 file touched.
+
+---
+
+## 2026-09-16 — Phase 2 (`PtvV11Adapter` implementation) closed ✅ 🔒
+
+Owned files:
+- src/ptv/v11/swagger.json (vendored spec), wire-types.ts (generated, gitignored from Prettier)
+- src/ptv/v11/wireModel.ts, client.ts, pagination.ts, adapter.ts
+- src/ptv/v11/mappers/{common,service,serviceChannel,organization,generalDescription,serviceCollection,connection,codeList}.ts
+- src/ptv/v11/deleteFlags.ts, deleteFlags.test.ts
+- src/ptv/v11/writeMapping.ts, writeMapping.test.ts
+- src/ptv/v11/auth/{oauth,introspection}.ts, oauth.test.ts
+- src/ptv/v11/adapter.integration.test.ts
+
+Two independent, self-contained chunks of this phase were delegated to
+background Haiku subagents in parallel with the rest of the work (per
+explicit instruction): the delete-flag mapping table
+(`src/ptv/v11/deleteFlags.ts` + tests, 44 tests) and the OAuth consent
+flow module (`src/ptv/v11/auth/*` + tests, 30 tests). Both were reviewed
+before integrating, not merged blindly:
+- deleteFlags.ts: one unused import (`ServiceChannelType`) removed; a test
+  used `as any` where the lint config requires an explicit type, fixed to
+  `as unknown as EntityType`. Substance was correct and thorough — findings
+  cross-checked against the same swagger.json this session already had
+  vendored, not fabricated.
+- auth/oauth.ts: one unused import (`randomBytes`, `randomUUID` was used
+  instead) removed. Otherwise correct on inspection, and it correctly
+  flagged (rather than asserted as fact) the two things this session
+  couldn't verify: the real required OAuth scope, and the introspection/
+  revocation endpoints' actual client-auth mechanism.
+
+Sync point verified (Phase 2: "the Phase 1 contract test suite passes
+against `PtvV11Adapter` for all read operations; a real human can click
+the consent link, land back authenticated, and have `PtvAdapterRegistry`
+resolve their stored connection for a write call"):
+- [x] **Read side, fully verified live**: `runPtvAdapterContractTests`
+      (13 assertions) run against a real `PtvV11Adapter` pointed at PTV's
+      actual test environment (`api.palvelutietovaranto.trn.suomi.fi`),
+      using real fixture ids fetched from that environment — not a mock,
+      not the production host. All 13 pass.
+- [x] Write path unit-tested (`writeMapping.test.ts`, 9 tests) — delete-
+      flag vs. full-replace translation verified field by field against
+      the real behaviors `deleteFlags.ts` found in the swagger schema.
+- [ ] **Live write / full consent-flow, NOT verified end-to-end.** This
+      needs a PTV OAuth client actually registered with
+      `palveluhallinta.suomi.fi` — an external, organization-level
+      prerequisite (someone with authority over the tenant's PTV
+      relationship needs to register one) that isn't available in this
+      session. The consent-flow code (`auth/oauth.ts`,
+      `auth/introspection.ts`) is unit-tested against mocked HTTP and
+      believed correct, but "a real human clicks the link and it works"
+      has not been observed. **Flagging this as the one open item before
+      Phase 6's launch gate can be called complete for real users.**
+
+New verified facts this phase (not assumed from the OpenAPI doc alone —
+found by calling the real API):
+- v11's list endpoints (`GET /Service`, `/ServiceChannel`, etc.) return
+  only `{id, name}` pairs with a server-fixed page size of 1000 (no query
+  param to change it) — full entities come from a separate bulk
+  `.../list?guids=a,b,c` endpoint. `ServiceCollection` has no such bulk
+  endpoint, so its search fetches each id individually.
+- `serviceClasses`/`ontologyTerms`/`targetGroups`/`lifeEvents` are written
+  back as **URI strings**; `industrialClasses` as **code strings** — these
+  differ per field, confirmed directly against the write schema, not
+  inferred from the read shape.
+- PTV v11 returns **HTTP 500**, not 404, for a lookup by the all-zero GUID
+  (`00000000-...-000000000000`) — a genuinely random nonexistent id
+  correctly gets 404. Caught by the live contract test run, not
+  anticipated in advance; fixed the test fixture rather than the adapter
+  (the adapter's 404-to-null handling is correct; the all-zero GUID is
+  simply invalid input by PTV's own logic).
+- v11's test-environment base URL, `https://api.palvelutietovaranto.trn.suomi.fi`,
+  is undocumented in v11's own swagger.json (which lists only the
+  production host) — confirmed live by direct request, following the same
+  naming pattern PTV uses for v12.
+
+Deviations:
+- **`CodeListEntry.code` (Phase 1, locked) made optional.** Reopened
+  Phase 1 briefly for this — see the dedicated log entry above. A genuine
+  gap found from real data (v11 ontology terms have no `code`, only
+  `uri`), not a design change.
+- **Draft-visibility endpoints not implemented.** `Service/active/{id}`
+  and `ServiceChannel/active/{id}` (the "restricted" endpoints that need
+  auth and expose draft/modified content) are listed in the phase plan
+  but not built this pass — `supportsDraftRead: false` in the shipped
+  capabilities reflects this honestly rather than claiming a capability
+  that isn't there. Not a blocker for Phase 3+: nothing downstream depends
+  on draft visibility yet.
+- **Hand-typed `wireModel.ts` instead of consuming the generated
+  `wire-types.ts` directly.** The openapi-typescript output is a valid,
+  complete 12,683-line type tree, vendored and kept for reference, but its
+  deeply nested `paths`/`components` structure is unwieldy for mapper code
+  that only touches a handful of fields per entity. The narrower
+  hand-typed interfaces in `wireModel.ts` were verified field-by-field
+  against real API responses (not guessed), so this trades one kind of
+  rigor (generated-from-spec) for another (verified-against-live-data) —
+  recorded here so it's a documented choice, not an oversight.
+- **Live PTV test environment as the integration-test target**, not a
+  mock. This proves the adapter for real but introduces an external
+  dependency into CI: if PTV's test environment is unreachable or its
+  fixture records ever change/disappear, `test:integration` (and thus CI)
+  fails for reasons outside this repo's control. No mitigation applied
+  yet — worth reconsidering if this becomes a recurring CI flake source.
