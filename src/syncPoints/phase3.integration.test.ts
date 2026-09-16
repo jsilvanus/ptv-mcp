@@ -33,7 +33,8 @@ describe('Phase 3 sync point', () => {
     jwtSecret: config.jwtSecret,
     mailer: new LoggingMailer(() => {}),
   });
-  const tenantService = new TenantService(db);
+  const auditService = new AuditService(db);
+  const tenantService = new TenantService(db, auditService);
   const configService = new PtvAdapterConfigService(db);
   const tenantEnvironmentService = new TenantEnvironmentService(db, masterKey);
   const userConnectionService = new UserPtvConnectionService(db, masterKey);
@@ -43,7 +44,6 @@ describe('Phase 3 sync point', () => {
     tenantEnvironmentService,
     userConnectionService,
   );
-  const auditService = new AuditService(db);
 
   const createdTenantIds: string[] = [];
   const createdUserIds: string[] = [];

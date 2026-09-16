@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { memberships, tenants, users } from '../db/schema/index.js';
+import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
+import { AuditService } from '../audit/auditService.js';
 import {
   MembershipNotFoundError,
   SlugAlreadyTakenError,
@@ -15,7 +16,7 @@ import {
 describe('TenantService', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
-  const service = new TenantService(db);
+  const service = new TenantService(db, new AuditService(db));
 
   const createdTenantIds: string[] = [];
   const createdUserIds: string[] = [];
@@ -23,6 +24,7 @@ describe('TenantService', () => {
   afterEach(async () => {
     for (const tenantId of createdTenantIds) {
       await withContext(db, { tenantId }, async (tx) => {
+        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
         await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
       });
     }
@@ -83,7 +85,7 @@ describe('TenantService', () => {
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
 
-    await service.addMember(tenantId, member.email, 'editor');
+    await service.addMember(tenantId, member.email, 'editor', admin.id);
     const members = await service.listMembers(tenantId);
     expect(members).toContainEqual({
       userId: member.id,
@@ -98,9 +100,9 @@ describe('TenantService', () => {
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
 
-    await expect(service.addMember(tenantId, 'nobody@example.test', 'reader')).rejects.toThrow(
-      UserNotFoundError,
-    );
+    await expect(
+      service.addMember(tenantId, 'nobody@example.test', 'reader', admin.id),
+    ).rejects.toThrow(UserNotFoundError);
   });
 
   it('updates a member role', async () => {
@@ -108,9 +110,9 @@ describe('TenantService', () => {
     const member = await createUser('Member');
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
-    await service.addMember(tenantId, member.email, 'reader');
+    await service.addMember(tenantId, member.email, 'reader', admin.id);
 
-    await service.updateMemberRole(tenantId, member.id, 'publisher');
+    await service.updateMemberRole(tenantId, member.id, 'publisher', admin.id);
     const members = await service.listMembers(tenantId);
     expect(members.find((m) => m.userId === member.id)?.role).toBe('publisher');
   });
@@ -120,9 +122,9 @@ describe('TenantService', () => {
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
 
-    await expect(service.updateMemberRole(tenantId, randomUUID(), 'publisher')).rejects.toThrow(
-      MembershipNotFoundError,
-    );
+    await expect(
+      service.updateMemberRole(tenantId, randomUUID(), 'publisher', admin.id),
+    ).rejects.toThrow(MembershipNotFoundError);
   });
 
   it('removes a member', async () => {
@@ -130,10 +132,28 @@ describe('TenantService', () => {
     const member = await createUser('Member');
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
-    await service.addMember(tenantId, member.email, 'reader');
+    await service.addMember(tenantId, member.email, 'reader', admin.id);
 
-    await service.removeMember(tenantId, member.id);
+    await service.removeMember(tenantId, member.id, admin.id);
     const members = await service.listMembers(tenantId);
     expect(members.find((m) => m.userId === member.id)).toBeUndefined();
+  });
+
+  it('records an audit entry when a member is added and their role is changed', async () => {
+    const admin = await createUser('Admin');
+    const member = await createUser('Member');
+    const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
+    createdTenantIds.push(tenantId);
+
+    await service.addMember(tenantId, member.email, 'reader', admin.id);
+    await service.updateMemberRole(tenantId, member.id, 'publisher', admin.id);
+
+    const auditService = new AuditService(db);
+    const entries = await auditService.listForTenant(tenantId, { resourceType: 'Membership' });
+    expect(entries.map((e) => e.action)).toEqual(
+      expect.arrayContaining(['AddMember', 'UpdateMemberRole']),
+    );
+    expect(entries.every((e) => e.userId === admin.id)).toBe(true);
+    expect(entries.find((e) => e.action === 'UpdateMemberRole')?.resourceId).toBe(member.id);
   });
 });

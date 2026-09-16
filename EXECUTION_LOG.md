@@ -846,3 +846,161 @@ Deviations:
 - **No MCP resources or prompts** — only tools, per the phase plan's
   explicit scope (Phase 4 is "MCP tool layer"). Resources/prompts aren't
   mentioned anywhere in docs/plan.md's MCP tool list either.
+
+## 2026-09-16 — Phase 5 (Web UI) closed ✅ 🔒
+
+Owned files:
+- web/ — new package (Vite + React + TypeScript SPA), not specified by
+  docs/phase-plan.md beyond "Web UI"; the stack itself is a Phase 5
+  deviation, documented below.
+  - web/src/api/client.ts, api/types.ts
+  - web/src/auth/AuthContext.tsx
+  - web/src/tenants/TenantContext.tsx
+  - web/src/components/Layout.tsx
+  - web/src/App.tsx, main.tsx, index.css
+  - web/src/pages/LoginPage.tsx, RegisterPage.tsx
+  - web/src/pages/TenantsPage.tsx (Stream A)
+  - web/src/pages/MembersPage.tsx (Stream A, built by a background Sonnet
+    subagent, reviewed before accepting — no changes needed)
+  - web/src/pages/PtvConnectionsPage.tsx, PtvCallbackPage.tsx (Stream B,
+    built by a background Sonnet subagent, reviewed before accepting — no
+    changes needed)
+  - web/src/pages/AuditLogPage.tsx, DiffView.tsx (Stream C)
+- src/routes/auditLog.ts, auditLog.integration.test.ts (Stream C's backend
+  half — `GET /tenants/:tenantId/audit-entries`, tenant_admin only,
+  filterable by `resourceType`/`correlationId`/`limit`)
+
+Also touched, additively:
+- src/tenants/tenantService.ts, tenantService.integration.test.ts: a real
+  gap found while verifying this phase's sync point (below) — membership
+  CRUD (`addMember`/`updateMemberRole`/`removeMember`) recorded nothing to
+  the audit log at all. Fixed by injecting `AuditService` into
+  `TenantService` and recording `AddMember`/`UpdateMemberRole`/
+  `RemoveMember` (resourceType `Membership`, resourceId the target user,
+  actor as `userId`) after each successful mutation. `createTenant` itself
+  is unchanged — the sync point only calls for member-management actions.
+- src/routes/tenants.ts: passes the authenticated caller
+  (`request.userId!`) through as the new `actingUserId` parameter on the
+  three `TenantService` methods above.
+- src/routes/ptvConnections.ts, ptvConnections.integration.test.ts: same
+  gap, personal-connection side. `user_ptv_connections` is deliberately
+  user-scoped, not tenant-scoped (Phase 3 Stream B: one credential reused
+  across every tenant the user belongs to), but `audit_entries.tenant_id`
+  is `NOT NULL` and RLS-gated on it — a personal connection event has no
+  single natural tenant to record against. Resolved by recording the
+  event once per tenant the connecting user currently belongs to
+  (`ConnectPtvAccount`/`DisconnectPtvAccount`, resourceType
+  `PtvConnection`), via a new `recordConnectionEvent` helper that fans out
+  through `tenantService.listTenantsForUser`. A user connecting before
+  joining any tenant produces zero audit entries for that connection —
+  accepted as a documented edge case, not fixed further (see Deviations).
+- src/app.ts: constructs `AuditService` before `TenantService` (ordering
+  fix — `TenantService` now depends on it) and wires `tenantService` +
+  `auditService` into `ptvConnectionRoutes`'s options.
+- src/syncPoints/phase3.integration.test.ts: same `TenantService`
+  constructor reorder, no behavioral change to the test itself.
+- eslint.config.js: **real pre-existing bug, unrelated to this phase's
+  own code**, found while running the full pipeline — the backend's
+  `ignores: ['dist/**', 'node_modules/**']` only matches those directories
+  at the repo root (flat-config ignore globs aren't implicitly
+  `**/`-prefixed), so `npx eslint .` was sweeping in `web/dist`'s built,
+  minified bundle once `web/` existed, producing over a thousand
+  `no-undef`/`no-unused-expressions` errors on code that was never meant
+  to be linted by the backend's ESLint (the frontend has its own
+  `oxlint`). Fixed by changing the ignores to `['**/dist/**',
+  '**/node_modules/**', 'web/**']`.
+- web/vite.config.ts: the dev-proxy comment originally asserted production
+  static-file serving already happens via a `src/routes/webUi.ts` that
+  doesn't exist — corrected to say that's deferred to Phase 6 (see
+  Deviations).
+
+Stream A (auth & tenant/user management UI): login/register forms against
+the real `/auth/*` routes; `TenantsPage` (list + create, `POST /tenants`);
+`MembersPage` (list/add/inline role change with a confirm step/remove, all
+tenant-admin-gated, `403`/`404` surfaced as inline errors not crashes).
+
+Stream B (credential management UI): `PtvConnectionsPage` — per-environment
+connect/disconnect against v11's implicit-grant OAuth flow;
+`PtvCallbackPage` captures `window.location.hash`, guards against
+React StrictMode's double-invocation of effects with a `useRef`, and POSTs
+the fragment to `/ptv-connections/v11/callback` for introspection-validated
+storage. Tenant-admin `TenantEnvironment` (API key) UI remains deferred to
+Phase 7, per docs/phase-plan.md's own note on Stream B's scope.
+
+Stream C (audit log viewer): `AuditLogPage` — filterable by resource type
+and correlation id, one row per entry, an expandable `DiffView` table for
+any `ProposeServiceChange` entry (rendering the frozen `ServiceDiffEntry[]`
+contract from Phase 4 Stream B unchanged). Backend-side, `auditLogRoutes`
+exposes `AuditService.listForTenant` at `GET
+/tenants/:tenantId/audit-entries`, gated the same way `MembersPage` is
+(tenant_admin only).
+
+Sync point verified (docs/phase-plan.md's Phase 5 goal — "a tenant admin
+can create a user and set their role; a user can connect their own PTV
+account; both show up correctly in the audit log"):
+- [x] `npm run typecheck`, `lint`, `test` (190), `test:integration` (113),
+  `build` all pass on the backend; `tsc -b && vite build` and `oxlint`
+  (0 errors, pre-existing style warnings only — see Deviations) pass on
+  `web/`.
+- [x] Real browser verification (Playwright against the actual dev
+  servers, real Postgres, no mocks): registered two users via the API,
+  logged in as one through the real login form, created a tenant through
+  the real form, added the second user as a member through the real
+  `MembersPage` form, changed their role to `publisher` through the same
+  page's inline `<select>` (accepting the real `window.confirm` dialog),
+  then navigated to `AuditLogPage` and confirmed both `AddMember` and
+  `UpdateMemberRole` entries appear, `resourceType: Membership`, the
+  correct `resourceId`, `result: Success`.
+- [x] `src/tenants/tenantService.integration.test.ts`: a new test asserts
+  the same `AddMember`/`UpdateMemberRole` audit entries directly against
+  `AuditService.listForTenant`, attributed to the acting admin.
+- [x] `src/routes/ptvConnections.integration.test.ts`: a new test creates
+  a tenant for the connecting user, drives a full mocked-introspection
+  `POST /ptv-connections/v11/callback`, then confirms a `ConnectPtvAccount`
+  audit entry appears in that tenant's audit log via the real
+  `GET /tenants/:tenantId/audit-entries` route.
+- [x] The Members page's data flow was double-checked after an initial
+  Playwright run appeared to show 0 rows right after navigation — a
+  second run with an explicit wait and a full DOM dump confirmed the
+  table renders correctly (one row for the tenant creator); the first
+  result was a read-before-fetch-resolved timing artifact in the test
+  script, not a defect in `MembersPage.tsx`.
+
+Deviations:
+- **Frontend stack (Vite + React + TypeScript, `web/` as a separate
+  package) is an unspecified-by-docs but necessary decision** — the phase
+  plan says "Web UI" without naming a stack. Chosen for a proxied dev
+  server against the existing Fastify backend and a plain `tsc -b && vite
+  build` production build; `oxlint` for frontend lint, matching the
+  backend's existing ESLint/ESLint-adjacent-but-separate convention rather
+  than sharing one linter config across two very different runtime
+  targets (Node vs. browser globals).
+- **Tokens stored in `localStorage`, not an httpOnly cookie** — simplest
+  option for an internal admin tool's MVP; documented, accepted XSS
+  trade-off (see `web/src/api/client.ts`'s own comment). Revisit if this
+  UI ever needs to defend against a more adversarial environment than
+  "trusted tenant staff."
+- **Personal PTV-connection audit events fan out to every tenant the
+  connecting user belongs to, not one canonical entry** — the only
+  alternative that keeps `audit_entries.tenant_id` `NOT NULL` (and RLS
+  gated on it) intact without a schema change. Accepted because a
+  personal v11 credential is, by Phase 3 Stream B's own design, reused
+  across every tenant the user is a Publisher for — every one of those
+  tenants' admins has a legitimate reason to see when it was connected or
+  disconnected. A user with zero tenant memberships at connect time gets
+  zero audit entries for that connection; this is a real, accepted gap
+  (not silently swallowed — `recordConnectionEvent` simply has nothing to
+  fan out to), worth revisiting only if a future phase needs a
+  user-scoped audit view that doesn't go through any tenant.
+- **Production static-file serving is deferred to Phase 6, not built
+  here** — `web/vite.config.ts`'s dev proxy is dev-only; Fastify serving
+  `web/dist` in production belongs with Phase 6's "deployable, reviewed,
+  documented" goal (Docker/Compose, CI/CD), not this phase's UI-feature
+  work. The comment that used to claim this already existed
+  (`src/routes/webUi.ts`) was corrected rather than left misleading.
+- **The v11 OAuth connect flow itself is not end-to-end tested in the
+  browser** — same external gap Phase 2/3/4 already documented: it needs
+  a real client registered with palveluhallinta.suomi.fi. The callback
+  page's logic (fragment capture, introspection call, error paths) is
+  covered by `ptvConnections.integration.test.ts` with a mocked
+  introspection response instead.

@@ -1,0 +1,149 @@
+import { useEffect, useState } from 'react';
+import { apiFetch, ApiError } from '../api/client';
+import type { ConnectionStatus, PtvEnvironment } from '../api/types';
+
+export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
+
+const ENVIRONMENTS: PtvEnvironment[] = ['test', 'production'];
+
+export function PtvConnectionsPage() {
+  const [connections, setConnections] = useState<ConnectionStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [connectingEnv, setConnectingEnv] = useState<PtvEnvironment | null>(null);
+  const [disconnectingEnv, setDisconnectingEnv] = useState<PtvEnvironment | null>(null);
+
+  async function loadConnections(): Promise<void> {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await apiFetch<ConnectionStatus[]>('/ptv-connections');
+      setConnections(result);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load PTV connections.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadConnections();
+  }, []);
+
+  async function handleConnect(environment: PtvEnvironment): Promise<void> {
+    setError(null);
+    setConnectingEnv(environment);
+    try {
+      const { url } = await apiFetch<{ url: string; state: string }>(
+        `/ptv-connections/v11/authorize-url?environment=${environment}`,
+      );
+      sessionStorage.setItem(PTV_CONNECT_ENVIRONMENT_KEY, environment);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not start the PTV connection.');
+      setConnectingEnv(null);
+    }
+  }
+
+  async function handleDisconnect(environment: PtvEnvironment): Promise<void> {
+    if (!window.confirm(`Disconnect your PTV ${environment} account? This revokes access.`)) {
+      return;
+    }
+    setError(null);
+    setDisconnectingEnv(environment);
+    try {
+      await apiFetch<void>(`/ptv-connections/v11/${environment}`, { method: 'DELETE' });
+      await loadConnections();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not disconnect the PTV account.');
+    } finally {
+      setDisconnectingEnv(null);
+    }
+  }
+
+  function activeConnectionFor(environment: PtvEnvironment): ConnectionStatus | undefined {
+    return connections.find(
+      (c) => c.apiVersion === 'v11' && c.environment === environment && !c.revokedAt,
+    );
+  }
+
+  return (
+    <div>
+      <h1>PTV connections</h1>
+      <p className="muted">
+        Connect your PTV account to let this tool make changes on your behalf. Connections are
+        per-user and work across every tenant you're a Publisher for.
+      </p>
+
+      {error && <p className="error">{error}</p>}
+
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>API version</th>
+              <th>Environment</th>
+              <th>Status</th>
+              <th>Connected</th>
+              <th>Token expires</th>
+              <th>Last validated</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {connections.map((c) => (
+              <tr key={`${c.apiVersion}-${c.environment}`}>
+                <td>{c.apiVersion}</td>
+                <td>{c.environment}</td>
+                <td>{c.revokedAt ? 'Disconnected' : 'Active'}</td>
+                <td>{new Date(c.connectedAt).toLocaleString()}</td>
+                <td>{c.tokenExpiresAt ? new Date(c.tokenExpiresAt).toLocaleString() : '—'}</td>
+                <td>{c.lastValidatedAt ? new Date(c.lastValidatedAt).toLocaleString() : '—'}</td>
+                <td>
+                  {!c.revokedAt && (
+                    <button
+                      onClick={() => void handleDisconnect(c.environment)}
+                      disabled={disconnectingEnv === c.environment}
+                    >
+                      {disconnectingEnv === c.environment ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {connections.length === 0 && (
+              <tr>
+                <td colSpan={7} className="muted">
+                  No PTV connections yet — connect one below.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+
+      <h2 style={{ marginTop: 24 }}>Connect a PTV v11 account</h2>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {ENVIRONMENTS.map((environment) => {
+          const active = activeConnectionFor(environment);
+          return (
+            <button
+              key={environment}
+              className="primary"
+              onClick={() => void handleConnect(environment)}
+              disabled={connectingEnv !== null || !!active}
+            >
+              {connectingEnv === environment
+                ? 'Redirecting…'
+                : active
+                  ? `${environment} connected`
+                  : `Connect ${environment}`}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

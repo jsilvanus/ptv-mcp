@@ -57,10 +57,10 @@
 - [x] Stream D — Apply / export (`ptv_export_for_manual_publish`, `ptv_apply_changes`) ✅
 - [x] MCP server wiring (real `@modelcontextprotocol/sdk`, stateless Streamable HTTP transport on Fastify) ✅
 
-## Phase 5: Web UI ⏸
-- [ ] Stream A — Auth & tenant/user management UI
-- [ ] Stream B — Credential management UI: personal "connect PTV" screen only (v11); tenant-admin API-key screen deferred to Phase 7
-- [ ] Stream C — Audit log viewer / proposal review UI
+## Phase 5: Web UI ✅ 🔒
+- [x] Stream A — Auth & tenant/user management UI (Vite + React + TS SPA in `web/`; login/register, tenant list/create, member management with role editing) ✅
+- [x] Stream B — Credential management UI: personal "connect PTV" screen only (v11); tenant-admin API-key screen deferred to Phase 7 ✅
+- [x] Stream C — Audit log viewer / proposal review UI (filterable by resource type / correlation id, expandable diff view) ✅
 
 ## Phase 6: Integration hardening & MVP-0 launch ⏸
 - [ ] End-to-end tests, per role (v11 only)

@@ -3,6 +3,7 @@ import type { Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
 import { memberships, tenants, users } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
+import type { AuditService } from '../audit/auditService.js';
 
 export class SlugAlreadyTakenError extends Error {
   constructor(slug: string) {
@@ -47,7 +48,10 @@ export interface Member {
  * is RLS-scoped.
  */
 export class TenantService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly auditService: AuditService,
+  ) {}
 
   /** Creates a tenant and makes `creatingUserId` its first Tenant Admin, atomically. */
   async createTenant(
@@ -104,7 +108,12 @@ export class TenantService {
     );
   }
 
-  async addMember(tenantId: string, email: string, role: MembershipRole): Promise<void> {
+  async addMember(
+    tenantId: string,
+    email: string,
+    role: MembershipRole,
+    actingUserId: string,
+  ): Promise<void> {
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
       throw new UserNotFoundError(email);
@@ -115,9 +124,23 @@ export class TenantService {
         .values({ tenantId, userId: user.id, role })
         .onConflictDoUpdate({ target: [memberships.userId, memberships.tenantId], set: { role } });
     });
+    await this.auditService.record({
+      tenantId,
+      userId: actingUserId,
+      action: 'AddMember',
+      resourceType: 'Membership',
+      resourceId: user.id,
+      afterState: { role },
+      result: 'Success',
+    });
   }
 
-  async updateMemberRole(tenantId: string, userId: string, role: MembershipRole): Promise<void> {
+  async updateMemberRole(
+    tenantId: string,
+    userId: string,
+    role: MembershipRole,
+    actingUserId: string,
+  ): Promise<void> {
     const result = await withContext(this.db, { tenantId, userId }, async (tx) =>
       tx
         .update(memberships)
@@ -128,13 +151,30 @@ export class TenantService {
     if (result.length === 0) {
       throw new MembershipNotFoundError();
     }
+    await this.auditService.record({
+      tenantId,
+      userId: actingUserId,
+      action: 'UpdateMemberRole',
+      resourceType: 'Membership',
+      resourceId: userId,
+      afterState: { role },
+      result: 'Success',
+    });
   }
 
-  async removeMember(tenantId: string, userId: string): Promise<void> {
+  async removeMember(tenantId: string, userId: string, actingUserId: string): Promise<void> {
     await withContext(this.db, { tenantId, userId }, async (tx) => {
       await tx
         .delete(memberships)
         .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId)));
+    });
+    await this.auditService.record({
+      tenantId,
+      userId: actingUserId,
+      action: 'RemoveMember',
+      resourceType: 'Membership',
+      resourceId: userId,
+      result: 'Success',
     });
   }
 }

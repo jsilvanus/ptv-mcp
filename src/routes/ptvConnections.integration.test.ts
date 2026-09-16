@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { users } from '../db/schema/index.js';
+import { withContext } from '../db/context.js';
+import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
 import { signAccessToken } from '../auth/jwt.js';
 
 describe('ptv connection routes', () => {
@@ -13,6 +14,7 @@ describe('ptv connection routes', () => {
   let app: FastifyInstance;
   let db: Database;
   const createdUserIds: string[] = [];
+  const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
     db = createDatabase(config.databaseUrl);
@@ -38,6 +40,16 @@ describe('ptv connection routes', () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    for (const tenantId of createdTenantIds) {
+      await withContext(db, { tenantId }, async (tx) => {
+        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
+        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
+      });
+    }
+    if (createdTenantIds.length > 0) {
+      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
+    }
+    createdTenantIds.length = 0;
     if (createdUserIds.length > 0) {
       await db.delete(users).where(eq(users.id, createdUserIds[createdUserIds.length - 1]!));
     }
@@ -100,6 +112,42 @@ describe('ptv connection routes', () => {
     const connections = listRes.json() as Array<{ apiVersion: string; environment: string }>;
     expect(connections).toContainEqual(
       expect.objectContaining({ apiVersion: 'v11', environment: 'production' }),
+    );
+  });
+
+  it('records a ConnectPtvAccount audit entry in every tenant the user belongs to', async () => {
+    const user = await createUserWithToken();
+    const createTenantRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${user.token}` },
+      payload: { name: 'Connection Test Tenant', slug: `conn-${randomUUID()}` },
+    });
+    const { tenantId } = createTenantRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ active: true, sub: 'ptv-user' }), { status: 200 }),
+    );
+    await app.inject({
+      method: 'POST',
+      url: '/ptv-connections/v11/callback',
+      headers: { authorization: `Bearer ${user.token}` },
+      payload: {
+        environment: 'production',
+        fragment: 'access_token=real-token&token_type=Bearer&expires_in=3600',
+      },
+    });
+
+    const auditRes = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/audit-entries?resourceType=PtvConnection`,
+      headers: { authorization: `Bearer ${user.token}` },
+    });
+    expect(auditRes.statusCode).toBe(200);
+    const entries = auditRes.json() as Array<{ action: string; environment: string }>;
+    expect(entries).toContainEqual(
+      expect.objectContaining({ action: 'ConnectPtvAccount', environment: 'production' }),
     );
   });
 
