@@ -687,3 +687,162 @@ malformed input" pattern Phase 2 found with the all-zero GUID.
 
 **Phase 3 as a whole is now closed.** All four streams done; the
 cross-stream sync point passes against real Postgres and real PTV.
+
+---
+
+## 2026-09-16 — Phase 4 (MCP tool layer) closed ✅ 🔒
+
+Owned files:
+- src/mcp/toolContext.ts
+- src/mcp/searchTools.ts, searchTools.test.ts
+- src/mcp/proposeChanges.ts, proposeChanges.test.ts
+- src/mcp/validateChanges.ts, validateChanges.test.ts
+- src/mcp/applyOrExport.ts, applyOrExport.test.ts
+- src/mcp/authorization.ts
+- src/mcp/mcpServer.ts
+- src/mcp/httpTransport.ts, httpTransport.integration.test.ts
+- src/mcp/testing/fakeAuditService.ts
+- src/validation/changeValidator.ts, changeValidator.test.ts
+- src/syncPoints/phase4.integration.test.ts
+
+Also touched, additively:
+- src/auth/rbac.ts (Phase 3 Stream A, locked): extracted
+  `resolveMembershipRole(db, tenantId, userId)` out of `createRequireRole`'s
+  inline query, so the MCP tool layer (no Fastify request/reply) can reuse
+  the exact same membership lookup instead of a second implementation.
+  `createRequireRole`'s own behavior is unchanged — this is a pure
+  extraction, not a reopen of its logic.
+- src/app.ts: wires `PtvAdapterConfigService`, `TenantEnvironmentService`,
+  `DbPtvAdapterRegistry`, `AuditService`, `V11ChangeValidator`, and the new
+  `/mcp` route into `buildApp`.
+- package.json: added `@modelcontextprotocol/sdk` (v1.30.0) and `zod`
+  (v4.6.5) — the actual MCP protocol implementation and its schema library,
+  not previously a dependency.
+
+Added `@modelcontextprotocol/sdk` and built a **real** MCP server, not a
+simulated one — `McpServer` from the SDK, 14 tools registered with zod
+input schemas, mounted at `POST /mcp` via `StreamableHTTPServerTransport`
+in **stateless mode** (no `sessionIdGenerator`, matching the SDK's own
+`examples/server/simpleStatelessStreamableHttp` reference pattern exactly:
+a fresh `McpServer` + transport constructed per HTTP request). Verified
+against the SDK's real `Client` + `StreamableHTTPClientTransport` over a
+real listening HTTP socket (`src/mcp/httpTransport.integration.test.ts`,
+`src/syncPoints/phase4.integration.test.ts`) — not just unit-testing the
+tool functions in isolation.
+
+Stream A (search tools): `searchServices`, `getService`, `searchChannels`,
+`getChannel`, `getOrganisation`, `getOrganisationHierarchy`,
+`searchServiceCollections`, `searchGeneralDescriptions`,
+`searchConnections` (`getConnectionsFor` under the phase plan's
+`ptv_search_connections` name), `listCodes` — each a thin pass-through to
+a registry-resolved adapter's own method, since the Phase 1 `PtvAdapter`
+interface already has a 1:1 method for every tool the phase plan lists.
+
+Stream B (propose-changes / diff engine): `proposeChanges` merges a
+`Partial<Service>` onto the current service using the same "field
+presence, not truthiness" semantics as the v11 write model
+(`writeMapping.ts`), and computes a field-level diff — localized fields
+(`names`/`summaries`/`descriptions`) expand to one diff entry per
+*changed language* (`'names.fi'`), other fields diff as a whole-value
+replacement. **The `ProposeChangesResult` shape is the frozen contract**
+the phase plan calls for — `{serviceId, current, proposed, diff,
+correlationId}` — Phase 5's diff UI builds against this exact shape.
+
+Stream C (validation engine, delegated to a background Haiku subagent,
+reviewed before accepting): `ChangeValidator` interface +
+`V11ChangeValidator`, 8 rules (required `names`/`organizationId`/
+`serviceType`/`languages`, `ontologyTerms` ≤ 10, `serviceClasses` ≤ 4,
+and — the one rule not explicit in docs/plan.md's list but found by
+reading `writeMapping.ts` — every `serviceClasses`/`ontologyTerms`/
+`targetGroups`/`lifeEvents` entry needs a `uri` and every
+`industrialClasses` entry needs a `code`, or `writeMapping.ts` silently
+drops it on write). Accumulates every violation in one pass rather than
+stopping at the first.
+
+Stream D (apply/export): `exportForManualPublish` renders a proposed
+service per language and records `ReadyForManualPublish` (MVP-0's
+no-API-write fallback, per docs/plan.md); `applyChanges` re-validates
+internally (never trusts a possibly-stale prior validation from another
+tool call), then resolves a write-capable adapter via the registry
+(Publisher role + `supports_write` + a valid credential all enforced
+there, per Phase 3 Stream D) and records `Success` or `Failed` either
+way — a write that throws is still audited, not silently dropped.
+
+**Bug found and fixed before this phase closed**: `PtvAdapterRegistry`
+only gates *PTV adapter/credential* access (Reader for read operations,
+Publisher for write) — it has no notion of this app's own business-action
+permissions. The first version of `proposeChanges`/`exportForManualPublish`
+only called the registry with `operation: 'read'`, which meant a bare
+Reader could propose and export changes — docs/plan.md's role model
+explicitly reserves that for Editor and above ("Reader ei saa ehdottaa
+muutoksia"). Fixed by adding `src/mcp/authorization.ts`'s
+`requireTenantRole`, called before anything else in `proposeChanges`
+(and therefore in `exportForManualPublish`/`applyChanges`, which both
+call it internally) — checked via an injectable `MembershipRoleResolver`
+function rather than a raw DB handle, so the existing fast/no-Postgres
+unit tests for these modules didn't have to become integration tests
+just to exercise a role check. `ptv_apply_changes`'s stricter Publisher
+requirement continues to come from the registry's own `operation: 'write'`
+resolution — Editor doesn't satisfy that, so no separate check was needed
+there.
+
+Sync point verified (docs/phase-plan.md's Phase 4 goal — "end-to-end
+script: search a real service via v11, propose a rewrite, validate it,
+then either export it or apply it directly — with every step in the
+audit log"):
+- [x] `npm run typecheck`, `lint`, `format`, `test` (190), `test:integration`
+  (107), `build` all pass.
+- [x] `src/syncPoints/phase4.integration.test.ts`: a real MCP `Client`
+  over `StreamableHTTPClientTransport`, against a real listening Fastify
+  server, real Postgres, and PTV's live test environment — register+login,
+  create a tenant with Editor role, `ptv_get_service` on a known real
+  fixture id, `ptv_propose_changes`, `ptv_validate_changes`,
+  `ptv_export_for_manual_publish`, all sharing one `correlationId`, then
+  `AuditService.listByCorrelationId` confirms all four audit entries
+  (`ProposeServiceChange` ×2 — validate and export each internally
+  re-propose against the current live state rather than trusting a
+  earlier call's snapshot — `ValidateServiceChange`, `ExportForManualPublish`)
+  landed under that one correlation id.
+- [x] `src/mcp/httpTransport.integration.test.ts` (4 tests): tool listing
+  over the real protocol, 401 with no bearer token before any MCP
+  handshake, a real live `ptv_search_services` call, and a
+  `not_authorized` tool error (not a transport exception) for a tenant
+  the caller doesn't belong to.
+
+Deviations:
+- **Terminal step is `ptv_export_for_manual_publish`, not
+  `ptv_apply_changes`**, in the sync-point script — the same external gap
+  Phase 2/3 already documented: a real write needs a real per-user PTV
+  OAuth connection, which needs a PTV client actually registered with
+  palveluhallinta.suomi.fi. `ptv_apply_changes` itself is fully built and
+  tested (unit tests covering validation-blocks-write, write-failure
+  audit, registry-error propagation; `dbAdapterRegistry.integration.test.ts`
+  covering the real write-capable-adapter resolution) — only the very
+  last "does PTV actually accept this write" step is untestable without
+  that external registration.
+- **`applyChanges` re-validates unconditionally**, even if the caller
+  already called `ptv_validate_changes` separately first — this produces
+  a second `ValidateServiceChange` audit entry per apply, which is a
+  correct record of what actually happened (validation really did run
+  twice), not a bug, but worth flagging as an accepted minor audit-log
+  duplication rather than a deduplicated "was this already validated"
+  check.
+- **A malformed-Bearer-token 500 risk does not apply here** (unlike
+  Phase 3's sync-point deviation) — every MCP tool call in this phase
+  either sends no PTV credential at all (Reader-level reads) or a real
+  stored one, never a fabricated test string, so this phase's tests
+  don't reproduce that v11 quirk.
+- **`exactOptionalPropertyTypes` friction with `@modelcontextprotocol/sdk`'s
+  own type declarations** (`sessionIdGenerator`, `onclose`, `sessionId` all
+  declared as bare-optional in a way this repo's strict tsconfig doesn't
+  accept when assigned across the library boundary) — worked around with
+  narrow, documented `as unknown as Transport` casts at the exact call
+  sites (`server.connect(...)`, `client.connect(...)`), and by omitting
+  `sessionIdGenerator` entirely rather than setting it to `undefined`
+  (which itself already means stateless mode per the SDK's own docs, so
+  no behavior is lost). Same category of pre-existing friction as Phase 3's
+  `@node-rs/argon2` `Algorithm` const-enum workaround — a tsconfig/library
+  interop issue, not a bug in either side.
+- **No MCP resources or prompts** — only tools, per the phase plan's
+  explicit scope (Phase 4 is "MCP tool layer"). Resources/prompts aren't
+  mentioned anywhere in docs/plan.md's MCP tool list either.
