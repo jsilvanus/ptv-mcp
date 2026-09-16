@@ -482,3 +482,86 @@ Deviations:
   `docs/phase-plan.md`'s risk register note that membership must always
   be re-checked at call time, never cached, since a user's PTV connection
   outlives their tenant membership.
+
+---
+
+## 2026-09-16 — Phase 3, Stream B (Tenant & credential management) closed ✅ 🔒
+
+Owned files:
+- src/tenants/tenantService.ts, tenantService.integration.test.ts
+- src/credentials/userPtvConnectionService.ts, userPtvConnectionService.integration.test.ts
+- src/credentials/tenantEnvironmentService.ts, tenantEnvironmentService.integration.test.ts
+- src/credentials/ptvAdapterConfigService.ts, ptvAdapterConfigService.integration.test.ts
+- src/routes/tenants.ts, tenants.integration.test.ts
+- src/routes/ptvConnections.ts, ptvConnections.integration.test.ts
+
+Also touched, additively:
+- src/config.ts, .env.example: added `PTV_V11_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI`
+  (all optional, default `''`) for the connect-PTV routes below.
+- src/app.ts: wires `TenantService`, `UserPtvConnectionService`, and the
+  new route plugins into `buildApp`.
+
+What got built, matching the phase plan's Stream B scope exactly:
+- **Tenant/membership CRUD**: `TenantService` + `/tenants` routes — create
+  a tenant (creator becomes its first Tenant Admin, atomically, in one
+  transaction — see deviation below), list a user's own tenants across
+  every tenant they belong to (this is what the Phase 1 membership-RLS
+  reopen exists for), add/update/remove members by a Tenant Admin.
+- **`UserPtvConnection` gets a full write path** (the phase plan's wording
+  distinguishes this from `TenantEnvironment`, which doesn't yet):
+  `UserPtvConnectionService` (envelope-encrypted access token storage) plus
+  `/ptv-connections/*` routes implementing the actual per-user consent
+  flow docs/ptv-v11-notes.md describes — authorize-url generation
+  (wrapping Phase 2's `buildAuthorizationUrl`), the callback that parses
+  the captured fragment (Phase 2's `parseCallbackFragment`), validates it
+  via introspection (Phase 2's `introspectToken`) before ever storing it,
+  and disconnect (attempts PTV revocation best-effort, then always revokes
+  our own record regardless of whether PTV's call succeeded).
+- **`TenantEnvironment` storage + encryption, tests only, no routes** —
+  `TenantEnvironmentService`, exactly as scoped ("no UI or write path yet"
+  in the phase plan, since nothing populates it until Phase 7's
+  `PtvV12Adapter` exists to use it).
+- **`PtvAdapterConfig` wired to the real DB table** — `PtvAdapterConfigService`,
+  consumed by Stream D's registry next.
+
+Sync point verified (this stream's slice — full registry resolution is
+Stream D's):
+- [x] `npm run typecheck`, `lint`, `format`, `test`, and `build` all pass.
+- [x] `npm run test:integration` — 82/82 passing, adding 34 new tests
+  across the six files above (service-level: create/list/add/update/
+  remove for tenants, encrypt/decrypt/revoke/reconnect for both
+  credential-scope tables, upsert/list for adapter config; route-level:
+  full HTTP flows including RBAC enforcement — a Reader gets 403 adding a
+  member, an unauthenticated request gets 401 — and the OAuth callback
+  path with a stubbed `fetch` for introspection/revocation).
+
+Deviations:
+- **Bug found and fixed before this stream closed**: the first version of
+  `TenantService.createTenant` inserted the tenant in one
+  `db.transaction()`, then called `withContext(this.db, ...)` for the
+  membership insert — `withContext` opens its *own* transaction, which
+  (being a separate Postgres transaction/connection) can't see the
+  tenant row the outer transaction hadn't committed yet, so every
+  membership insert failed its foreign-key constraint. All 8
+  `TenantService` tests caught this immediately. Fixed by running
+  `set_config` directly on the same `tx` as the tenant insert instead of
+  nesting a second transaction — documented here since it's exactly the
+  kind of RLS/transaction-scoping mistake the phase plan's Phase 1
+  deviation note warned about, just one level up the call stack.
+- **No CSRF-binding for the OAuth `state` parameter.** `authorize-url`
+  generates and returns a `state` value, but nothing persists it
+  server-side to verify the callback's request actually corresponds to
+  the authorize-url call that issued it — the callback endpoint requires
+  the caller to already be authenticated with our own JWT, which bounds
+  the blast radius (an attacker would need to hijack an authenticated
+  session, not merely lure a visitor), but this is weaker than a fully
+  server-verified state round-trip. No new token table was added for this
+  in Stream B; worth revisiting in Phase 5 when a real web UI (with a
+  place to hold client-side state, e.g. a short-lived cookie) exists.
+- **Introspection/revocation calls use the real PTV endpoints with
+  whatever `PTV_V11_OAUTH_CLIENT_ID/SECRET` are configured** — since no
+  real client is registered yet (external prerequisite, same gap Phase 2
+  flagged), these routes are fully built and tested against a mocked
+  `fetch`, but a real callback against production PTV won't work until
+  that registration exists. This is a continuation of Phase 2's open
+  item, not a new one.

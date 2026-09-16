@@ -10,6 +10,16 @@ export interface AppConfig {
    * different rotation schedules, and a JWT-signing leak shouldn't also expose stored
    * PTV credentials. */
   jwtSecret: string;
+  /**
+   * v11's per-user OAuth consent flow (docs/ptv-v11-notes.md). Registering a
+   * real client with palveluhallinta.suomi.fi is an external, organization-level
+   * prerequisite not available as of Phase 2/3 (see EXECUTION_LOG.md) — these
+   * default to empty strings so the rest of the app runs without them; the
+   * connect-PTV routes simply won't produce a usable flow until they're set.
+   */
+  ptvV11OAuthClientId: string;
+  ptvV11OAuthClientSecret: string;
+  ptvV11OAuthRedirectUri: string;
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
@@ -44,5 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl: requireEnv('DATABASE_URL', env),
     masterEncryptionKey: requireEnv('MASTER_ENCRYPTION_KEY', env),
     jwtSecret: requireEnv('JWT_SECRET', env),
+    ptvV11OAuthClientId: env.PTV_V11_OAUTH_CLIENT_ID ?? '',
+    ptvV11OAuthClientSecret: env.PTV_V11_OAUTH_CLIENT_SECRET ?? '',
+    ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
   };
 }

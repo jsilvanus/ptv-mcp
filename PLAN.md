@@ -46,7 +46,7 @@
 
 ## Phase 3: Core platform services 🔄
 - [x] Stream A — Auth (JWT, Argon2id, refresh rotation + denylist, RBAC) ✅
-- [ ] Stream B — Tenant & credential management (`UserPtvConnection` for v11; `TenantEnvironment` storage exercised by tests only, no UI yet)
+- [x] Stream B — Tenant & credential management (`UserPtvConnection` for v11; `TenantEnvironment` storage exercised by tests only, no UI yet) ✅
 - [ ] Stream C — Audit logging
 - [ ] Stream D — Adapter registry implementation (verify both credential-scope branches using the Phase 1 in-memory fake)
 
