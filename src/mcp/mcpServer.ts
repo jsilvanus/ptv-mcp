@@ -20,7 +20,6 @@ import { applyChanges, exportForManualPublish, ValidationFailedError } from './a
 import type { ToolContext } from './toolContext.js';
 import {
   getProposal,
-  InvalidResolveActionError,
   isProposalQueueError,
   listProposals,
   queueProposal,
@@ -59,7 +58,6 @@ function describeError(err: unknown): string {
     err instanceof ServiceNotFoundError ||
     err instanceof ValidationFailedError ||
     err instanceof NotAuthorizedError ||
-    err instanceof InvalidResolveActionError ||
     isProposalQueueError(err)
   ) {
     return err.message;

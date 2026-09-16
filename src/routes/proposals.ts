@@ -61,13 +61,13 @@ export async function proposalRoutes(
     '/tenants/:tenantId/proposals',
     { preHandler: [authenticate, requireEditor] },
     async (request) => {
-    const { tenantId } = request.params as { tenantId: string };
-    return listProposals(
-      resolveRole,
-      options.proposalService,
-      contextFrom(tenantId, request.userId!, request.query),
-      request.query.status,
-    );
+      const { tenantId } = request.params as { tenantId: string };
+      return listProposals(
+        resolveRole,
+        options.proposalService,
+        contextFrom(tenantId, request.userId!, request.query),
+        request.query.status,
+      );
     },
   );
 
