@@ -1,70 +1,79 @@
 # Phase Plan: PTV MCP Server
 
-> Companion document to [`docs/plan.md`](./plan.md) (the reviewed architecture
-> plan). This sequences the work: what must happen in order, what can run in
-> parallel, and where PTV's own external rollout timeline — not our build
-> speed — gates further progress.
+> Companion document to [`docs/plan.md`](./plan.md) (the reviewed
+> architecture plan) and [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md) (the
+> v11 API review). This sequences the work: what must happen in order,
+> what can run in parallel, and where PTV's own external rollout timeline
+> — not our build speed — gates further progress.
+>
+> **Revision note:** earlier versions of this plan treated v12 as the
+> primary backend with v11 as an optional bolt-on track ("Track 3B") added
+> later and removed at the end. That framing is gone. PTV already has two
+> live API generations (v11, v12) and a well-established pattern of
+> replacing one with the next — a future v13 is a "when," not an "if." So
+> the PTV integration is built from Phase 1 onward as a **ports & adapters
+> layer**: one `PtvAdapter` interface, one shared domain model, and
+> interchangeable per-version adapters (`PtvV11Adapter`, `PtvV12Adapter`,
+> eventually `PtvV13Adapter`) behind it. Onboarding and retiring a version
+> is the same repeatable procedure every time, not a one-off.
 
 ## Overview
 
-8 numbered phases, plus one parallel track (3B) for v11 write support.
-Phases 0–5 deliver **MVP-0** (search, propose-changes, diff, validation,
-manual export — no direct PTV writes) and are fully within our control.
-Phases 6–7 (**MVP-1**, **MVP-2**) enable `ptv_apply_changes` against PTV's
-**v12** write API and are blocked on PTV's own roadmap (write endpoints in
-test ~10/2026, production ~04/2027) — they're fully specced now but can't
-start early no matter how fast the rest of the plan moves.
+9 phases. Phases 0–6 deliver **MVP-0** and are fully within our control;
+they build the adapter layer with **both v11 and v12 as first-class
+adapters from the start**, not sequentially. Phases 7–8 (**MVP-1**,
+**MVP-2**) extend `PtvV12Adapter` with write support and are blocked on
+PTV's own roadmap (write endpoints in test ~10/2026, production ~04/2027).
+Because v11 is a live production write path today, **MVP-0 itself may
+already ship with real production writes** via `PtvV11Adapter` — contingent
+on a single, hard, early gate: whether v11's declared OAuth2 `implicit`
+grant (its scope name looks like unmodified IdentityServer4 boilerplate —
+see `docs/ptv-v11-notes.md`) is actually usable by an unattended backend.
+That gate sits in Phase 2, before any adapter write-path code is built.
 
-Track **3B** adds `ptv_apply_changes` against PTV's **v11** write API — the
-API organisations currently use for production writes, whose only fixed
-deadline is PTV's planned 04/2027 sunset (same document PTV published: `04/2027`
-= v12 write GA in production *and* v11 fully retired). Because v11 is live
-today, this track can deliver production writes **well before** Phase 7's
-v12-based MVP-2 — but it opens with a discovery spike and a go/no-go gate
-before any adapter code is written, because v11's actual API
-([reviewed in detail](./ptv-v11-notes.md)) raises one serious open
-question: its write and restricted-read endpoints require OAuth2, declared
-in its spec as the **implicit** grant — a browser/front-channel flow with
-no refresh token, a poor fit for an unattended backend. The scope name in
-that same spec (`dataEventRecords`) is IdentityServer4's stock quickstart
-example, which suggests the declared flow may just be boilerplate rather
-than what real integrators actually use — Phase 1C exists specifically to
-find out. It is retired again inside Phase 7, once v12 production write is
-proven and tenants have migrated off it.
-
-Critical path: **Phase 0 → 1A → 2 → 3 → 5 → (external wait) → 6 → (external
-wait) → 7.** Phase 1B, Phase 4, and Track 3B all hang off this spine without
-lengthening it — they're what to cut first if the internal timeline needs
-compressing.
+Critical path: **Phase 0 → 1 → 2 → 3 → 4 → 6 → (external wait) → 7 →
+(external wait) → 8.** Phase 5 (Web UI) hangs off Phase 3 without
+lengthening the spine.
 
 ## Dependency Map
 
 ```
 Phase 0 (foundation)
    │
-   ├──> Phase 1A (DB schema + RLS, polymorphic credential blob) ─┐
-   ├──> Phase 1B (PTV v12 client + type gen)                     │
-   └──> Phase 1C (v11 discovery spike — informs 1A's schema)     │
-                                                                   ▼
-                                       Phase 2 (auth / tenant+keys / audit / capability-gate)
-                                                                   │
-                        ┌──────────────────────┬───────────────────┴───────────────┐
-                        ▼                      ▼                                    ▼
-                Phase 3 (MCP tool layer)  Phase 4 (Web UI)              Track 3B (v11 write adapter)
-                        │                      │                                    │
-                        └──────────┬───────────┘                                    │
-                                   ▼                                                │
-                       Phase 5 (integration & MVP-0 launch)                         │
-                                   │                                                │
-                                   │            (production writes live via v11, independently)
-                     ┄┄┄┄┄┄┄┄┄ external gate: PTV ships v12 write, test ┄┄┄┄┄┄┄┄┄┄┄┄
-                                   ▼
-                       Phase 6 (MVP-1: v12 write, test env)
-                                   │
-                     ┄┄┄┄┄┄┄┄┄ external gate: PTV ships v12 write, prod ┄┄┄┄┄┄┄┄┄┄┄┄
-                                   ▼
-                       Phase 7 (MVP-2: v12 write, production
-                                + migrate off and remove Track 3B)
+   ▼
+Phase 1 (data layer + PtvAdapter contract + domain model)
+   │
+   ├──────────────────────┬──────────────────────┐
+   ▼                      ▼                       │
+Phase 2A                Phase 2B                  │
+(PtvV12Adapter:          (PtvV11Adapter:           │
+ read now, write         read + OAuth grant-type   │
+ stubbed for later)       discovery + go/no-go     │
+                          for write)                │
+   │                      │                        │
+   └──────────┬───────────┘                        │
+              ▼                                     │
+   Phase 3 (auth / tenant+credentials / audit /      │
+            adapter registry)                       │
+              │                                     │
+   ┌──────────┴──────────┐                          │
+   ▼                     ▼                          │
+Phase 4                Phase 5                      │
+(MCP tool layer,       (Web UI)                      │
+ version-agnostic)                                  │
+   └──────────┬──────────┘                          │
+              ▼                                     │
+   Phase 6 (integration hardening & MVP-0 launch) ◄──┘
+   (ships with v11 production writes if Phase 2B passed go/no-go)
+              │
+   ┄┄┄┄┄┄┄┄┄ external gate: PTV ships v12 write, test ┄┄┄┄┄┄┄┄┄┄┄┄
+              ▼
+   Phase 7 (MVP-1: PtvV12Adapter write, test env)
+              │
+   ┄┄┄┄┄┄┄┄┄ external gate: PTV ships v12 write, prod ┄┄┄┄┄┄┄┄┄┄┄┄
+              ▼
+   Phase 8 (MVP-2: PtvV12Adapter write, production
+            + retire PtvV11Adapter via the standing runbook)
 ```
 
 ---
@@ -82,65 +91,102 @@ Phase 0 (foundation)
 
 ---
 
-## Phase 1: Data layer, PTV v12 client, and v11 discovery
-**Mode:** Parallel (3 streams)
+## Phase 1: Data layer, adapter contract, and domain model
+**Mode:** Parallel (2 streams)
 **Depends on:** Phase 0
-**Goal:** Migrations run clean on a fresh DB; the app can call a real PTV
-v12 search endpoint and get typed, validated data back; we know whether v11
-write support is worth building and what shape it needs.
+**Goal:** Migrations run clean on a fresh DB; the `PtvAdapter` interface
+and shared domain model are frozen enough for Phase 2's two adapters to be
+built against without churn.
 
 **Stream A — Data layer**
-- Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvApiCapabilities`, `AuditEntry`
-- `TenantEnvironment` stores credentials as a **polymorphic encrypted blob**
-  (JSON, shape keyed by `api_version`) rather than a single
-  `encrypted_api_key` string — v12 needs a static `x-api-key` string, v11
-  needs an OAuth2 client registration plus whatever token/refresh state
-  its real (as opposed to declared) grant type produces (see Stream C).
-  Keeping this polymorphic means removing v11 later is a data cleanup, not
-  a schema change
+- Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvAdapterConfig`, `AuditEntry`
+- `TenantEnvironment` stores credentials as a **polymorphic encrypted
+  blob** (JSON, shape keyed by `api_version`) — v12 needs a static
+  `x-api-key` string, v11 needs OAuth2 client/token state (exact shape
+  depends on Phase 2B's grant-type finding)
+- `PtvAdapterConfig` keyed by `(tenant_id, environment, api_version)`:
+  `auth_mode`, `supports_read`, `supports_write`, `supports_draft_read` —
+  `api_version` is a free string, not an enum, so adding v13 later never
+  needs a migration
 - Row-Level Security policies keyed on `tenant_id`
 - Seed script for local dev (fake tenants/users)
 
-**Stream B — PTV v12 client foundation**
-- Vendor PTV v12 `openapi.json`, generate TS types (`openapi-typescript`) + Ajv validators from it
-- Typed HTTP client: retry/backoff+jitter, auth adapter interface (`x-api-key` now, `bearerAuth`-ready)
-- Capability-gate stub (reads `PtvApiCapabilities` shape, hardcoded config until Stream A's table lands)
+**Stream B — `PtvAdapter` contract and domain model**
+- Define the `PtvAdapter` TypeScript interface: `searchServices`,
+  `getService`, `searchChannels`, `getChannel`, `getOrganisation`
+  (+hierarchy), `searchServiceCollections`, `searchGeneralDescriptions`,
+  `getConnectionsFor(entity)`, `listCodes`, `applyServiceChange`, and
+  `getCapabilities()` (what this adapter instance actually supports)
+- Define the shared **domain model** every adapter maps to/from: `Service`
+  (3 subtypes), `ServiceChannel` (5 subtypes: EChannel, Phone,
+  PrintableForm, ServiceLocation, WebPage), `Organization`,
+  `GeneralDescription`, `ServiceCollection`, `Connection`, code lists —
+  MCP tools, the diff engine, and validation only ever touch this model,
+  never a version's wire format directly
+- Define `PtvAdapterRegistry`'s resolution contract: given
+  `(tenant, environment, operation)`, return the adapter instance to use
+- Write the **contract test suite** stub: a fixture-driven test set that
+  any `PtvAdapter` implementation must pass (used in Phase 2's sync point)
 
-**Stream C — v11 write-path discovery (spike)**
-(v11's spec is now reviewed — see [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md) —
-so this stream is about resolving the three things the spec alone can't answer)
-- **Confirm the real OAuth grant type** against `palveluhallinta.suomi.fi` —
-  its Swagger declares the `implicit` flow with a scope name
-  (`dataEventRecords`) that looks like unmodified IdentityServer4
-  boilerplate, so it's unverified whether that's actually usable for an
-  unattended backend or whether real integrators use something else
-  (e.g. `client_credentials`)
-- **Decide if v11 read is needed at all**, narrowly for its
-  draft-visibility endpoints (`Service/active/{id}`,
-  `ServiceChannel/active/{id}`) that v12 has no equivalent for — not for
-  ordinary published-content search, which v12 already covers
-- **Build the delete-flag mapping table**: v11's PUT is a partial update
-  where omitting a field does *not* clear it — removal requires an
-  explicit `deleteX: true` flag per field group. Get this wrong and an
-  approved deletion silently no-ops against PTV
-- **Go/no-go decision**, reported back into Stream A before its schema is
-  finalized: if the OAuth grant genuinely requires a human in the loop,
-  drop the track — MVP-0's manual export remains the production path
-  until 04/2027
-
-**Sync point:** `npm run db:migrate` succeeds on a fresh Postgres; a script
-calls the v12 search equivalent against the real test environment and
-returns validated, typed results; Stream C's go/no-go is documented and
-Stream A's credential schema reflects it.
+**Sync point:** `npm run db:migrate` succeeds on a fresh Postgres; the
+`PtvAdapter` interface and domain model compile and are documented; the
+contract test suite runs (against a fake in-memory adapter) and is ready
+to run against real implementations.
 
 ---
 
-## Phase 2: Core platform services
-**Mode:** Parallel (4 streams)
+## Phase 2: Adapter implementations — v11 and v12, side by side
+**Mode:** Parallel (2 streams)
 **Depends on:** Phase 1
-**Goal:** An authenticated request can resolve tenant + role, decrypt the
-right PTV credentials for the right API version, and every action is
-recorded.
+**Goal:** Both adapters pass the shared contract test suite for reads; the
+v11 write go/no-go is decided before any write code is built.
+
+**Stream 2A — `PtvV12Adapter`**
+- Vendor PTV v12 `openapi.json`, generate wire types + Ajv validators
+- Implement read methods (search/get for all content types, code lists)
+  against the domain model
+- `x-api-key` auth, retry/backoff+jitter
+- Write methods **stubbed** — implemented against the beta `Post*/Put*`
+  schemas already reviewed, but gated off (`supports_write: false`) until
+  Phase 7, since the endpoints don't exist yet
+
+**Stream 2B — `PtvV11Adapter`**
+(builds on the review in `docs/ptv-v11-notes.md`)
+- Vendor v11 `swagger.json`, generate wire types
+- Implement read methods: ordinary published-content search/get (no
+  credentials needed — v11's public GETs are unauthenticated) plus the
+  **restricted draft-visibility endpoints** (`Service/active/{id}`,
+  `ServiceChannel/active/{id}`) for tenants that need to see PTV drafts
+- Extract embedded connection data from `Service`/`ServiceChannel`
+  payloads (v11 has no dedicated connection-read endpoint)
+- **OAuth2 grant-type discovery spike**: register or find documentation
+  for a real client against `palveluhallinta.suomi.fi`; determine whether
+  an unattended backend can actually obtain and refresh tokens, since the
+  spec's declared `implicit` grant (with an IdentityServer4-boilerplate
+  scope name) is suspect
+- **Delete-flag mapping table**: v11's PUT is a partial update — a field
+  isn't cleared just because it's omitted, an explicit `deleteX: true`
+  flag is required per field group. Build and unit-test this mapping
+  before wiring any write call
+- **Go/no-go decision**, feeding directly into `PtvAdapterConfig`:
+  - **Go** → `supports_write: true` for `api_version = v11`,
+    `environment = production`, gated per-tenant rollout in Phase 6
+  - **No-go** (grant genuinely requires a human in the loop) →
+    `PtvV11Adapter` ships **read-only**; MVP-0's manual export remains the
+    only production write path until Phase 7
+
+**Sync point:** the Phase 1 contract test suite passes against both
+`PtvV12Adapter` and `PtvV11Adapter` for all read operations; the v11
+go/no-go is documented and `PtvAdapterConfig`'s seed data reflects it.
+
+---
+
+## Phase 3: Core platform services
+**Mode:** Parallel (4 streams)
+**Depends on:** Phase 2
+**Goal:** An authenticated request resolves tenant + role, the adapter
+registry picks the right adapter, credentials decrypt correctly, and every
+action is recorded.
 
 **Stream A — Auth**
 - JWT issue/verify, Argon2id hashing, refresh-token rotation + denylist
@@ -149,144 +195,158 @@ recorded.
 
 **Stream B — Tenant & credential management**
 - Tenant/membership CRUD
-- Envelope-encrypted credential storage (per-tenant data key wrapped by
-  environment master key), handling both v12's API-key shape and (if
-  Phase 1C said go) v11's shape, write-only-after-save UI contract
-- `PtvApiCapabilities` wired to real DB table
+- Envelope-encrypted credential storage handling both adapters' shapes
+  (v12 API key, v11 OAuth2 client/token state), write-only-after-save UI
+  contract
+- `PtvAdapterConfig` wired to the real DB table
 
 **Stream C — Audit logging**
-- Append-only audit-entry write path, correlation IDs, `ptv_api_version`/`environment` fields
+- Append-only audit-entry write path, correlation IDs, `api_version` and
+  `environment` fields so every action records which adapter handled it
 - Retention + access-restriction policy for `prompt`/`before_state`/`after_state` (GDPR)
 
-**Stream D — PTV client integration finish**
-- Wire capability gate to live `PtvApiCapabilities`
-- Liveness/readiness polling per tenant/environment
-- `archived` endpoint sync helper for incremental cache invalidation
+**Stream D — Adapter registry**
+- Implement `PtvAdapterRegistry`: resolves `(tenant, environment,
+  operation)` to a concrete adapter instance via `PtvAdapterConfig`
+- Liveness/readiness polling per adapter (v12 exposes `/health/*`; v11 has
+  no equivalent — handle its absence gracefully)
+- v12's `archived` endpoint sync helper for incremental cache invalidation
+  (v11-specific, housed inside `PtvV12Adapter`, not the registry itself)
 
-**Sync point:** integration test — log in, resolve tenant + role, decrypt
-the tenant's real API credentials, and successfully call PTV; audit entry
-recorded for the call.
+**Sync point:** integration test — log in, resolve tenant + role, the
+registry picks the correct adapter, credentials decrypt, a real PTV call
+succeeds, and an audit entry is recorded naming the adapter used.
 
 ---
 
-## Phase 3: MCP tool layer
+## Phase 4: MCP tool layer
 **Mode:** Parallel (4 streams)
-**Depends on:** Phase 2
-**Goal:** An agent can search PTV content, propose a change, validate it,
-and produce a manual-publish export — fully audited.
+**Depends on:** Phase 3
+**Goal:** An agent can search PTV content (via either adapter, transparently),
+propose a change, validate it, and either export it manually or apply it
+directly if a write-capable adapter is active for that tenant.
 
 **Stream A — Search tools**
-`ptv_search_services`, `ptv_get_service`, `ptv_search_channels`, `ptv_get_channel`, `ptv_get_organisation` (+hierarchy), `ptv_search_service_collections`, `ptv_search_general_descriptions`, `ptv_search_connections`, `ptv_list_codes`
+`ptv_search_services`, `ptv_get_service`, `ptv_search_channels`,
+`ptv_get_channel`, `ptv_get_organisation` (+hierarchy),
+`ptv_search_service_collections`, `ptv_search_general_descriptions`,
+`ptv_search_connections`, `ptv_list_codes` — all built against the domain
+model via the registry, adapter-agnostic
 
 **Stream B — Propose-changes / diff engine**
-`ptv_propose_changes` — current-state fetch + AI-proposed delta + structured diff, no writes. **Freeze this JSON contract early** — Phase 4 Stream C builds a UI against it.
+`ptv_propose_changes` — operates entirely on the domain model, so it's the
+same code whichever adapter served the current state. **Freeze this JSON
+contract early** — Phase 5 Stream C builds a UI against it.
 
 **Stream C — Validation engine**
-`ptv_validate_changes` — type-aware (3 service subtypes × 5 channel subtypes), generated from PTV's v12 Post/Put schemas, checks controlled-vocabulary membership and cardinality limits
+`ptv_validate_changes` — per-adapter rule sets (v11 and v12 field
+constraints may differ subtly) registered against one common validator
+interface; generated from each adapter's own schemas, not hand-maintained
 
-**Stream D — Manual export**
-`ptv_export_for_manual_publish` — renders an approved proposal into a PTV-UI-ready, per-language format; writes `ReadyForManualPublish` audit entries
+**Stream D — Apply / export**
+- `ptv_export_for_manual_publish` — renders an approved proposal into a
+  PTV-UI-ready, per-language format; writes `ReadyForManualPublish` audit
+  entries
+- `ptv_apply_changes` — asks the registry for a write-capable adapter for
+  this tenant/environment; if `PtvV11Adapter` passed its go/no-go, this is
+  live in MVP-0 for production; otherwise it returns a clear
+  "not yet available" error until Phase 7
 
 **Sync point:** end-to-end script — search a real service, propose a
-rewrite, validate it, export it — with every step in the audit log.
+rewrite, validate it, then either export it or apply it directly — with
+every step in the audit log naming the adapter involved.
 
 ---
 
-## Phase 4: Web UI
+## Phase 5: Web UI
 **Mode:** Parallel (3 streams)
-**Depends on:** Phase 2 (runs alongside Phase 3, not behind it)
-**Goal:** Tenant admins can self-serve users, keys, and audit visibility
-without touching the DB.
+**Depends on:** Phase 3 (runs alongside Phase 4, not behind it)
+**Goal:** Tenant admins can self-serve users, credentials, and audit
+visibility without touching the DB.
 
 **Stream A — Auth & tenant/user management UI** (login, org switcher, membership/role editing)
-**Stream B — Credential management UI** (masked display, replace-only flow, per-environment, per-`api_version` once Track 3B exists)
-**Stream C — Audit log viewer / proposal review UI** (diff view depends on Phase 3 Stream B's frozen contract — build against a mock if it isn't ready yet)
+**Stream B — Credential management UI** (masked display, replace-only flow, per-environment, form adapts to `auth_mode` — API key field for v12, OAuth client setup for v11)
+**Stream C — Audit log viewer / proposal review UI** (diff view depends on Phase 4 Stream B's frozen contract — build against a mock if it isn't ready yet)
 
-**Sync point:** a tenant admin can create a user, set their role, rotate a
-credential, and see it in the audit log, all from the UI.
-
----
-
-## Track 3B: v11 write adapter (parallel, off the critical path)
-**Mode:** Sequential internally; runs alongside Phases 3–4
-**Depends on:** Phase 2, and a "go" from Phase 1 Stream C
-**Goal:** Publisher role can write to PTV **production now**, without
-waiting for v12's write API (not due until 04/2027).
-
-1. Implement a `Ptv11Client` behind the same interface as the v12 client (retry/backoff, capability gate, audit hooks all reused)
-2. Add `PtvApiCapabilities` rows for `api_version = v11`, `environment = production`, `supports_write` feature-flagged off by default
-3. Route `ptv_apply_changes` through whichever adapter the tenant's capabilities row points to
-4. Validate against v11's actual schemas from the Phase 1C spike — don't assume the v12 validation code applies unmodified
-5. Pilot on one tenant/environment, confirm, then flip the flag more broadly
-
-Skip this track entirely if Phase 1C's discovery comes back "not worth it"
-— MVP-0's manual export remains the production path until Phase 7.
+**Sync point:** a tenant admin can create a user, set their role, configure
+credentials for whichever adapters are active, and see actions in the
+audit log, all from the UI.
 
 ---
 
-## Phase 5: Integration hardening & MVP-0 launch
+## Phase 6: Integration hardening & MVP-0 launch
 **Mode:** Sequential
-**Depends on:** Phase 3, Phase 4
+**Depends on:** Phase 4, Phase 5
 **Goal:** Deployable, reviewed, documented MVP-0.
 
-1. End-to-end tests across the full propose → validate → export flow, per role
+1. End-to-end tests across the full propose → validate → export/apply flow, per role, against both adapters
 2. Multi-tenant isolation tests (attempt cross-tenant reads/writes, confirm RLS actually blocks them, not just that policies exist)
-3. Security review (secrets handling, key rotation, GDPR retention on audit fields) — include Track 3B's credential handling if it has shipped by this point
-4. Docs: deployment guide, capability-matrix explainer, README
+3. Security review — secrets handling, key rotation, GDPR retention on audit fields, and (if Phase 2B went "go") the v11 OAuth credential lifecycle specifically
+4. Docs: deployment guide, adapter-onboarding/retirement runbook (formalized from Phase 2's process), README
 5. Production Docker/Compose config finalized, CI/CD deploy step added
+6. Staged rollout of `PtvV11Adapter` write support, tenant by tenant, if Phase 2B passed go/no-go
 
-**This is the MVP-0 ship gate.** Track 3B may ship before or after this
-gate independently — it isn't a dependency in either direction.
+**This is the MVP-0 ship gate.** Depending on Phase 2B's outcome, MVP-0
+ships either with real production writes (via v11) or with manual export
+only — the same codebase, decided entirely by `PtvAdapterConfig`.
 
 ---
 
-## Phase 6: MVP-1 — write to PTV v12 test environment
+## Phase 7: MVP-1 — `PtvV12Adapter` write, test environment
 **Mode:** Sequential
-**Depends on:** Phase 5 **and** PTV publishing v12 write endpoints to its test environment (external, expected ~10/2026)
+**Depends on:** Phase 6 **and** PTV publishing v12 write endpoints to its test environment (external, expected ~10/2026)
 **Goal:** `ptv_apply_changes` works against PTV's v12 test environment.
 
-1. Re-generate types/validators once PTV's write OpenAPI schemas are final (they're beta today)
-2. Implement the v12 write path against POST/PUT endpoints, test env only
-3. Flip `PtvApiCapabilities.supports_write = true` for `api_version = v12`, `environment = test`
-4. Enable Publisher role's write path, add idempotency handling for POST (dedup key), retry-safety for PUT
-5. Write-path audit entries (`ApplyServiceChange`, before/after PTV state)
+1. Re-generate `PtvV12Adapter`'s types/validators once PTV's write OpenAPI schemas are final (they're beta today)
+2. Implement the write methods already stubbed in Phase 2A against the real POST/PUT endpoints, test env only
+3. Flip `PtvAdapterConfig.supports_write = true` for `api_version = v12`, `environment = test`
+4. Idempotency handling for POST (dedup key), retry-safety for PUT
+5. Confirm write-path audit entries record `api_version = v12` correctly
 
 ---
 
-## Phase 7: MVP-2 — write to PTV v12 production, retire v11
+## Phase 8: MVP-2 — `PtvV12Adapter` write, production; retire `PtvV11Adapter`
 **Mode:** Sequential
-**Depends on:** Phase 6 **and** PTV publishing v12 write endpoints to production (external, expected ~04/2027)
-**Goal:** `ptv_apply_changes` works in production on v12; Track 3B is fully decommissioned.
+**Depends on:** Phase 7 **and** PTV publishing v12 write endpoints to production (external, expected ~04/2027)
+**Goal:** `ptv_apply_changes` works in production on v12; `PtvV11Adapter` is
+decommissioned via the standing runbook, not a bespoke process.
 
-1. Flip `PtvApiCapabilities.supports_write = true` for `api_version = v12`, `environment = production`
+1. Flip `PtvAdapterConfig.supports_write = true` for `api_version = v12`, `environment = production`
 2. Final security review specific to production writes
-3. If Track 3B shipped: run the v11 and v12-production adapters side by side for a transition window — don't cut over on day one
-4. Migrate tenants off v11 credentials/config one at a time, confirming each on v12 before moving to the next
-5. Delete `Ptv11Client`, drop v11-specific `PtvApiCapabilities` rows, remove the now-unused branch of the polymorphic credential handling
-6. Update docs to remove v11 references
+3. **Run the adapter retirement runbook** against `PtvV11Adapter` (same
+   procedure documented in Phase 6's docs, and the one that will retire
+   `PtvV12Adapter` itself whenever v13 eventually arrives):
+   a. Run `PtvV11Adapter` and `PtvV12Adapter` (production) side by side for a transition window
+   b. Migrate tenants off v11 one at a time, confirming each on v12 before moving to the next
+   c. Once no `PtvAdapterConfig` row references `api_version = v11`: delete `PtvV11Adapter`'s implementation, its type-generation pipeline, and its credential-blob handling
+   d. Update docs to remove v11-specific references
 
 ---
 
 ## Critical Path
-Phase 0 → Phase 1 (Stream A) → Phase 2 → Phase 3 → Phase 5 → *(external
-wait)* → Phase 6 → *(external wait)* → Phase 7
+Phase 0 → Phase 1 → Phase 2 (both streams — whichever of 2A/2B takes
+longer sets the pace; expect 2B's OAuth discovery to dominate, it's the
+highest-uncertainty item in the whole plan) → Phase 3 → Phase 4 → Phase 6
+→ *(external wait)* → Phase 7 → *(external wait)* → Phase 8
 
-Phase 1 Stream B, Phase 1 Stream C, Phase 4, and Track 3B all hang off this
-spine but never lengthen it if resourced properly — they're the first
-things to cut or defer if the internal timeline needs compressing.
+Phase 5 hangs off Phase 3 but never lengthens the spine if resourced
+properly.
 
 ## Risk Register
-- **PTV's v12 write-schema beta churn** — the Post/Put schemas used in Phase 1B/3C are still beta; a shape change before Phase 6 requires re-generating types. Mitigation: pin the OpenAPI JSON version, diff on every re-fetch.
-- **RLS false confidence** — RLS policies wrongly scoped (e.g., missing on a join table) silently reintroduce the cross-tenant leak they're meant to prevent. Mitigation: the isolation tests in Phase 5 must attempt real cross-tenant access, not just check policy existence.
-- **Phase 4 Stream C / Phase 3 Stream B contract drift** — UI diff viewer built against a guessed shape before the diff engine is final. Mitigation: freeze the diff JSON contract at the start of Phase 3/4, not at their sync point.
-- **External-gate slippage** — PTV's 10/2026 and 04/2027 dates are the vendor's own projected roadmap, not commitments. Mitigation: keep Phase 6/7 fully spec'd but don't staff them until PTV's test/prod environments actually expose the endpoints — check via a scheduled probe against the live OpenAPI JSON rather than trusting the calendar.
-- **v11's declared OAuth flow may not be real (Track 3B)** — its spec declares the `implicit` grant with a boilerplate-looking scope, which if taken literally would require a human in the loop for token refresh. Mitigation: Phase 1C must verify the actual usable grant type against `palveluhallinta.suomi.fi` before any adapter code is written; if it's genuinely browser-only, drop the track rather than force it.
-- **v11's partial-update semantics (Track 3B)** — PUT requests don't clear a field just because it's omitted; each field group needs an explicit `deleteX: true` flag to remove it. Mitigation: build and test the delete-flag mapping table in Phase 1C, before wiring `ptv_apply_changes`'s diff-to-request translation, so an approved deletion can't silently no-op.
-- **v11/v12 cutover risk (Phase 7)** — removing v11 before every tenant is confirmed working on v12 production risks breaking live publishing for whoever's still on it. Mitigation: the side-by-side transition window and per-tenant migration in Phase 7 steps 3–4 are not optional, even under schedule pressure.
+- **Adapter interface churn** — if Phase 1's `PtvAdapter` interface is wrong, both Phase 2 adapters need rework simultaneously. Mitigation: freeze it at Phase 1's sync point behind the contract test suite; only additive changes afterward, never breaking ones.
+- **v11's declared OAuth flow may not be real** — its spec declares the `implicit` grant with a boilerplate-looking scope, which if taken literally would require a human in the loop for token refresh. Mitigation: Phase 2B's discovery spike is a hard go/no-go gate before any write code is built; a no-go doesn't block the phase, it just ships `PtvV11Adapter` read-only.
+- **v11's partial-update semantics** — PUT requests don't clear a field just because it's omitted; each field group needs an explicit `deleteX: true` flag. Mitigation: build and unit-test the delete-flag mapping table in Phase 2B before wiring `ptv_apply_changes`'s diff-to-request translation.
+- **PTV's v12 write-schema beta churn** — the Post/Put schemas used in Phase 2A/4C are still beta; a shape change before Phase 7 requires re-generating types. Mitigation: pin the OpenAPI JSON version, diff on every re-fetch.
+- **RLS false confidence** — RLS policies wrongly scoped (e.g., missing on a join table) silently reintroduce the cross-tenant leak they're meant to prevent. Mitigation: Phase 6's isolation tests must attempt real cross-tenant access, not just check policy existence.
+- **Phase 5 Stream C / Phase 4 Stream B contract drift** — UI diff viewer built against a guessed shape before the diff engine is final. Mitigation: freeze the diff JSON contract at the start of Phase 4/5, not at their sync point.
+- **External-gate slippage** — PTV's 10/2026 and 04/2027 dates are the vendor's own projected roadmap, not commitments. Mitigation: keep Phase 7/8 fully spec'd but don't staff them until PTV's test/prod environments actually expose the endpoints — check via a scheduled probe against the live OpenAPI JSON rather than trusting the calendar.
+- **v11/v12 cutover risk (Phase 8)** — removing v11 before every tenant is confirmed working on v12 production risks breaking live publishing for whoever's still on it. Mitigation: the side-by-side transition window and per-tenant migration in Phase 8 step 3 are not optional, even under schedule pressure.
+- **The runbook itself is unproven the first time** — Phase 8 is the first real run of the adapter retirement procedure; if it's harder than expected, that's a lesson for v12's own eventual retirement, not just a one-off cost. Mitigation: write down what actually happened in Phase 8, not just what was planned, so the v13 transition benefits from it.
 
 ## Recommended Starting Point
 Phase 0, step 1 — the ESM/TypeScript scaffold gates literally everything
-else. Kick off Phase 1's three streams the moment Phase 0's Docker Compose
-and app skeleton are up, including the v11 discovery spike (Stream C) —
-it's pure research with no code dependencies, so there's no reason to
-delay it, and its answer shapes Stream A's schema decisions.
+else. As soon as Phase 1's sync point is reached (interface + domain model
+frozen, contract test suite runnable), start both Phase 2 streams
+immediately and in parallel — there's no reason to build v12 first and
+bolt v11 on afterward, and starting v11's OAuth discovery early is exactly
+the fail-fast move given it's the plan's biggest unknown.

@@ -58,14 +58,19 @@ tuontimetodit (IN, eli kirjoitus):
 Tämä tarkoittaa, että **tänään (2026-09-16) v12-kirjoitusrajapintaa ei ole
 edes testiympäristössä** – se avautuu arviolta noin kuukauden kuluttua, ja
 tuotantoon se tulee vasta huhtikuussa 2027. Nykyinen tuotantokäytön
-kirjoitustie on vanha **v11-rajapinta**, jota ei tässä suunnitelmassa ole
-vielä analysoitu (eri autentikointimalli, eri tietomalli, eroaa
-todennäköisesti merkittävästi v12:sta).
+kirjoitustie on vanha **v11-rajapinta**, joka on nyt analysoitu erikseen
+(ks. [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md)) – sillä on eri
+autentikointimalli (OAuth2, v12:n staattisen API-avaimen sijaan) mutta
+saman datan/tyyppimallin kuin v12:n beta-kirjoitusskeemat.
 
 Tästä seuraa suoraan: **MVP:n rajaus ja vaiheistus on kirjoitettava
-uusiksi** (ks. [uusi vaiheistus](#tarkistettu-vaiheistus)). "Julkaisu PTV:hen
-API:n kautta" ei voi olla MVP:n ominaisuus, ellei erikseen päätetä
-toteuttaa myös v11-integraatiota rinnalle.
+uusiksi** (ks. [uusi vaiheistus](#tarkistettu-vaiheistus)). Koska sekä v11
+että tuleva v12 – ja joskus v13 – ovat väistämättä osa saman palvelimen
+elinkaarta, päädyttiin rakentamaan koko PTV-integraatio
+**sovitinpatternina** (ks.
+[PTV-sovitinkerros](#ptv-sovitinkerros-usean-rajapintaversion-v11-v12-tulevat-tuki))
+sen sijaan että "julkaisu PTV:hen API:n kautta" odotettaisiin kokonaan
+v12:n aikatauluun.
 
 ### 3. Kirjoitusskeemat ovat jo nähtävissä OpenAPI-dokumentissa – hyödynnä niitä suunnittelussa
 
@@ -74,9 +79,9 @@ kirjoitusoperaatioiden pyyntömallit: `PostServiceRequest`, `PutServiceRequest`,
 `PostEServiceChannelRequest`, `PostServiceLocationChannelRequest`,
 `PostPrintableFormChannelRequest`, `PostTelephoneChannelRequest`,
 `PostWebPageChannelRequest` (ja vastaavat `Put*`-versiot). Näitä kannattaa
-käyttää jo nyt sisäisen tietomallin ja validointilogiikan pohjana, jotta
-kun v12-kirjoitusrajapinta avautuu testiympäristöön (~10/2026), PTV Client
--kerros on suurelta osin valmis.
+käyttää jo nyt sisäisen domain-mallin ja validointilogiikan pohjana, jotta
+kun v12-kirjoitusrajapinta avautuu testiympäristöön (~10/2026),
+`PtvV12Adapter` on suurelta osin valmis.
 
 Tästä nähdään myös tärkeä rakenteellinen seikka, jota alkuperäinen
 suunnitelma ei huomioi:
@@ -108,17 +113,19 @@ ja `bearerAuth` (JWT). Käytännössä nykyiset (haku-)endpointit käyttävät
 `x-api-key`-mallia, mikä tukee alkuperäisen suunnitelman API-avainten
 salattua tallennusta. `bearerAuth` on varattu, ja on syytä varautua siihen,
 että **tuleva kirjoitusrajapinta voi vaatia OAuth/JWT-pohjaisen tokenin eikä
-pelkkää staattista API-avainta** – tästä ei ole vielä varmuutta, joten
-PTV Client -kerros kannattaa suunnitella tukemaan molempia
-autentikointimalleja (adapteripattern), ei kovakoodata pelkkää staattista
-avainta.
+pelkkää staattista API-avainta** – tästä ei ole vielä varmuutta v12:n
+osalta, mutta v11 vahvistaa saman ilmiön jo nyt (OAuth2, ks. yllä). Tämä on
+juuri se syy, miksi koko PTV-integraatio rakennetaan sovitinpatternina:
+kukin sovitin (`PtvV11Adapter`, `PtvV12Adapter`, …) kapseloi oman
+autentikointimallinsa `PtvAdapter`-rajapinnan taakse, eikä kovakoodaa
+pelkkää staattista avainta koko sovellukseen.
 
-Rajapinta ei dokumentoi rate limitejä (ei `429`-vastauksia eikä
-`X-RateLimit-*`-otsakkeita spesifikaatiossa) – niitä pitää silti *olettaa*
-olevan tuotannossa, ja PTV Client -kerroksen retry-logiikka pitää tehdä
-yleiskäyttöiseksi (exponential backoff + jitter, kunnioittaen
-`Retry-After`-otsaketta jos sellainen joskus tulee) sen sijaan, että
-nojataan dokumentoituun rajaan.
+Kummankaan version rajapinta ei dokumentoi rate limitejä (ei
+`429`-vastauksia eikä `X-RateLimit-*`-otsakkeita kummassakaan
+spesifikaatiossa) – niitä pitää silti *olettaa* olevan tuotannossa, ja
+jokaisen sovittimen retry-logiikan pitää olla yleiskäyttöinen
+(exponential backoff + jitter, kunnioittaen `Retry-After`-otsaketta jos
+sellainen joskus tulee) sen sijaan, että nojataan dokumentoituun rajaan.
 
 ### 5. Ympäristöt
 
@@ -150,63 +157,123 @@ edes testiympäristössä, ehdotan MVP:n jakamista kolmeen alavaiheeseen:
 ### MVP-0 (nyt – rakennettavissa heti)
 
 ✅ käyttäjä- ja tenant-hallinta, roolit, audit-loki
-✅ PTV-haku v12:n kautta (service, service-channel, organization,
-   general-description, service-collection, connection, koodistot)
+✅ PTV-sovitinkerros (`PtvAdapter`) rakennetaan **v11- ja v12-sovittimet
+   rinnakkain alusta asti**, ei v12 ensin ja v11 jälkikäteen paikattuna
+   (ks. edellä [PTV-sovitinkerros](#ptv-sovitinkerros-usean-rajapintaversion-v11-v12-tulevat-tuki))
+✅ PTV-haku (v11 ja v12, molemmat samaan domain-malliin: service,
+   service-channel, organization, general-description, service-collection,
+   connection, koodistot)
 ✅ AI-avusteiset **muutosehdotukset** (`ptv_propose_changes`) ja diff-näkymä
-✅ `ptv_validate_changes` **paikallisena** (skeemavalidointi tulevia
-   Post/Put-skeemoja vasten + PTV:n dokumentoituja sääntöjä vasten), ilman
+✅ `ptv_validate_changes` **paikallisena** (skeemavalidointi molempien
+   versioiden skeemoja vasten + PTV:n dokumentoituja sääntöjä vasten), ilman
    että mitään lähetetään PTV:hen
 ✅ **Vientitoiminto ilman API-kirjoitusta**: hyväksytty ehdotus viedään
    muodossa, joka on helppo kopioida PTV:n omaan hallintakäyttöliittymään
    (esim. kieliversioittain jäsennelty teksti / JSON-esikatselu), ja
    merkitään audit-lokiin tilaan `ReadyForManualPublish`
-❌ ei suoraa kirjoitusta PTV:hen — teknisesti ei mahdollista
+⚠️ **suora kirjoitus PTV:hen on mahdollinen jo MVP-0:ssa v11-sovittimen
+   kautta**, JOS Phase 1:n v11-selvitys (ks.
+   [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md)) päätyy "go"-tulokseen –
+   v11:n OAuth2-mallin todellinen käytettävyys palvelinkäytössä on vielä
+   varmistamatta. Jos selvitys päätyy "no-go":hon, v11-sovitin toimii
+   pelkästään lukusovittimena ja tuotanto-organisaatiot käyttävät
+   manuaalista vientiä siihen asti kunnes v12-kirjoitus julkaistaan.
 
-Tämä tuottaa jo itsenäisesti arvokkaan tuotteen (AI-avusteinen sisällön
-parantelu + hallittu hyväksyntäprosessi), joka ei ole riippuvainen PTV:n
-kirjoitusrajapinnan aikataulusta.
+Tämä tuottaa jo itsenäisesti arvokkaan tuotteen riippumatta siitä, miten
+v11-selvitys päättyy — sovitinpatternin ansiosta kirjoitustuen
+avautuminen/sulkeutuminen on konfiguraatiokysymys, ei arkkitehtuurimuutos.
 
 ### MVP-1 (arviolta 10/2026 →, kun v12-kirjoitus avautuu testiin)
 
-✅ `ptv_apply_changes` toteutetaan v12-kirjoitusrajapintaa vasten, aluksi
-   vain `environment = test`
-✅ Publisher-rooli pääsee kirjoittamaan **testiympäristöön**
-✅ Tuotantoympäristö pysyy MVP-0-tilassa (vain manuaalinen vienti), koska
-   v12-kirjoitus ei ole tuotannossa vielä
-
-Vaihtoehtoisesti, jos organisaatiolla on jo käytössä v11-integraatio
-tuotannon kirjoitukseen, tämä voidaan tuoda erillisenä sovittimena
-(`Ptv11WriteAdapter`) jo MVP-0/MVP-1-aikataulussa — vaatii kuitenkin
-erillisen selvityksen v11:n autentikoinnista ja tietomallista, koska sitä
-ei ole tässä katselmoinnissa käyty läpi.
+✅ `PtvV12Adapter`:iin toteutetaan kirjoitusoperaatiot (aiemmin runkona/
+   "ei vielä käytössä" -tilassa), aluksi vain `environment = test`
+✅ Publisher-rooli pääsee kirjoittamaan **testiympäristöön** v12:n kautta
+✅ Tuotantoympäristö pysyy joko MVP-0-tilassa (manuaalinen vienti) tai
+   v11-sovittimen varassa, riippuen siitä ajetaanko v11-sovitin
+   tuotannossa
 
 ### MVP-2 (arviolta 04/2027 →, kun v12-kirjoitus avautuu tuotantoon)
 
-✅ `ptv_apply_changes` sallitaan myös `environment = production`
-✅ v11-sovitin (jos toteutettu) voidaan alkaa ajaa alas rinnakkain
+✅ `PtvV12Adapter`:in kirjoitustuki sallitaan myös `environment = production`
+✅ v11-sovittimen käytöstäpoisto ajetaan edellä kuvatun **yleisen
+   sovitin-runbookin** mukaisesti (siirtymäikkuna, tenantti kerrallaan
+   migrointi, koodin poisto) – sama runbook, jota käytetään joskus
+   myöhemmin myös v12:n käytöstäpoistoon, kun PTV julkaisee v13:n
 
-Tämä aikataulu on syytä pitää **konfiguraationa, ei koodiin kovakoodattuna
-oletuksena** — ks. alla oleva kyvykkyystaulukko.
+Tämä aikataulu on syytä pitää **konfiguraationa (`PtvAdapterConfig`), ei
+koodiin kovakoodattuna oletuksena**.
 
-### Rajapinnan kyvykkyyksien hallinta koodissa
+### PTV-sovitinkerros: usean rajapintaversion (v11, v12, tulevat) tuki
 
-Suosittelen lisäämään tietomalliin `PtvCapability`-käsitteen per ympäristö
-ja rajapintaversio, jotta kirjoitustoiminnallisuus voidaan avata
-konfiguraatiolla sitä mukaa kun PTV julkaisee sen, ilman koodimuutosta:
+**Päätös laajennettu katselmoinnin aikana**: koska PTV:llä on jo nyt kaksi
+rinnakkaista rajapintaversiota (v11 tuotannon kirjoitustie, v12 tuleva
+pääasiallinen rajapinta) ja historiallinen kuvio — v12 korvaa v11:n samalla
+tavalla kuin joskus tulevaisuudessa jokin v13 korvaa v12:n — ei ole
+mielekästä rakentaa palvelinta "v12-keskeiseksi ja v11 tarvittaessa
+päälle liimattuna". Sen sijaan koko PTV-integraatio rakennetaan
+**sovitinpatternina (ports & adapters / hexagonal)** alusta asti:
+
+- **`PtvAdapter`-rajapinta** (TypeScript-interface): yksi yhteinen
+  sopimus haku- ja kirjoitusoperaatioille (`searchServices`, `getService`,
+  `searchChannels`, `getChannel`, `getOrganisation` (+hierarchy),
+  `searchServiceCollections`, `searchGeneralDescriptions`,
+  `getConnectionsFor(entity)`, `listCodes`, `applyServiceChange`, …) sekä
+  `getCapabilities()`, joka kertoo mitä kyseinen sovitin tosiasiassa tukee
+  (haku, kirjoitus, luonnosnäkyvyys, jne.)
+- **Yhteinen sisäinen domain-malli**: MCP-työkalut, diff-moottori ja
+  validointi operoivat *aina* tämän yhden sisäisen mallin päällä
+  (`DomainService`, `DomainServiceChannel` × 5 alatyyppiä,
+  `DomainOrganization`, `DomainGeneralDescription`,
+  `DomainServiceCollection`, `DomainConnection`, koodistot) – eivät koskaan
+  suoraan PTV:n versiokohtaista "wire"-muotoa. Jokainen versiosovitin
+  (`PtvV11Adapter`, `PtvV12Adapter`, tuleva `PtvV13Adapter`) vastaa oman
+  wire-muotonsa kääntämisestä domain-malliksi ja takaisin.
+- **Versiokohtaiset erikoisuudet pysyvät sovittimen sisällä**, eivät vuoda
+  muualle sovellukseen: esim. v11:n delete-flag-kartoitus PUT-päivityksissä
+  (ks. [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md)), v11:n upotetut
+  connection-tiedot (ei omaa GET-endpointtia), v11:n OAuth2-autentikointi,
+  v12:n `oneOf`-tyyppiskeemat ja `x-api-key`-autentikointi.
+- **`PtvAdapterConfig`** (korvaa/yleistää aiemman `PtvApiCapabilities`-idean)
+  ohjaa mikä sovitin valitaan per tenant + ympäristö + operaatio:
 
 ```text
-PtvApiCapabilities
- ├─ api_version         (v11 | v12)
- ├─ environment         (test | production)
+PtvAdapterConfig
+ ├─ tenant_id
+ ├─ environment          (test | production)
+ ├─ api_version           (vapaa merkkijono: "v11" | "v12" | tuleva "v13" – EI enum,
+ │                         jotta uuden version lisääminen ei vaadi skeemamuutosta)
+ ├─ auth_mode             (api_key | oauth2 | tuleva …)
  ├─ supports_read
  ├─ supports_write
+ ├─ supports_draft_read   (esim. v11:n rajoitetut /active-endpointit)
  └─ updated_at
 ```
 
-`ptv_apply_changes`-työkalu tarkistaa tämän taulun ennen kirjoitusyritystä
-ja palauttaa selkeän virheen ("PTV v12 -kirjoitusrajapinta ei ole vielä
-käytössä tuotantoympäristössä, arvioitu saatavuus 04/2027") sen sijaan että
-yrittäisi kutsua olematonta endpointtia.
+  `ptv_apply_changes` (ja muut työkalut) kysyvät sovitinrekisteriltä
+  (`PtvAdapterRegistry`) oikean sovittimen tälle tenant/environment-parille;
+  jos mikään aktiivinen sovitin ei tue pyydettyä operaatiota, palautetaan
+  selkeä virhe ("PTV v12 -kirjoitusrajapinta ei ole vielä käytössä
+  tuotantoympäristössä, arvioitu saatavuus 04/2027") sen sijaan että
+  yritettäisiin kutsua olematonta endpointtia.
+- **Yhteinen "contract test" -sarja**: samat testitapaukset (haku palauttaa
+  odotetun muotoista dataa, get-by-id pyöristyy oikein, `getCapabilities()`
+  raportoi oikein) ajetaan jokaista sovitinta vastaan. Tämä on ainoa tapa
+  varmistaa, että kaikki sovittimet käyttäytyvät MCP-työkalujen näkökulmasta
+  samalla tavalla, vaikka niiden sisäinen toteutus poikkeaisi täysin
+  toisistaan.
+- **Sovittimen elinkaari on dokumentoitu toistettavana ajona (runbook)**,
+  ei kertaluonteisena erikoistapauksena:
+  1. *Käyttöönotto*: toteuta `PtvAdapter`-rajapinta, aja contract-testit
+     läpi, ota käyttöön yhdellä pilottitenantilla, laajenna.
+  2. *Käytöstäpoisto*: aja vanha ja uusi sovitin rinnakkain siirtymäajan,
+     migroi tenantit yksi kerrallaan `PtvAdapterConfig`-rivin kautta,
+     poista vanhan sovittimen koodi ja konfiguraatioarvot vasta kun yksikään
+     rivi ei enää osoita siihen.
+
+  Tämä sama prosessi käytetään v11:n käytöstäpoistoon (kun v12-kirjoitus on
+  vakaa tuotannossa) **ja** myöhemmin v12:n käytöstäpoistoon, kun PTV
+  joskus julkaisee v13:n – suunnittelutyötä ei tarvitse tehdä uudestaan,
+  vain ajaa sama runbook uudelleen.
 
 ---
 
@@ -302,17 +369,23 @@ kuvauksen. Suosittelen:
 
 ### Rakenteelliset tekniset täsmennykset
 
-- **Retry/backoff ja idempotenssi**: koska tuleva kirjoitusrajapinta
-  todennäköisesti tukee `contentId`-pohjaista PUT-päivitystä, PTV Client
-  -kerroksen retry-logiikan pitää olla idempotentti (turvallinen ajaa
+- **Retry/backoff ja idempotenssi**: koska sekä v11 että tuleva
+  v12-kirjoitusrajapinta tukevat `id`-pohjaista PUT-päivitystä, jokaisen
+  sovittimen retry-logiikan pitää olla idempotentti (turvallinen ajaa
   uudelleen verkkovirheen jälkeen) – POST (luonti) sen sijaan ei ole
   itsestään idempotentti, joten sille tarvitaan oma
-  idempotenssiavain/deduplikaatiostrategia jo suunnitteluvaiheessa.
-- **OpenAPI-generointi**: koska PTV julkaisee viralliset OpenAPI 3.1
-  -kuvaukset, PTV Client kannattaa generoida (tyypit + validointi)
-  suoraan niistä (esim. `openapi-typescript` + `ajv`) sen sijaan että
-  tyypit ylläpidettäisiin käsin — vähentää ylläpitotaakkaa merkittävästi,
-  varsinkin kun kirjoitusskeemat vielä elävät (beta).
+  idempotenssiavain/deduplikaatiostrategia jo suunnitteluvaiheessa. Tämä
+  logiikka kannattaa toteuttaa kerran yhteisessä sovitinpohjassa, josta
+  sekä `PtvV11Adapter` että `PtvV12Adapter` perivät sen.
+- **OpenAPI/Swagger-generointi per sovitin**: koska PTV julkaisee
+  koneluettavat kuvaukset molemmista versioista (v12: OpenAPI 3.1
+  `openapi.json`, v11: OpenAPI 3.0 `swagger.json`), kunkin sovittimen
+  wire-tyypit ja validointi generoidaan suoraan niistä (esim.
+  `openapi-typescript` + `ajv`) sen sijaan että tyypit ylläpidettäisiin
+  käsin — vähentää ylläpitotaakkaa merkittävästi, varsinkin kun v12:n
+  kirjoitusskeemat vielä elävät (beta) ja v11:n skeemat sisältävät
+  versiointikerrostumia (esim. `V9VmOpenApiServiceIn`-tyyppinen nimeäminen
+  v11:n sisällä).
 - **Health-endpointit**: PTV tarjoaa `/health/liveness` ja
   `/health/readiness` – näitä kannattaa käyttää MCP-palvelimen omassa
   taustatarkistuksessa PTV-yhteyden tilan monitorointiin per tenant/ympäristö.
@@ -333,14 +406,16 @@ kuvauksen. Suosittelen:
 
 Rakentaa moniasiakasympäristöön (multi-tenant) soveltuva MCP-palvelin, joka
 toimii ohuena välittäjänä (thin wrapper) Suomi.fi Palvelutietovarannon
-(PTV) v12 -rajapinnan ja tekoälyagenttien välillä.
+(PTV) rajapintojen ja tekoälyagenttien välillä — **sovitinkerroksen kautta,
+joka tukee useaa PTV-rajapintaversiota (v11, v12, tulevat) rinnakkain**.
 
 Ensimmäisen version tavoitteena on mahdollistaa:
 
 - PTV-tietojen haku tekoälyagentin kautta
 - muutosehdotusten tuottaminen tekoälyllä
-- **hallittu vienti hyväksytyistä ehdotuksista** (API-kirjoitus vasta kun
-  PTV julkaisee v12-kirjoitusrajapinnan, ks. yllä oleva aikataulu)
+- **hallittu vienti hyväksytyistä ehdotuksista** (API-kirjoitus jo MVP-0:ssa
+  v11-sovittimen kautta, jos sen OAuth-selvitys onnistuu; muuten kun PTV
+  julkaisee v12-kirjoitusrajapinnan, ks. yllä oleva aikataulu)
 - organisaatiokohtainen käyttöoikeushallinta
 - auditointi ja jäljitettävyys
 
@@ -433,22 +508,28 @@ Prompt → Suora kirjoitus PTV:hen
 │ Authorization       │
 │ Audit               │
 │ Tenant Resolver     │
-│ PTV Capability Gate │  ← uusi: tarkistaa onko kirjoitus mahdollista
-│ PTV Tool Layer      │
+│ PTV Adapter Registry│  ← valitsee oikean sovittimen per tenant/env/operaatio
+│ PTV Tool Layer      │     (domain-mallin päällä, versioagnostinen)
 └──────────┬──────────┘
            │
            ▼
-┌─────────────────────┐
-│ PTV Client          │
-├─────────────────────┤
-│ Auth Adapter        │  ← uusi: apiKey / bearer, v11 / v12
-│ Retry & Backoff     │
-│ Schema Validation   │  ← generoitu PTV:n OpenAPI-skeemoista
-└──────────┬──────────┘
-           │
-           ▼
-      PTV API (v12 haku nyt / kirjoitus 10-2026→;
-               v11 kirjoitus tuotannossa 04-2027 asti)
+┌─────────────────────────────────────────────┐
+│ PTV Adapter Layer (ports & adapters)         │
+├───────────────────────┬───────────────────────┤
+│ PtvV11Adapter          │ PtvV12Adapter          │  ← tuleva PtvV13Adapter jne.
+│  - OAuth2 auth         │  - x-api-key auth      │     samaan rajapintaan
+│  - delete-flag mapping │  - oneOf-tyyppiskeemat │
+│  - upotetut connectionit│ - retry/backoff       │
+├───────────────────────┴───────────────────────┤
+│ Yhteinen: Domain-malli, Schema Validation      │
+│ (generoitu kunkin version omasta OpenAPI/      │
+│  Swagger-kuvauksesta), Retry/backoff-runko      │
+└──────────┬──────────────────────┬─────────────┘
+           │                      │
+           ▼                      ▼
+      PTV API v11            PTV API v12
+ (haku+kirjoitus nyt,    (haku nyt; kirjoitus
+  poistuu 04/2027)        10/2026→ testi, 04/2027→ tuotanto)
 ```
 
 ---
@@ -541,25 +622,32 @@ Juha
 TenantEnvironment
  ├─ id
  ├─ tenant_id
- ├─ environment        (test | production)
- ├─ encrypted_api_key
- ├─ encrypted_data_key   ← uusi (envelope encryption)
+ ├─ environment              (test | production)
+ ├─ encrypted_credentials    ← polymorfinen, JSON, muoto riippuu api_versionista
+ │                             (v12: {apiKey}; v11: OAuth2-clientin tiedot/token-tila)
+ ├─ encrypted_data_key       (envelope encryption)
  └─ active
 ```
 
-## PtvApiCapabilities (uusi)
+## PtvAdapterConfig (uusi, korvaa aiemman "PtvApiCapabilities"-idean)
 
 ```text
-PtvApiCapabilities
- ├─ api_version         (v11 | v12)
+PtvAdapterConfig
+ ├─ tenant_id
  ├─ environment         (test | production)
+ ├─ api_version         (vapaa merkkijono: "v11" | "v12" | tuleva "v13" …)
+ ├─ auth_mode           (api_key | oauth2 | tuleva …)
  ├─ supports_read
  ├─ supports_write
+ ├─ supports_draft_read
  └─ updated_at
 ```
 
 Ylläpidetään joko manuaalisesti (konfiguraationa) tai automaattisesti
-tarkistamalla PTV:n julkaisemat OpenAPI-kuvaukset määräajoin.
+tarkistamalla PTV:n julkaisemat OpenAPI-kuvaukset määräajoin. `api_version`
+on tarkoituksella merkkijono eikä enum, jotta uuden PTV-version (esim.
+tuleva v13) lisääminen on konfiguraatio- ja sovitintoteutustyötä, ei
+tietokantaskeeman muutos.
 
 ---
 
@@ -600,8 +688,10 @@ Saa
 
 - tehdä kaiken mitä Editor
 - hyväksyä muutokset
-- kirjoittaa PTV:hen **silloin kun `PtvApiCapabilities.supports_write` on
-  tosi kyseiselle ympäristölle**
+- kirjoittaa PTV:hen **silloin kun jokin aktiivinen sovitin
+  (`PtvAdapterConfig.supports_write`) tukee sitä kyseiselle
+  tenant/ympäristö-parille** — voi olla v11 tai v12, riippumatta siitä
+  kumpi
 
 ---
 
@@ -786,19 +876,21 @@ ptv_export_for_manual_publish   ← MVP-0: tuottaa PTV-UI:hin
                                    kopioitavan, kieliversioidun
                                    esityksen hyväksytystä sisällöstä
 
-ptv_apply_changes               ← MVP-1/2: kirjoittaa muutoksen
-                                   PTV:hen v12-kirjoitusrajapinnan
-                                   kautta, kun PtvApiCapabilities
-                                   sen sallii
+ptv_apply_changes               ← kirjoittaa muutoksen PTV:hen
+                                   PtvAdapterRegistryn valitseman
+                                   sovittimen (v11 tai v12) kautta,
+                                   sen mukaan kumpi tukee kirjoitusta
+                                   kyseiselle tenant/environment-parille
 ```
 
 `ptv_apply_changes` vaatii:
 
 - Publisher-oikeuden
 - onnistuneen validoinnin
-- `PtvApiCapabilities.supports_write = true` kyseiselle
-  tenant/environment-parille (muuten selkeä virhe, ei epämääräinen
-  API-virhe)
+- että jokin `PtvAdapterConfig`-rivi kertoo `supports_write = true`
+  kyseiselle tenant/environment-parille (muuten selkeä virhe, ei
+  epämääräinen API-virhe) — toteutuu jo MVP-0:ssa, jos v11-sovitin läpäisi
+  selvityksen, muutoin vasta MVP-1/2:ssa v12:n kautta
 
 ---
 
@@ -904,22 +996,26 @@ Ainoastaan uusi autentikointilähde lisätään.
 
 ✅ audit-loki (+ GDPR-säilytyskäytäntö)
 
-✅ PTV-haku (kaikki v12:n tarjoamat sisältötyypit ja koodistot)
+✅ PTV-sovitinkerros: `PtvV11Adapter` ja `PtvV12Adapter` rakennettuna
+   yhteistä `PtvAdapter`-rajapintaa vasten, molemmat haku-kykyisiä
 
 ✅ muutosehdotukset
 
-✅ diff-näkymä
+✅ diff-näkymä (toimii yhteisen domain-mallin päällä, versioriippumaton)
 
-✅ validointi (tyyppitietoinen, PTV-skeemoista generoitu)
+✅ validointi (tyyppitietoinen, kummankin version omista skeemoista
+   generoitu)
 
 ✅ **manuaalinen vienti** hyväksytystä ehdotuksesta PTV-UI:hin
 
-✅ testi- ja tuotantoympäristöt (haussa; kirjoitus ei vielä kummassakaan)
+✅ testi- ja tuotantoympäristöt
+
+⚠️ **suora kirjoitus PTV:hen tuotantoon v11-sovittimen kautta** —
+   sisältyy MVP-0:aan, jos ja vain jos Phase 1:n v11-selvitys (OAuth2:n
+   todellinen käytettävyys palvelinkäytössä) päätyy "go"-tulokseen; muuten
+   jää MVP-1/2:een asti
 
 Ei sisällä:
-
-❌ suoraa kirjoitusta PTV:hen (tekninen este: v12-kirjoitusrajapinta ei
-   ole vielä julkaistu missään ympäristössä)
 
 ❌ Microsoft Copilot -integraatiota
 
@@ -933,19 +1029,17 @@ Ei sisällä:
 
 ## MVP-1 (kun v12-kirjoitus avautuu testiympäristöön, arviolta 10/2026)
 
-✅ `ptv_apply_changes` testiympäristöön
+✅ `PtvV12Adapter`:iin toteutetaan kirjoitusoperaatiot, aluksi
+   testiympäristöön
 
-✅ Publisher-rooli aktivoituu testiympäristössä
-
-(valinnainen, vaatii erillisen selvityksen) ⚙️ v11-kirjoitussovitin
-tuotantoa varten, jos organisaatio tarvitsee kirjoitustukea ennen
-04/2027:ää
+✅ Publisher-rooli aktivoituu testiympäristössä v12:n kautta
 
 ## MVP-2 (kun v12-kirjoitus avautuu tuotantoon, arviolta 04/2027)
 
-✅ `ptv_apply_changes` tuotantoympäristöön
+✅ `PtvV12Adapter`:in kirjoitustuki laajenee tuotantoon
 
-✅ v11-sovitin (jos toteutettu) ajetaan alas
+✅ v11-sovittimen käytöstäpoisto ajetaan yleisen sovitin-runbookin
+   mukaisesti (jos v11-sovitin oli otettu tuotantokäyttöön)
 
 ---
 
@@ -955,14 +1049,18 @@ tuotantoa varten, jos organisaatio tarvitsee kirjoitustukea ennen
 
 - käyttäjähallinta
 - tenant-hallinta
-- PTV-haku (v12)
-- MCP-työkalut (haku, ehdotus, validointi, manuaalinen vienti)
+- PTV-sovitinkerros: v11- ja v12-sovittimet rinnakkain (`PtvAdapter`-rajapinta,
+  yhteinen domain-malli), v11:n kirjoitustuki selvityksen tuloksen mukaan
+- MCP-työkalut (haku, ehdotus, validointi, manuaalinen vienti, ja
+  mahdollisesti suora kirjoitus v11:n kautta)
 - auditointi
 
 ## MVP-1 / MVP-2
 
-- PTV-kirjoitus (v12, testi → tuotanto, PTV:n oman aikataulun mukaan)
-- (valinnainen) v11-kirjoitussovitin siirtymäajaksi
+- `PtvV12Adapter`:in kirjoitustuki (testi → tuotanto, PTV:n oman aikataulun
+  mukaan)
+- v11-sovittimen käytöstäpoisto yleisen runbookin mukaisesti, kun v12 on
+  vakaa tuotannossa
 
 ## V2
 
@@ -987,13 +1085,27 @@ tuotantoa varten, jos organisaatio tarvitsee kirjoitustukea ennen
 
 # Avoimet kysymykset jatkoselvitykseen
 
-1. Tarvitaanko v11-kirjoitussovitin siirtymäajaksi (10/2026–04/2027), vai
-   riittääkö organisaatioille MVP-0:n manuaalinen vienti siihen asti?
+1. **Mikä on v11:n todellinen käytettävä OAuth2-grant-tyyppi**
+   palveluhallinta.suomi.fi:tä vasten? Spesifikaatio ilmoittaa `implicit`-
+   flown’n, jonka scope-nimi (`dataEventRecords`) vaikuttaa
+   IdentityServer4:n oletusesimerkiltä — tämä pitää varmistaa
+   rekisteröimällä oikea asiakas ennen kuin `PtvV11Adapter`-kirjoitustukea
+   rakennetaan (ks. [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md)). Jos
+   grant vaatii aidosti ihmisen selaimessa, v11-kirjoitussovitin ei sovi
+   automaattiseen taustapalveluun ja MVP-0:n manuaalinen vienti jää
+   ainoaksi tuotantotieksi 04/2027:ään asti.
 2. Millainen autentikointi v12-kirjoitusrajapinnalla tulee olemaan
    (`x-api-key` vai `bearerAuth`/OAuth)? Selviää vasta kun PTV julkaisee
    kirjoitusendpointit testiympäristöön.
 3. Tukeeko tuleva kirjoitusrajapinta erillistä luonnos/julkaisu-tilaa
-   (kaksi API-kutsua) vai yhtä yhdistettyä kirjoitustoimintoa?
+   (kaksi API-kutsua) vai yhtä yhdistettyä kirjoitustoimintoa? v11:ssä
+   vastaava tila on olemassa (`publishingStatus`-kenttä), joten sama
+   malli on todennäköinen myös v12:ssa.
 4. Mikä on PTV:n rajapinnan todellinen rate limit tuotannossa (ei
-   dokumentoitu OpenAPI-kuvauksessa) – selvitettävä PTV:n tuesta tai
-   API-avaimen hakuprosessin yhteydessä.
+   dokumentoitu kummassakaan versiossa) – selvitettävä PTV:n tuesta tai
+   API-avaimen/OAuth-clientin hakuprosessin yhteydessä.
+5. v11:n PUT-päivitys vaatii eksplisiittiset `deleteX`-liput kentän
+   tyhjentämiseen (ks. `docs/ptv-v11-notes.md`) — käyttäytyykö v12:n
+   lopullinen kirjoitusrajapinta samoin, vai onko se täysi korvaus
+   (full-replace) PUT:lla? Selviää vasta kun v12:n kirjoitusskeemat
+   julkaistaan lopullisina.
