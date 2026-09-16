@@ -1,0 +1,1 @@
+ALTER TABLE "audit_entries" ADD COLUMN "correlation_id" uuid NOT NULL;

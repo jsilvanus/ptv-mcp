@@ -335,3 +335,355 @@ Deviations:
   fixture records ever change/disappear, `test:integration` (and thus CI)
   fails for reasons outside this repo's control. No mitigation applied
   yet — worth reconsidering if this becomes a recurring CI flake source.
+
+---
+
+## 2026-09-16 — Phase 1 reopened: `users` schema extended, `memberships` RLS policy widened
+
+While starting Phase 3 Stream A (auth) and Stream B (tenant/membership
+management), found two genuine gaps in Phase 1's locked output rather than
+just needing new Phase-3-owned files:
+
+1. **`users` had no columns for the auth features the phase plan itself
+   assigns to Phase 3** (email verification, login lockout) — Phase 1
+   deliberately scoped `password_hash` only, per its own log entry ("the
+   real Argon2id login flow is Phase 3's concern"), but verification and
+   lockout need dedicated columns, not just application logic. Added
+   `email_verified_at`, `failed_login_attempts` (default 0), `locked_until`
+   to `src/db/schema/user.ts`. Purely additive (new nullable columns / a
+   defaulted counter) — no existing column changed shape, so nothing that
+   already matched the old shape stops matching.
+2. **`memberships`' RLS policy (Phase 1, `drizzle/0001_row_level_security.sql`)
+   made "which tenants do I belong to" unanswerable under RLS.** The
+   policy only matched `tenant_id = app.current_tenant_id`, but a user
+   doesn't know which tenant_id to set as context until they've already
+   read their own memberships — this blocks the exact multi-tenant
+   membership example `docs/plan.md` itself gives (one user belonging to
+   several tenants with different roles). Genuine defect, not a
+   preference: the declared feature was unimplementable as the policy
+   stood. Fixed via a new migration (`drizzle/0003_membership_self_visibility.sql`,
+   preceded by `0002_phase3_auth_tables.sql` for the new tables/columns)
+   that widens the policy to `tenant_id = current_tenant_id OR user_id =
+   current_user_id`, keeping it fail-closed when neither is set and never
+   exposing another user's row in a tenant the caller doesn't share.
+
+Owned files touched (Phase 1 reopen):
+- src/db/schema/user.ts (columns added)
+- drizzle/0003_membership_self_visibility.sql (new migration; policy fix)
+- src/db/rls.integration.test.ts (three new test cases)
+
+New files, owned by Phase 3 from the start (not a reopen):
+- src/db/schema/refreshToken.ts, emailVerificationToken.ts, passwordResetToken.ts
+- drizzle/0002_phase3_auth_tables.sql
+- src/db/schema/index.ts (new exports appended)
+
+Re-verified Phase 1's sync point: dropped/recreated `ptv_mcp_dev`, ran
+`scripts/bootstrap-roles.sql` then `npm run db:migrate` through all four
+migrations with no manual intervention; `npm run test:integration` — now
+20 tests (17 before + 3 new) — all passing, including the new
+self-visibility, no-cross-user-leak, and still-works per-tenant-admin-view
+cases. Phase 1 re-locked.
+
+Deviation: the new auth-token tables (`refresh_tokens`,
+`email_verification_tokens`, `password_reset_tokens`) are **not**
+RLS-scoped, matching the existing `users`/`tenants` precedent documented
+in `drizzle/0001_row_level_security.sql` — a refresh/verify/reset lookup
+necessarily happens by token hash before the caller's identity is
+otherwise established, so no `current_setting('app.current_user_id')`
+context exists yet at query time. Access is controlled by query pattern
+(always an exact hash match, never a bare listing) instead.
+
+---
+
+## 2026-09-16 — Phase 3, Stream A (Auth) closed ✅ 🔒
+
+Owned files:
+- src/security/envelopeEncryption.ts, envelopeEncryption.test.ts
+- src/db/context.ts, context.integration.test.ts
+- src/auth/password.ts, password.test.ts
+- src/auth/tokens.ts
+- src/auth/jwt.ts, jwt.test.ts
+- src/auth/mailer.ts
+- src/auth/authService.ts, authService.integration.test.ts
+- src/auth/rbac.ts, rbac.integration.test.ts
+- src/routes/auth.ts, auth.integration.test.ts
+
+Also touched, as additive extensions of locked earlier-phase files (not
+reopens — same reasoning as Phase 1 Stream A's CI-file extension): 
+- src/config.ts: added `jwtSecret`, and switched `masterEncryptionKey`
+  from an optional placeholder to `requireEnv` now that Stream A/B
+  actually perform real cryptographic operations with it, not just carry
+  it as a placeholder. `.env.example` and `.github/workflows/ci.yml`
+  updated to match (CI's `MASTER_ENCRYPTION_KEY` placeholder also fixed
+  from a non-base64/wrong-length string to a valid 32-byte key, since it's
+  now actually decoded rather than just read as an opaque string).
+- src/app.ts: `buildApp` now takes `{ config, db?, mailer? }` instead of a
+  bare config object, and wires up `AuthService` + `authRoutes`. The `db`/
+  `mailer` injection points exist specifically so route-level integration
+  tests can run against a real Postgres connection with a fake mailer,
+  without the app owning connection lifecycle in tests.
+- src/server.ts, src/routes/health.test.ts: updated for `buildApp`'s new
+  call shape.
+
+`envelopeEncrypt`/`envelopeDecrypt` (AES-256-GCM envelope encryption, one
+data key per secret wrapped by a master key) are built now, ahead of
+Stream B integrating them into `TenantEnvironment`/`UserPtvConnection`
+storage, since Stream A's own scope didn't need them but Stream B does —
+built as a shared, standalone module rather than duplicated.
+
+A dedicated `JWT_SECRET` was introduced rather than reusing
+`MASTER_ENCRYPTION_KEY` for JWT signing — different purpose (session
+authentication vs. wrapping stored PTV credentials) and different
+rotation schedule; a leak of one shouldn't compromise the other.
+
+Sync point verified (this stream's slice of Phase 3's goal — "resolve
+tenant + role" via RBAC, "credentials decrypt" is Stream B/D's slice):
+- [x] `npm run typecheck`, `lint`, `format`, `test`, and `build` all pass.
+- [x] `npm run test:integration` — 48/48 passing, including:
+  - `authService.integration.test.ts` (15 tests against real Postgres):
+    register, duplicate-email rejection, email verification (incl.
+    already-consumed-token rejection), login, wrong-password rejection,
+    lockout after 5 failed attempts and recovery after the lockout window,
+    refresh-token rotation, denylisting the whole chain on replay of an
+    already-rotated token, logout revocation, password reset (incl.
+    revoking all outstanding sessions), no email-enumeration on reset
+    request, expired-refresh-token rejection.
+  - `auth.integration.test.ts` (9 tests via `app.inject()`): the same
+    flows exercised through real HTTP routes end to end, including a
+    302→401 rejected-reuse-after-logout case.
+  - `rbac.integration.test.ts` (4 tests): unauthenticated request
+    rejected, a Reader rejected below a Publisher-only route, a user with
+    no membership at all rejected, a Publisher let through with their
+    role correctly resolved on `request.role`.
+  - `context.integration.test.ts` (2 tests, from the Phase 3 foundation
+    commit): `withContext` actually threads `set_config` through
+    drizzle's transaction API against the real `ptv_mcp_app` role.
+
+Deviations:
+- **Email verification does not block login.** Registration issues a
+  verification token/email and `/auth/verify-email` consumes it, but
+  logging in doesn't require `email_verified_at` to be set. The phase
+  plan calls for "sähköpostin vahvistus" as a feature to exist, not
+  necessarily as a login gate, and gating login would need a product
+  decision (e.g. a grace period) the plan doesn't specify. Tracked here
+  as an explicit scope choice, easy to add as a `login()` precondition
+  later if the product wants it.
+- **No real email provider.** `LoggingMailer` (src/auth/mailer.ts) logs
+  the verification/reset link instead of sending it — there's no
+  SMTP/provider credential to configure yet. The `Mailer` interface is
+  the seam a real provider plugs into later without touching
+  `AuthService`.
+- **Argon2id selected by literal value (`2`), not the crate's `Algorithm`
+  enum import** — `@node-rs/argon2`'s `Algorithm` is an ambient `const
+  enum`, which `verbatimModuleSyntax` (already on in `tsconfig.json`)
+  can't import (TS2748). Documented inline in `password.ts` with the
+  crate's own docs reference so it doesn't look like a magic number.
+- **RBAC role check is per-request DB lookup, no caching** — matches
+  `docs/phase-plan.md`'s risk register note that membership must always
+  be re-checked at call time, never cached, since a user's PTV connection
+  outlives their tenant membership.
+
+---
+
+## 2026-09-16 — Phase 3, Stream B (Tenant & credential management) closed ✅ 🔒
+
+Owned files:
+- src/tenants/tenantService.ts, tenantService.integration.test.ts
+- src/credentials/userPtvConnectionService.ts, userPtvConnectionService.integration.test.ts
+- src/credentials/tenantEnvironmentService.ts, tenantEnvironmentService.integration.test.ts
+- src/credentials/ptvAdapterConfigService.ts, ptvAdapterConfigService.integration.test.ts
+- src/routes/tenants.ts, tenants.integration.test.ts
+- src/routes/ptvConnections.ts, ptvConnections.integration.test.ts
+
+Also touched, additively:
+- src/config.ts, .env.example: added `PTV_V11_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI`
+  (all optional, default `''`) for the connect-PTV routes below.
+- src/app.ts: wires `TenantService`, `UserPtvConnectionService`, and the
+  new route plugins into `buildApp`.
+
+What got built, matching the phase plan's Stream B scope exactly:
+- **Tenant/membership CRUD**: `TenantService` + `/tenants` routes — create
+  a tenant (creator becomes its first Tenant Admin, atomically, in one
+  transaction — see deviation below), list a user's own tenants across
+  every tenant they belong to (this is what the Phase 1 membership-RLS
+  reopen exists for), add/update/remove members by a Tenant Admin.
+- **`UserPtvConnection` gets a full write path** (the phase plan's wording
+  distinguishes this from `TenantEnvironment`, which doesn't yet):
+  `UserPtvConnectionService` (envelope-encrypted access token storage) plus
+  `/ptv-connections/*` routes implementing the actual per-user consent
+  flow docs/ptv-v11-notes.md describes — authorize-url generation
+  (wrapping Phase 2's `buildAuthorizationUrl`), the callback that parses
+  the captured fragment (Phase 2's `parseCallbackFragment`), validates it
+  via introspection (Phase 2's `introspectToken`) before ever storing it,
+  and disconnect (attempts PTV revocation best-effort, then always revokes
+  our own record regardless of whether PTV's call succeeded).
+- **`TenantEnvironment` storage + encryption, tests only, no routes** —
+  `TenantEnvironmentService`, exactly as scoped ("no UI or write path yet"
+  in the phase plan, since nothing populates it until Phase 7's
+  `PtvV12Adapter` exists to use it).
+- **`PtvAdapterConfig` wired to the real DB table** — `PtvAdapterConfigService`,
+  consumed by Stream D's registry next.
+
+Sync point verified (this stream's slice — full registry resolution is
+Stream D's):
+- [x] `npm run typecheck`, `lint`, `format`, `test`, and `build` all pass.
+- [x] `npm run test:integration` — 82/82 passing, adding 34 new tests
+  across the six files above (service-level: create/list/add/update/
+  remove for tenants, encrypt/decrypt/revoke/reconnect for both
+  credential-scope tables, upsert/list for adapter config; route-level:
+  full HTTP flows including RBAC enforcement — a Reader gets 403 adding a
+  member, an unauthenticated request gets 401 — and the OAuth callback
+  path with a stubbed `fetch` for introspection/revocation).
+
+Deviations:
+- **Bug found and fixed before this stream closed**: the first version of
+  `TenantService.createTenant` inserted the tenant in one
+  `db.transaction()`, then called `withContext(this.db, ...)` for the
+  membership insert — `withContext` opens its *own* transaction, which
+  (being a separate Postgres transaction/connection) can't see the
+  tenant row the outer transaction hadn't committed yet, so every
+  membership insert failed its foreign-key constraint. All 8
+  `TenantService` tests caught this immediately. Fixed by running
+  `set_config` directly on the same `tx` as the tenant insert instead of
+  nesting a second transaction — documented here since it's exactly the
+  kind of RLS/transaction-scoping mistake the phase plan's Phase 1
+  deviation note warned about, just one level up the call stack.
+- **No CSRF-binding for the OAuth `state` parameter.** `authorize-url`
+  generates and returns a `state` value, but nothing persists it
+  server-side to verify the callback's request actually corresponds to
+  the authorize-url call that issued it — the callback endpoint requires
+  the caller to already be authenticated with our own JWT, which bounds
+  the blast radius (an attacker would need to hijack an authenticated
+  session, not merely lure a visitor), but this is weaker than a fully
+  server-verified state round-trip. No new token table was added for this
+  in Stream B; worth revisiting in Phase 5 when a real web UI (with a
+  place to hold client-side state, e.g. a short-lived cookie) exists.
+- **Introspection/revocation calls use the real PTV endpoints with
+  whatever `PTV_V11_OAUTH_CLIENT_ID/SECRET` are configured** — since no
+  real client is registered yet (external prerequisite, same gap Phase 2
+  flagged), these routes are fully built and tested against a mocked
+  `fetch`, but a real callback against production PTV won't work until
+  that registration exists. This is a continuation of Phase 2's open
+  item, not a new one.
+
+---
+
+## 2026-09-16 — Phase 3, Stream C (Audit logging) closed ✅ 🔒
+
+Owned files:
+- src/audit/auditService.ts, auditService.integration.test.ts
+
+Delegated to a background Haiku subagent (per explicit instruction — this
+stream shares no files with Stream D, which was built directly), given
+detailed instructions including the project's RLS/`withContext` pattern,
+the transaction-nesting bug already found once this phase (see Stream B's
+entry), and the sibling services to imitate for style. Reviewed in full
+before accepting — implementation is correct, matches project
+conventions (terse JSDoc, `withContext` used correctly with no nesting,
+`and()`'s `undefined`-filtering used idiomatically for optional filters).
+
+**Also fixed, correctly, two files outside its assigned scope**:
+`src/db/context.integration.test.ts` and `src/db/rls.integration.test.ts`
+each had a raw `audit_entries` insert missing the new NOT NULL
+`correlation_id` column (added moments earlier in this same phase, before
+the subagent was dispatched — see the schema-changes entry above) — both
+inserts would otherwise fail. This was a real, necessary fix (this
+session's own oversight, not the subagent's), correctly identified and
+applied; accepted as-is rather than reverted.
+
+`AuditService`: `record()` (generates `correlationId` if omitted,
+append-only — no update/delete method exists on the class at all),
+`listForTenant()` (optional `resourceType`/`correlationId` filters,
+default limit 100, newest first), `listByCorrelationId()` (every entry
+for one logical operation, chronological, no limit).
+
+Sync point verified (this stream's slice):
+- [x] `npm run typecheck`, `lint`, `format` all pass.
+- [x] `npm run test:integration` — 9 new tests (insert/return-all-fields,
+  correlationId generation vs. caller-supplied, chronological grouping by
+  correlationId, cross-tenant RLS isolation, resourceType filtering,
+  limit respected, default-limit-100, descending order) — all passing
+  against real Postgres.
+
+---
+
+## 2026-09-16 — Phase 3, Stream D (Adapter registry) closed ✅ 🔒
+
+Owned files:
+- src/ptv/dbAdapterRegistry.ts, dbAdapterRegistry.integration.test.ts
+
+Built directly (not delegated) as the architecturally load-bearing piece
+of this phase, per this project's established practice.
+
+`DbPtvAdapterRegistry implements PtvAdapterRegistry` (the Phase 1
+interface, untouched): tenant/role authorization always runs first and
+is never cached (re-checked on every `resolve()` call, per
+docs/phase-plan.md's risk register); then the matching `PtvAdapterConfig`
+row is picked for the tenant/environment/operation; then credentials are
+resolved from `UserPtvConnection` or `TenantEnvironment` depending on the
+config's declared `credentialScope`; then an `AdapterFactory` (keyed by
+`api_version`, defaulting to `{ v11: ... }`) constructs the concrete
+adapter. `adapterFactories` is constructor-injectable specifically so
+tests can exercise the **tenant-scoped credential branch** with the Phase
+1 `InMemoryPtvAdapter` under a fake `api_version` — there's no second
+real adapter yet, but the resolution *logic* for that branch is fully
+exercised now rather than deferred to Phase 7, per the phase plan's
+explicit instruction to do so.
+
+Also added `checkV11Liveness()` (the phase plan's "liveness/readiness
+polling for the active adapter") — a real, unauthenticated call through
+`PtvV11Adapter.searchServices` against PTV's live test environment,
+reusing the exact same read path every real caller goes through rather
+than a bespoke ping.
+
+**Read vs. write credential strictness is asymmetric, deliberately**: a
+missing/absent credential for a *write* always throws
+`credential_missing_or_expired`; for a *read*, it's tolerated (the
+adapter gets constructed with no token at all) because v11's ordinary
+reads need no credential in the first place (docs/ptv-v11-notes.md) — the
+registry doesn't punish a read for a connection nobody has set up yet.
+
+Sync point verified — this is Phase 3's overall stated sync point, not
+just Stream D's: **"log in, resolve tenant + role, the registry picks
+`PtvV11Adapter`, credentials decrypt, a real PTV call succeeds, and an
+audit entry is recorded naming the adapter used."**
+- [x] `src/syncPoints/phase3.integration.test.ts` (new, cross-stream):
+  registers and logs in a real user (Stream A) against real Postgres;
+  creates a tenant and confirms `tenantService.listTenantsForUser`
+  resolves the correct role (Stream B, exercising the Phase 1 RLS
+  reopen); resolves a read via the registry with no connection stored,
+  gets a genuinely unauthenticated `PtvV11Adapter`, and makes a real
+  live call against PTV's test environment that succeeds (Stream D);
+  stores a user connection then resolves a write, capturing the exact
+  decrypted token via an injected factory to prove decryption is
+  byte-exact (Stream B + D together); records an audit entry naming
+  `apiVersion: 'v11'` and reads it back (Stream C). All against real
+  Postgres and real PTV, no mocks.
+- [x] `src/ptv/dbAdapterRegistry.integration.test.ts` — 10 tests: reader
+  rejected for write (`not_authorized`, before any credential lookup
+  runs at all — confirmed by there being no stored connection either),
+  outsider with no membership rejected, no-config → `no_adapter_configured`,
+  write unsupported by config → `operation_not_supported`, write with no
+  stored connection → `credential_missing_or_expired`, real live read
+  with no connection succeeds, exact-token-decryption assertion via
+  injected factory, **both credential-scope branches** (user-scoped via
+  real `PtvV11Adapter`, tenant-scoped via `InMemoryPtvAdapter` under a
+  fake `api_version` with the same registry instance), tenant-scoped
+  credential-missing case, `checkV11Liveness` against the real test
+  environment.
+- [x] Full pipeline: `typecheck`, `lint`, `format`, `test` (123),
+  `test:integration` (102), `build` all pass.
+
+New verified fact this phase (see docs/ptv-v11-notes.md's new section):
+sending a malformed `Authorization: Bearer` token to an otherwise-
+unauthenticated v11 GET endpoint gets **HTTP 500**, not 401 or a clean
+200 ignoring the header — found while writing the sync-point test itself
+(it originally tried to make a live call using a deliberately-fake stored
+token), not anticipated in advance. Fixed by restructuring the test to
+demonstrate "credentials decrypt" and "a real PTV call succeeds" as two
+separately-verified facts (a fake token is never sent over the wire),
+and documented as a second instance of the same "v11 500s on certain
+malformed input" pattern Phase 2 found with the all-zero GUID.
+
+**Phase 3 as a whole is now closed.** All four streams done; the
+cross-stream sync point passes against real Postgres and real PTV.

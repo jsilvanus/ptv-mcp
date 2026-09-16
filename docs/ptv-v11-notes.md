@@ -239,3 +239,20 @@ workable, just personal rather than organizational. The only real
 per-tenant fallback path that remains is: a user with no PTV connection of
 their own (or an expired one, mid-approval) still has MVP-0's manual
 export available as an immediate alternative.
+
+## New finding (Phase 3): a malformed Bearer token 500s an otherwise-unauthenticated GET
+
+Confirmed live, 2026-09-16, while building Phase 3's registry sync-point
+test: sending a syntactically-invalid `Authorization: Bearer <garbage>`
+header on `GET /api/v11/Service` — an endpoint with `security: None`, no
+auth required at all per the table above — gets **HTTP 500**, not a plain
+200 (ignoring the header) or a 401 (rejecting only the auth attempt).
+Practical consequence for `PtvAdapterRegistry` (Phase 3 Stream D): a
+credential that's present-but-garbage (e.g. a test fixture, or a real
+token that's been corrupted rather than cleanly expired) can break a
+*read* call that would otherwise have succeeded unauthenticated. This is
+a second instance of the same lesson as the all-zero-GUID 500 found in
+Phase 2 — v11 returns 500 for certain classes of malformed input where a
+4xx would be more conventional — so any adapter code attaching a
+possibly-invalid token to a normally-unauthenticated call should not
+assume a 500 always means "PTV is down."

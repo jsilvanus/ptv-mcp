@@ -26,19 +26,24 @@ describe('Row-Level Security', () => {
   const tenantA = randomUUID();
   const tenantB = randomUUID();
   const userA = randomUUID();
+  const userB = randomUUID();
 
   beforeAll(async () => {
     await admin`INSERT INTO tenants (id, name, slug) VALUES (${tenantA}, 'Tenant A', ${`tenant-a-${tenantA}`})`;
     await admin`INSERT INTO tenants (id, name, slug) VALUES (${tenantB}, 'Tenant B', ${`tenant-b-${tenantB}`})`;
     await admin`INSERT INTO users (id, email, name, password_hash) VALUES (${userA}, ${`${userA}@example.test`}, 'User A', 'x')`;
+    await admin`INSERT INTO users (id, email, name, password_hash) VALUES (${userB}, ${`${userB}@example.test`}, 'User B', 'x')`;
 
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
-      await tx`INSERT INTO audit_entries (tenant_id, action, resource_type, result) VALUES (${tenantA}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantA}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantA}, 'reader')`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
-      await tx`INSERT INTO audit_entries (tenant_id, action, resource_type, result) VALUES (${tenantB}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantB}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantB}, 'editor')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userB}, ${tenantB}, 'reader')`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_user_id', ${userA}, true)`;
@@ -53,16 +58,18 @@ describe('Row-Level Security', () => {
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
       await tx`DELETE FROM audit_entries WHERE tenant_id = ${tenantA}`;
+      await tx`DELETE FROM memberships WHERE tenant_id = ${tenantA}`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
       await tx`DELETE FROM audit_entries WHERE tenant_id = ${tenantB}`;
+      await tx`DELETE FROM memberships WHERE tenant_id = ${tenantB}`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_user_id', ${userA}, true)`;
       await tx`DELETE FROM user_ptv_connections WHERE user_id = ${userA}`;
     });
-    await admin`DELETE FROM users WHERE id = ${userA}`;
+    await admin`DELETE FROM users WHERE id IN (${userA}, ${userB})`;
     await admin`DELETE FROM tenants WHERE id IN (${tenantA}, ${tenantB})`;
     await admin.end();
     await asApp.end();
@@ -103,5 +110,29 @@ describe('Row-Level Security', () => {
       return tx`SELECT user_id FROM user_ptv_connections WHERE user_id = ${userA}`;
     });
     expect(withContext).toHaveLength(1);
+  });
+
+  it('lets a user see their own memberships across every tenant, without tenant context', async () => {
+    const rows = await asApp.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_user_id', ${userA}, true)`;
+      return tx`SELECT tenant_id FROM memberships WHERE user_id = ${userA} ORDER BY tenant_id`;
+    });
+    expect(rows.map((r) => r.tenant_id).sort()).toEqual([tenantA, tenantB].sort());
+  });
+
+  it('still never leaks another user’s membership rows via the self-visibility clause', async () => {
+    const rows = await asApp.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_user_id', ${userA}, true)`;
+      return tx`SELECT user_id FROM memberships WHERE user_id = ${userB}`;
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('still supports the per-tenant admin view of all members for one tenant', async () => {
+    const rows = await asApp.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
+      return tx`SELECT user_id FROM memberships WHERE tenant_id = ${tenantB} ORDER BY user_id`;
+    });
+    expect(rows.map((r) => r.user_id).sort()).toEqual([userA, userB].sort());
   });
 });

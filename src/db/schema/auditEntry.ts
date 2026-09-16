@@ -10,6 +10,8 @@ export const auditEntries = pgTable('audit_entries', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'restrict' }),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  /** Groups every audit entry produced by one logical operation (e.g. one propose→apply chain). */
+  correlationId: uuid('correlation_id').notNull(),
   action: text('action').notNull(),
   resourceType: text('resource_type').notNull(),
   resourceId: text('resource_id'),
