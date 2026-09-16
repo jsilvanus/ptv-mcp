@@ -154,43 +154,63 @@ Alkuperäinen "MVP-rajaus" olettaa julkaisutoiminnon (`ptv_apply_changes`)
 kuuluvan ensimmäiseen versioon. Koska v12-kirjoitusrajapintaa ei ole vielä
 edes testiympäristössä, ehdotan MVP:n jakamista kolmeen alavaiheeseen:
 
-### MVP-0 (nyt – rakennettavissa heti)
+### MVP-0 (nyt – rakennettavissa heti, v11-pohjainen)
+
+**Päätös 2026-09-16 (toteutuksen aikana täsmennetty)**: vaikka
+sovitinkerros suunnitellaan alusta asti moniversioiseksi, itse
+*rakennusjärjestys* on v11 ensin, v12 vasta MVP-0:n jälkeen omana
+vaiheenaan. Tämä tuottaa toimivan, oikeasti kirjoittavan MVP:n
+nopeammin, ilman että pitää odottaa v12:n kirjoitusrajapinnan
+julkaisua tai rakentaa kahta sovitinta yhtä aikaa. `PtvAdapter`-rajapinta
+ja domain-malli (ks. alla) ovat silti alusta asti versioagnostisia, joten
+v12:n lisääminen myöhemmin on uusi sovitintoteutus, ei arkkitehtuurin
+uudelleensuunnittelu.
 
 ✅ käyttäjä- ja tenant-hallinta, roolit, audit-loki
-✅ PTV-sovitinkerros (`PtvAdapter`) rakennetaan **v11- ja v12-sovittimet
-   rinnakkain alusta asti**, ei v12 ensin ja v11 jälkikäteen paikattuna
-   (ks. edellä [PTV-sovitinkerros](#ptv-sovitinkerros-usean-rajapintaversion-v11-v12-tulevat-tuki))
-✅ PTV-haku (v11 ja v12, molemmat samaan domain-malliin: service,
-   service-channel, organization, general-description, service-collection,
-   connection, koodistot)
+✅ PTV-sovitinkerros (`PtvAdapter`-rajapinta + yhteinen domain-malli)
+   rakennetaan versioagnostiseksi alusta asti, mutta **ensimmäinen ja
+   ainoa MVP-0:n sovitin on `PtvV11Adapter`** — ks. alla
+   [PTV-sovitinkerros](#ptv-sovitinkerros-usean-rajapintaversion-v11-v12-tulevat-tuki)
+✅ PTV-haku v11:n kautta (service, service-channel, organization,
+   general-description, service-collection, connection, koodistot)
 ✅ AI-avusteiset **muutosehdotukset** (`ptv_propose_changes`) ja diff-näkymä
-✅ `ptv_validate_changes` **paikallisena** (skeemavalidointi molempien
-   versioiden skeemoja vasten + PTV:n dokumentoituja sääntöjä vasten), ilman
+✅ `ptv_validate_changes` **paikallisena** (skeemavalidointi v11:n
+   skeemoja + PTV:n dokumentoituja sääntöjä vasten), ilman
    että mitään lähetetään PTV:hen
 ✅ **Vientitoiminto ilman API-kirjoitusta**: hyväksytty ehdotus viedään
    muodossa, joka on helppo kopioida PTV:n omaan hallintakäyttöliittymään
    (esim. kieliversioittain jäsennelty teksti / JSON-esikatselu), ja
    merkitään audit-lokiin tilaan `ReadyForManualPublish`
-⚠️ **suora kirjoitus PTV:hen on mahdollinen jo MVP-0:ssa v11-sovittimen
-   kautta**, JOS Phase 1:n v11-selvitys (ks.
-   [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md)) päätyy "go"-tulokseen –
-   v11:n OAuth2-mallin todellinen käytettävyys palvelinkäytössä on vielä
-   varmistamatta. Jos selvitys päätyy "no-go":hon, v11-sovitin toimii
-   pelkästään lukusovittimena ja tuotanto-organisaatiot käyttävät
-   manuaalista vientiä siihen asti kunnes v12-kirjoitus julkaistaan.
+✅ **suora kirjoitus PTV:hen v11-sovittimen kautta** — vahvistettu
+   toteutuskelpoiseksi (ks. [`docs/ptv-v11-notes.md`](./ptv-v11-notes.md):
+   OAuth2-kirjautumislinkki per käyttäjä, ei erillistä selvitysvaihetta
+   enää tarvita
 
-Tämä tuottaa jo itsenäisesti arvokkaan tuotteen riippumatta siitä, miten
-v11-selvitys päättyy — sovitinpatternin ansiosta kirjoitustuen
-avautuminen/sulkeutuminen on konfiguraatiokysymys, ei arkkitehtuurimuutos.
+MVP-0 on siis jo itsessään täysi, oikeasti PTV:hen kirjoittava tuote —
+v12 ei ole MVP-0:n edellytys, vain myöhempi laajennus/migraatio.
+
+### v12-integraatio (MVP-0:n jälkeen, oma vaiheensa – ei enää osa MVP-0:aa)
+
+Kun MVP-0 on julkaistu ja v11-sovitin toimii tuotannossa, rakennetaan
+`PtvV12Adapter` **omana, erillisenä vaiheenaan** ennen MVP-1/MVP-2:ta
+(ks. `docs/phase-plan.md`:n Phase 7). Tässä vaiheessa:
+
+✅ `PtvV12Adapter` toteutetaan hakuun (haku on jo tuotannossa v12:ssa)
+✅ v12:n kirjoitusoperaatiot rakennetaan beta-skeemoja vasten, mutta
+   `supports_write = false` kunnes PTV julkaisee kirjoitusrajapinnan
+✅ Tenant Adminin API-avaimen hallinta-UI (v12:n `TenantEnvironment`)
+   rakennetaan tässä vaiheessa, ei MVP-0:ssa — ei ollut mitään
+   konfiguroitavaa ennen kuin v12-sovitin on olemassa
+✅ Tämä on samalla ensimmäinen oikea ajo sovittimen
+   **käyttöönotto-runbookista** (ks. alla) — sama prosessi jota
+   käytetään joskus myöhemmin v13:n käyttöönottoon
 
 ### MVP-1 (arviolta 10/2026 →, kun v12-kirjoitus avautuu testiin)
 
 ✅ `PtvV12Adapter`:iin toteutetaan kirjoitusoperaatiot (aiemmin runkona/
    "ei vielä käytössä" -tilassa), aluksi vain `environment = test`
 ✅ Publisher-rooli pääsee kirjoittamaan **testiympäristöön** v12:n kautta
-✅ Tuotantoympäristö pysyy joko MVP-0-tilassa (manuaalinen vienti) tai
-   v11-sovittimen varassa, riippuen siitä ajetaanko v11-sovitin
-   tuotannossa
+✅ Tuotantoympäristö pysyy v11-sovittimen varassa
 
 ### MVP-2 (arviolta 04/2027 →, kun v12-kirjoitus avautuu tuotantoon)
 
@@ -996,26 +1016,29 @@ Ainoastaan uusi autentikointilähde lisätään.
 
 ✅ audit-loki (+ GDPR-säilytyskäytäntö)
 
-✅ PTV-sovitinkerros: `PtvV11Adapter` ja `PtvV12Adapter` rakennettuna
-   yhteistä `PtvAdapter`-rajapintaa vasten, molemmat haku-kykyisiä
+✅ PTV-sovitinkerros: `PtvAdapter`-rajapinta ja yhteinen domain-malli
+   rakennettu versioagnostiseksi, mutta **MVP-0:ssa toteutetaan vain
+   `PtvV11Adapter`** — `PtvV12Adapter` rakennetaan omana vaiheenaan MVP-0:n
+   julkaisun jälkeen (ks. "v12-integraatio" yllä)
 
 ✅ muutosehdotukset
 
-✅ diff-näkymä (toimii yhteisen domain-mallin päällä, versioriippumaton)
+✅ diff-näkymä (toimii yhteisen domain-mallin päällä, versioriippumaton —
+   valmis ottamaan v12:n vastaan myöhemmin ilman muutoksia)
 
-✅ validointi (tyyppitietoinen, kummankin version omista skeemoista
-   generoitu)
+✅ validointi (tyyppitietoinen, v11:n skeemoista generoitu)
 
 ✅ **manuaalinen vienti** hyväksytystä ehdotuksesta PTV-UI:hin
 
 ✅ testi- ja tuotantoympäristöt
 
-⚠️ **suora kirjoitus PTV:hen tuotantoon v11-sovittimen kautta** —
-   sisältyy MVP-0:aan, jos ja vain jos Phase 1:n v11-selvitys (OAuth2:n
-   todellinen käytettävyys palvelinkäytössä) päätyy "go"-tulokseen; muuten
-   jää MVP-1/2:een asti
+✅ **suora kirjoitus PTV:hen tuotantoon v11-sovittimen kautta** — kuuluu
+   MVP-0:aan; OAuth2-mekanismin toimivuus on vahvistettu (ei enää
+   avoin selvityskysymys, ks. `docs/ptv-v11-notes.md`)
 
 Ei sisällä:
+
+❌ `PtvV12Adapteria` (oma vaihe MVP-0:n jälkeen, ks. yllä)
 
 ❌ Microsoft Copilot -integraatiota
 
@@ -1026,6 +1049,15 @@ Ei sisällä:
 ❌ työnkulkujen hyväksyntäkiertoa
 
 ❌ usean henkilön hyväksyntämallia
+
+## v12-integraatio (MVP-0:n jälkeen, ennen MVP-1:tä)
+
+✅ `PtvV12Adapter` toteutetaan hakuun
+
+✅ Tenant Adminin API-avaimen hallinta-UI (`TenantEnvironment`)
+
+✅ v12:n kirjoitusoperaatiot rakennetaan beta-skeemoja vasten,
+   `supports_write = false` kunnes PTV julkaisee kirjoitusrajapinnan
 
 ## MVP-1 (kun v12-kirjoitus avautuu testiympäristöön, arviolta 10/2026)
 
@@ -1045,15 +1077,20 @@ Ei sisällä:
 
 # Vaiheistus
 
-## MVP-0
+## MVP-0 (v11-pohjainen)
 
 - käyttäjähallinta
 - tenant-hallinta
-- PTV-sovitinkerros: v11- ja v12-sovittimet rinnakkain (`PtvAdapter`-rajapinta,
-  yhteinen domain-malli), v11:n kirjoitustuki selvityksen tuloksen mukaan
-- MCP-työkalut (haku, ehdotus, validointi, manuaalinen vienti, ja
-  mahdollisesti suora kirjoitus v11:n kautta)
+- PTV-sovitinkerros: `PtvAdapter`-rajapinta + yhteinen domain-malli
+  (versioagnostinen), mutta vain `PtvV11Adapter` toteutettuna
+- MCP-työkalut (haku, ehdotus, validointi, manuaalinen vienti, ja suora
+  kirjoitus v11:n kautta)
 - auditointi
+
+## v12-integraatio (oma vaihe MVP-0:n jälkeen)
+
+- `PtvV12Adapter` toteutetaan (haku + kirjoitus runkona)
+- Tenant Adminin API-avaimen hallinta-UI
 
 ## MVP-1 / MVP-2
 
