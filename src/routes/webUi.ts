@@ -1,5 +1,5 @@
-import { access } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { access, readdir } from 'node:fs/promises';
+import { relative, resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
 
@@ -8,6 +8,23 @@ export interface WebUiRoutesOptions {
 }
 
 const API_PREFIXES = ['auth', 'tenants', 'ptv-connections', 'health', 'mcp'];
+
+async function listStaticFiles(root: string, currentDir = root): Promise<string[]> {
+  const entries = await readdir(currentDir, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = resolve(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        return listStaticFiles(root, fullPath);
+      }
+      if (!entry.isFile()) {
+        return [] as string[];
+      }
+      return [relative(root, fullPath).replaceAll('\\', '/')];
+    }),
+  );
+  return files.flat();
+}
 
 export async function webUiRoutes(
   app: FastifyInstance,
@@ -30,6 +47,7 @@ export async function webUiRoutes(
     wildcard: false,
     index: false,
   });
+  const staticFiles = new Set(await listStaticFiles(webDistRoot));
 
   app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').sendFile('index.html'));
 
@@ -44,17 +62,13 @@ export async function webUiRoutes(
       return reply.notFound();
     }
 
-    if (path.includes('.')) {
-      const candidate = resolve(webDistRoot, path);
-      if (candidate === webDistRoot || candidate.startsWith(`${webDistRoot}${sep}`)) {
-        try {
-          await access(candidate);
-          return reply.sendFile(path);
-        } catch {
-          // Fall through to index.html below so unknown deep-link assets
-          // and client-side routes both get consistent SPA fallback behavior.
-        }
-      }
+    if (
+      path.includes('.') &&
+      !path.includes('..') &&
+      !path.startsWith('/') &&
+      staticFiles.has(path)
+    ) {
+      return reply.sendFile(path);
     }
 
     return reply.type('text/html; charset=utf-8').sendFile('index.html');

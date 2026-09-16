@@ -55,5 +55,5 @@ jobs:
 
       - run: npm run build
       - run: npm --prefix web run build
-      - run: docker compose -f docker-compose.production.yml config
+      - run: DATABASE_URL=postgresql://placeholder MASTER_ENCRYPTION_KEY=placeholder JWT_SECRET=placeholder docker compose -f docker-compose.production.yml config
       - run: docker build .
