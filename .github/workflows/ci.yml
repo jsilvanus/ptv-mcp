@@ -39,10 +39,12 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm --prefix web ci
       - run: npm run format
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: npm --prefix web run lint
 
       # The GitHub Actions postgres *service container* has no equivalent
       # of docker-compose's docker-entrypoint-initdb.d wiring, so the
@@ -52,3 +54,6 @@ jobs:
       - run: npm run test:integration
 
       - run: npm run build
+      - run: npm --prefix web run build
+      - run: DATABASE_URL=postgresql://placeholder MASTER_ENCRYPTION_KEY=placeholder JWT_SECRET=placeholder docker compose -f docker-compose.production.yml config
+      - run: docker build .

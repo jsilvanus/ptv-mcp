@@ -1004,3 +1004,50 @@ Deviations:
   page's logic (fragment capture, introspection call, error paths) is
   covered by `ptvConnections.integration.test.ts` with a mocked
   introspection response instead.
+
+---
+
+## 2026-09-16 — Phase 6 closed ✅ 🔒
+
+Owned files:
+- `src/syncPoints/phase6.integration.test.ts`
+- `src/routes/webUi.ts`
+- `src/app.ts`
+- `Dockerfile`
+- `docker-compose.production.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/deploy.yml`
+- `docs/deployment-guide.md`
+- `docs/adapter-onboarding-runbook.md`
+- `README.md`
+- `PLAN.md`
+
+Sync point verified (docs/phase-plan.md Phase 6 checklist):
+- [x] Added end-to-end role-flow integration coverage for the MCP
+      propose/validate/export/apply chain (`src/syncPoints/phase6.integration.test.ts`):
+      Reader blocked at propose, Editor can propose/validate/export but not apply,
+      Publisher and Tenant Admin can apply.
+- [x] Added multi-tenant isolation coverage in the same sync-point test:
+      cross-tenant read/write denied, and one user-scoped v11 connection is reused
+      across two allowed tenants for the same publisher.
+- [x] Production static serving implemented: Fastify serves SPA assets and
+      deep-link fallback from `web/dist` in production (`src/routes/webUi.ts`),
+      wired from app bootstrap (`src/app.ts`).
+- [x] Production image path finalized (`Dockerfile`) and production compose
+      file added (`docker-compose.production.yml`) with external Postgres only.
+- [x] CI/CD deploy step added (`.github/workflows/deploy.yml`) to build and
+      publish production images to GHCR on main / manual dispatch.
+- [x] Deployment and adapter-onboarding runbook documentation added and linked
+      from README.
+
+Validation run:
+- [x] `npm run typecheck`
+- [x] `npm run lint`
+- [x] `npm test`
+- [x] `npm run build`
+- [x] `npm --prefix web ci && npm --prefix web run lint && npm --prefix web run build`
+- [x] `docker compose -f docker-compose.production.yml config` (with placeholder required env vars)
+- [x] `docker build .` (backend + web build path validated in container)
+- [ ] `npm run test:integration` in this sandbox (blocked: no local Postgres
+      server and no DNS access to `api.palvelutietovaranto.trn.suomi.fi` for
+      the live v11 adapter integration suite)

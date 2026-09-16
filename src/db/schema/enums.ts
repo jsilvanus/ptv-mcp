@@ -17,3 +17,11 @@ export const ptvEnvironmentEnum = pgEnum('ptv_environment', ['test', 'production
  * See docs/ptv-v11-notes.md's "Do we still need tenant_id" section.
  */
 export const credentialScopeEnum = pgEnum('credential_scope', ['tenant', 'user']);
+
+export const proposalStatusEnum = pgEnum('proposal_status', [
+  'pending',
+  'approved',
+  'rejected',
+  'applied',
+  'failed',
+]);

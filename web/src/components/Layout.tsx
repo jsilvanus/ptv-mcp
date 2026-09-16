@@ -12,6 +12,11 @@ export function Layout() {
     navigate('/login');
   }
 
+  const canReviewProposals =
+    currentTenant?.role === 'editor' ||
+    currentTenant?.role === 'publisher' ||
+    currentTenant?.role === 'tenant_admin';
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       <nav
@@ -67,6 +72,11 @@ export function Layout() {
           {currentTenant?.role === 'tenant_admin' && (
             <li>
               <NavLink to={`/tenants/${currentTenantId}/audit-log`}>Audit log</NavLink>
+            </li>
+          )}
+          {canReviewProposals && (
+            <li>
+              <NavLink to={`/tenants/${currentTenantId}/proposals`}>Proposal queue</NavLink>
             </li>
           )}
         </ul>

@@ -60,6 +60,13 @@ function mergeService(current: Service, changes: Partial<Service>): Service {
   return { ...current, ...changes };
 }
 
+export interface PreparedProposal {
+  serviceId: PtvContentId;
+  current: Service;
+  proposed: Service;
+  diff: ServiceDiffEntry[];
+}
+
 function diffLocalizedField(
   field: string,
   before: LocalizedText,
@@ -103,6 +110,29 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
   return entries;
 }
 
+export async function prepareProposal(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  serviceId: PtvContentId,
+  changes: Partial<Service>,
+): Promise<PreparedProposal> {
+  const adapter = await registry.resolve({
+    tenantId: ctx.tenantId,
+    environment: ctx.environment,
+    operation: 'read',
+    actingUserId: ctx.actingUserId,
+  });
+
+  const current = await adapter.getService(serviceId);
+  if (!current) {
+    throw new ServiceNotFoundError(serviceId);
+  }
+
+  const proposed = mergeService(current, changes);
+  const diff = diffService(current, changes);
+  return { serviceId, current, proposed, diff };
+}
+
 /**
  * `ptv_propose_changes` (Phase 4 Stream B): fetches the current service,
  * merges the proposed changes, and returns current/proposed/diff — never
@@ -122,21 +152,7 @@ export async function proposeChanges(
   correlationId?: string,
 ): Promise<ProposeChangesResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
-
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
-
-  const current = await adapter.getService(serviceId);
-  if (!current) {
-    throw new ServiceNotFoundError(serviceId);
-  }
-
-  const proposed = mergeService(current, changes);
-  const diff = diffService(current, changes);
+  const { current, proposed, diff } = await prepareProposal(registry, ctx, serviceId, changes);
 
   const entry = await auditService.record({
     tenantId: ctx.tenantId,

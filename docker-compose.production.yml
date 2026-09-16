@@ -1,0 +1,28 @@
+services:
+  app:
+    build: .
+    image: ghcr.io/${GITHUB_REPOSITORY:-jsilvanus/ptv-mcp}:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL to your external Postgres}
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      PTV_V11_OAUTH_CLIENT_ID: ${PTV_V11_OAUTH_CLIENT_ID:-}
+      PTV_V11_OAUTH_CLIENT_SECRET: ${PTV_V11_OAUTH_CLIENT_SECRET:-}
+      PTV_V11_OAUTH_REDIRECT_URI: ${PTV_V11_OAUTH_REDIRECT_URI:-}
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5

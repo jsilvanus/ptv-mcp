@@ -49,3 +49,25 @@ export interface ServiceDiffEntry {
   before: unknown;
   after: unknown;
 }
+
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied' | 'failed';
+
+export type ProposalResolveAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
+
+export interface ProposalSummary {
+  id: string;
+  serviceId: string;
+  environment: PtvEnvironment;
+  proposedByUserId: string;
+  status: ProposalStatus;
+  correlationId: string;
+  resolvedByUserId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProposalDetails extends ProposalSummary {
+  diff: ServiceDiffEntry[];
+  queuedDiff: ServiceDiffEntry[];
+}
