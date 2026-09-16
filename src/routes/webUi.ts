@@ -62,12 +62,7 @@ export async function webUiRoutes(
       return reply.notFound();
     }
 
-    if (
-      path.includes('.') &&
-      !path.includes('..') &&
-      !path.startsWith('/') &&
-      staticFiles.has(path)
-    ) {
+    if (path.includes('.') && !path.includes('..') && staticFiles.has(path)) {
       return reply.sendFile(path);
     }
 
