@@ -205,13 +205,13 @@ describe('Phase 6 sync point', () => {
         tenantId,
         environment: 'test',
         serviceId: BASE_SERVICE.id,
-        changes: { names: { fi: 'Reader blocked change' } },
+        changes: { names: { fi: 'Reader queued change' } },
       },
     });
-    expect(readerPropose.isError).toBe(true);
-    expect((readerPropose.content as Array<{ text: string }>)[0]?.text).toContain(
-      "requires at least 'editor' role",
-    );
+    expect(readerPropose.isError).not.toBe(true);
+    const readerProposal = parseToolResult<{ proposalId: string; status: string }>(readerPropose);
+    expect(readerProposal.proposalId.length).toBeGreaterThan(0);
+    expect(readerProposal.status).toBe('pending');
     await readerClient.close();
 
     const editorClient = await connectedClient(editor.token);

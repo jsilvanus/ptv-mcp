@@ -3,8 +3,7 @@ import type { Database } from '../db/client.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
-import { resolveMembershipRole } from '../auth/rbac.js';
-import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
+import { createAuthenticate, createRequireRole, resolveMembershipRole } from '../auth/rbac.js';
 import {
   getProposal,
   listProposals,
