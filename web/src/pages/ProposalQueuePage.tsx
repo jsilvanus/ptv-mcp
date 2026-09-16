@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, apiFetch } from '../api/client';
 import type {
@@ -24,6 +24,11 @@ export function ProposalQueuePage() {
   const [resolvingAction, setResolvingAction] = useState<ProposalResolveAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const selectedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const canReview = useMemo(() => {
     if (!currentTenant) return false;
@@ -43,7 +48,10 @@ export function ProposalQueuePage() {
       if (list.length === 0) {
         setSelectedId(null);
         setSelected(null);
-      } else if (!selectedId || !list.some((proposal) => proposal.id === selectedId)) {
+      } else if (
+        !selectedIdRef.current ||
+        !list.some((proposal) => proposal.id === selectedIdRef.current)
+      ) {
         setSelectedId(list[0]?.id ?? null);
       }
     } catch (err) {
@@ -55,7 +63,7 @@ export function ProposalQueuePage() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, status, selectedId, canReview]);
+  }, [tenantId, status, canReview]);
 
   const loadSelected = useCallback(async () => {
     if (!tenantId || !selectedId || !canReview) return;
