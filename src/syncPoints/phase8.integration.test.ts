@@ -220,10 +220,15 @@ describe('Phase 8 sync point', () => {
       arguments: { tenantId, environment: 'test', status: 'pending' },
     });
     const afterPayload = parseToolResult<Array<{ id: string }>>(listAfter);
-    expect(afterPayload.some((proposalRow) => proposalRow.id === queuedPayload.proposalId)).toBe(false);
+    expect(afterPayload.some((proposalRow) => proposalRow.id === queuedPayload.proposalId)).toBe(
+      false,
+    );
     await editorClient.close();
 
-    const auditTrail = await auditService.listByCorrelationId(tenantId, queuedPayload.correlationId);
+    const auditTrail = await auditService.listByCorrelationId(
+      tenantId,
+      queuedPayload.correlationId,
+    );
     expect(auditTrail.map((entry) => entry.action)).toEqual([
       'ProposeServiceChange',
       'ReviewProposal',

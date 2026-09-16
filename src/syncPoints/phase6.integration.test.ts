@@ -270,7 +270,10 @@ describe('Phase 6 sync point', () => {
     expect((editorApply.content as Array<{ text: string }>)[0]?.text).toContain('not_authorized');
     await editorClient.close();
 
-    const editorAuditTrail = await auditService.listByCorrelationId(tenantId, editorProposal.correlationId);
+    const editorAuditTrail = await auditService.listByCorrelationId(
+      tenantId,
+      editorProposal.correlationId,
+    );
     expect(editorAuditTrail.map((entry) => entry.action)).toEqual([
       'ProposeServiceChange',
       'ValidateServiceChange',
@@ -325,7 +328,11 @@ describe('Phase 6 sync point', () => {
       addMembership(tenantB, sharedPublisher.userId, 'publisher'),
       addMembership(tenantC, outsider.userId, 'publisher'),
     ]);
-    await Promise.all([configureV11(tenantA, true), configureV11(tenantB, true), configureV11(tenantC, true)]);
+    await Promise.all([
+      configureV11(tenantA, true),
+      configureV11(tenantB, true),
+      configureV11(tenantC, true),
+    ]);
     await connectionService.storeConnection(
       sharedPublisher.userId,
       'v11',
@@ -367,7 +374,9 @@ describe('Phase 6 sync point', () => {
       },
     });
     expect(forbiddenWrite.isError).toBe(true);
-    expect((forbiddenWrite.content as Array<{ text: string }>)[0]?.text).toContain('not_authorized');
+    expect((forbiddenWrite.content as Array<{ text: string }>)[0]?.text).toContain(
+      'not_authorized',
+    );
 
     const forbiddenRead = await sharedClient.callTool({
       name: 'ptv_search_services',

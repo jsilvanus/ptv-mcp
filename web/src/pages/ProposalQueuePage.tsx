@@ -70,7 +70,9 @@ export function ProposalQueuePage() {
     setLoadingDetails(true);
     setError(null);
     try {
-      const details = await apiFetch<ProposalDetails>(`/tenants/${tenantId}/proposals/${selectedId}`);
+      const details = await apiFetch<ProposalDetails>(
+        `/tenants/${tenantId}/proposals/${selectedId}`,
+      );
       setSelected(details);
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {

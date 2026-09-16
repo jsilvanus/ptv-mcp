@@ -75,15 +75,18 @@ export class ProposalService {
     tenantId: string,
     options?: { status?: ProposalStatus; limit?: number },
   ): Promise<ProposalRecord[]> {
-    return withContext(this.db, { tenantId }, async (tx) =>
-      (await tx.query.proposals.findMany({
-        where: and(
-          eq(proposals.tenantId, tenantId),
-          options?.status ? eq(proposals.status, options.status) : undefined,
-        ),
-        orderBy: desc(proposals.createdAt),
-        limit: options?.limit ?? 100,
-      })) as ProposalRecord[],
+    return withContext(
+      this.db,
+      { tenantId },
+      async (tx) =>
+        (await tx.query.proposals.findMany({
+          where: and(
+            eq(proposals.tenantId, tenantId),
+            options?.status ? eq(proposals.status, options.status) : undefined,
+          ),
+          orderBy: desc(proposals.createdAt),
+          limit: options?.limit ?? 100,
+        })) as ProposalRecord[],
     );
   }
 

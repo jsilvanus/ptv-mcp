@@ -391,7 +391,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_resolve_proposal',
     {
       description:
-        "Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.",
+        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
       inputSchema: {
         tenantId: z.string(),
         environment: environmentSchema,
@@ -513,7 +513,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     },
   );
 
-  function templatedResource(uriTemplate: string, name: string, description: string): ResourceTemplate {
+  function templatedResource(
+    uriTemplate: string,
+    name: string,
+    description: string,
+  ): ResourceTemplate {
     return new ResourceTemplate(uriTemplate, {
       list: async () => ({
         resources: [{ uri: uriTemplate, name, description, mimeType: 'application/json' }],
@@ -532,7 +536,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { description: 'Get one PTV service by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
       const ctx = toolContext(
-        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        {
+          tenantId: variables.tenantId as string,
+          environment: variables.environment as 'test' | 'production',
+        },
         extra,
       );
       const service = await searchTools.getService(registry, ctx, variables.serviceId as string);
@@ -559,7 +566,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { description: 'Get one PTV service channel by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
       const ctx = toolContext(
-        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        {
+          tenantId: variables.tenantId as string,
+          environment: variables.environment as 'test' | 'production',
+        },
         extra,
       );
       const channel = await searchTools.getChannel(registry, ctx, variables.channelId as string);
@@ -586,10 +596,17 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { description: 'Get one PTV organisation by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
       const ctx = toolContext(
-        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        {
+          tenantId: variables.tenantId as string,
+          environment: variables.environment as 'test' | 'production',
+        },
         extra,
       );
-      const organisation = await searchTools.getOrganisation(registry, ctx, variables.organisationId as string);
+      const organisation = await searchTools.getOrganisation(
+        registry,
+        ctx,
+        variables.organisationId as string,
+      );
       return {
         contents: [
           {
@@ -613,7 +630,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { description: 'Get one PTV organisation hierarchy by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
       const ctx = toolContext(
-        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        {
+          tenantId: variables.tenantId as string,
+          environment: variables.environment as 'test' | 'production',
+        },
         extra,
       );
       const hierarchy = await searchTools.getOrganisationHierarchy(
@@ -644,7 +664,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { description: 'List entries in one PTV code list by name.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
       const ctx = toolContext(
-        { tenantId: variables.tenantId as string, environment: variables.environment as 'test' | 'production' },
+        {
+          tenantId: variables.tenantId as string,
+          environment: variables.environment as 'test' | 'production',
+        },
         extra,
       );
       const codes = await searchTools.listCodes(registry, ctx, variables.codeListName as string);

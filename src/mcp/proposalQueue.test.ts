@@ -11,7 +11,11 @@ import {
   type ResolveProposalAction,
 } from './proposalQueue.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import type { ProposalRecord, ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type {
+  ProposalRecord,
+  ProposalService,
+  ProposalStatus,
+} from '../proposals/proposalService.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
@@ -113,22 +117,23 @@ describe('proposalQueue', () => {
     const audit = fakeAuditService();
     const { rows, api } = fakeProposalService();
 
-    const queued = await queueProposal(
-      readerResolver,
-      registry,
-      audit,
-      api,
-      ctx,
-      service.id,
-      { names: { fi: 'Uusi nimi' } },
-    );
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Uusi nimi' },
+    });
     expect(queued.status).toBe('pending');
     expect(rows).toHaveLength(1);
 
     const listed = await listProposals(editorResolver, api, ctx, 'pending');
     expect(listed).toHaveLength(1);
 
-    const reviewed = await getProposal(editorResolver, registry, api, audit, ctx, queued.proposalId);
+    const reviewed = await getProposal(
+      editorResolver,
+      registry,
+      api,
+      audit,
+      ctx,
+      queued.proposalId,
+    );
     expect(reviewed.diff.length).toBeGreaterThan(0);
 
     const resolved = await resolveProposal(
@@ -148,15 +153,9 @@ describe('proposalQueue', () => {
     const registry = buildRegistry(false);
     const audit = fakeAuditService();
     const { rows, api } = fakeProposalService();
-    const queued = await queueProposal(
-      readerResolver,
-      registry,
-      audit,
-      api,
-      ctx,
-      service.id,
-      { names: { fi: 'Apply me' } },
-    );
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Apply me' },
+    });
 
     await expect(
       resolveProposal(
@@ -178,15 +177,9 @@ describe('proposalQueue', () => {
     const registry = buildRegistry(true);
     const audit = fakeAuditService();
     const { rows, api } = fakeProposalService();
-    const queued = await queueProposal(
-      readerResolver,
-      registry,
-      audit,
-      api,
-      ctx,
-      service.id,
-      { names: { fi: 'Apply succeeds' } },
-    );
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Apply succeeds' },
+    });
 
     const resolved = await resolveProposal(
       publisherResolver,
