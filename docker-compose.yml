@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ptv_mcp
+      POSTGRES_PASSWORD: ptv_mcp_dev
+      POSTGRES_DB: ptv_mcp_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ptv_mcp -d ptv_mcp_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: postgres://ptv_mcp:ptv_mcp_dev@postgres:5432/ptv_mcp_dev
+      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY in your .env}
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres-data:

@@ -1,0 +1,38 @@
+{
+  "name": "ptv-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-tenant MCP server bridging Suomi.fi Palvelutietovaranto (PTV) and AI agents",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/env": "^5.0.2",
+    "@fastify/sensible": "^6.0.2",
+    "fastify": "^5.2.1",
+    "pino-pretty": "^13.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.19.1",
+    "vitest": "^5.0.1"
+  }
+}
