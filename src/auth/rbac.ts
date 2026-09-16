@@ -45,6 +45,26 @@ export function createAuthenticate(jwtSecret: string) {
 }
 
 /**
+ * The one place that looks up "what role does this user have in this
+ * tenant" — used both by the Fastify `requireRole` guard below and by
+ * non-HTTP callers (e.g. the MCP tool layer, src/mcp/authorization.ts)
+ * that need the same check without a Fastify request/reply in scope.
+ * Returns `null` for no membership at all, never throws for that case.
+ */
+export async function resolveMembershipRole(
+  db: Database,
+  tenantId: string,
+  userId: string,
+): Promise<MembershipRole | null> {
+  const membership = await withContext(db, { tenantId, userId }, async (tx) =>
+    tx.query.memberships.findFirst({
+      where: and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId)),
+    }),
+  );
+  return membership?.role ?? null;
+}
+
+/**
  * Resolves the acting user's role for `request.params.tenantId` and rejects
  * if it's below `minRole`. Must run after `authenticate`. On success, sets
  * `request.tenantId`/`request.role` — this is the one place a route learns
@@ -60,17 +80,12 @@ export function createRequireRole(db: Database, minRole: MembershipRole) {
       return reply.badRequest('Missing tenantId route parameter');
     }
 
-    const membership = await withContext(db, { tenantId, userId: request.userId }, async (tx) =>
-      tx.query.memberships.findFirst({
-        where: and(eq(memberships.tenantId, tenantId), eq(memberships.userId, request.userId!)),
-      }),
-    );
-
-    if (!membership || ROLE_RANK[membership.role] < ROLE_RANK[minRole]) {
+    const role = await resolveMembershipRole(db, tenantId, request.userId);
+    if (!role || ROLE_RANK[role] < ROLE_RANK[minRole]) {
       return reply.forbidden('Insufficient role for this tenant');
     }
 
     request.tenantId = tenantId;
-    request.role = membership.role;
+    request.role = role;
   };
 }

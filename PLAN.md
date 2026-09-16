@@ -50,11 +50,12 @@
 - [x] Stream C — Audit logging ✅
 - [x] Stream D — Adapter registry implementation (verify both credential-scope branches using the Phase 1 in-memory fake) ✅
 
-## Phase 4: MCP tool layer ⏸
-- [ ] Stream A — Search tools
-- [ ] Stream B — Propose-changes / diff engine
-- [ ] Stream C — Validation engine
-- [ ] Stream D — Apply / export (`ptv_export_for_manual_publish`, `ptv_apply_changes`)
+## Phase 4: MCP tool layer ✅ 🔒
+- [x] Stream A — Search tools ✅
+- [x] Stream B — Propose-changes / diff engine ✅
+- [x] Stream C — Validation engine ✅
+- [x] Stream D — Apply / export (`ptv_export_for_manual_publish`, `ptv_apply_changes`) ✅
+- [x] MCP server wiring (real `@modelcontextprotocol/sdk`, stateless Streamable HTTP transport on Fastify) ✅
 
 ## Phase 5: Web UI ⏸
 - [ ] Stream A — Auth & tenant/user management UI

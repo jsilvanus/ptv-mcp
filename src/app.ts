@@ -5,11 +5,17 @@ import { AuthService } from './auth/authService.js';
 import { LoggingMailer, type Mailer } from './auth/mailer.js';
 import { createDatabase, type Database } from './db/client.js';
 import { UserPtvConnectionService } from './credentials/userPtvConnectionService.js';
+import { TenantEnvironmentService } from './credentials/tenantEnvironmentService.js';
+import { PtvAdapterConfigService } from './credentials/ptvAdapterConfigService.js';
 import { TenantService } from './tenants/tenantService.js';
+import { DbPtvAdapterRegistry } from './ptv/dbAdapterRegistry.js';
+import { AuditService } from './audit/auditService.js';
+import { V11ChangeValidator } from './validation/changeValidator.js';
 import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { tenantRoutes } from './routes/tenants.js';
 import { ptvConnectionRoutes } from './routes/ptvConnections.js';
+import { mcpRoutes } from './mcp/httpTransport.js';
 
 export interface BuildAppOptions {
   config: Pick<
@@ -43,6 +49,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
   const tenantService = new TenantService(db);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
+  const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
+  const adapterConfigService = new PtvAdapterConfigService(db);
+  const registry = new DbPtvAdapterRegistry(
+    db,
+    adapterConfigService,
+    tenantEnvironmentService,
+    connectionService,
+  );
+  const auditService = new AuditService(db);
+  const validator = new V11ChangeValidator();
 
   await app.register(sensible);
   await app.register(healthRoutes);
@@ -56,6 +72,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       clientSecret: config.ptvV11OAuthClientSecret,
       redirectUri: config.ptvV11OAuthRedirectUri,
     },
+  });
+  await app.register(mcpRoutes, {
+    jwtSecret: config.jwtSecret,
+    serverDeps: { db, registry, auditService, validator },
   });
 
   return app;

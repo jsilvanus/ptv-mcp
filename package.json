@@ -25,12 +25,14 @@
   "dependencies": {
     "@fastify/env": "^5.0.2",
     "@fastify/sensible": "^6.0.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@node-rs/argon2": "^2.2.1",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
     "jose": "^6.2.12",
     "pino-pretty": "^13.0.0",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
