@@ -6,9 +6,12 @@
 > execution progress only. See `EXECUTION_LOG.md` for the append-only
 > audit trail (owned files per phase, sync point verification, deviations).
 >
-> Phases 7 (MVP-1) and 8 (MVP-2) are gated on PTV's own external roadmap
-> (v12 write API in test ~10/2026, production ~04/2027) and are not
-> started — they're listed here for continuity only.
+> **Resequenced 2026-09-16**: `PtvV11Adapter` and `PtvV12Adapter` are no
+> longer built side by side. MVP-0 (Phases 0–6) ships on `PtvV11Adapter`
+> alone; `PtvV12Adapter` becomes its own phase (7) started only after
+> MVP-0 is live. Phases 8 (MVP-1) and 9 (MVP-2) are gated on PTV's own
+> external roadmap (v12 write API in test ~10/2026, production ~04/2027).
+> See `docs/phase-plan.md` for the full rationale.
 
 ## Phase 0: Foundation ✅ 🔒
 - [x] Initialize Node.js ESM/TypeScript project (`"type": "module"`, `moduleResolution: NodeNext`), lint/format/test tooling
@@ -32,26 +35,20 @@
 - [x] Define `PtvAdapterRegistry` resolution contract `(tenant, environment, operation, actingUser)`
 - [x] Contract test suite stub (fixture-driven, runs against a fake in-memory adapter)
 
-## Phase 2: Adapter implementations — v11 and v12, side by side ⏸
-**Stream 2A — `PtvV12Adapter`**
-- [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators
-- [ ] Read methods against domain model
-- [ ] `x-api-key` auth, retry/backoff+jitter
-- [ ] Write methods stubbed (`supports_write: false` until Phase 7)
-
-**Stream 2B — `PtvV11Adapter`**
+## Phase 2: `PtvV11Adapter` implementation 🔄
 - [ ] Vendor v11 `swagger.json`, generate wire types
 - [ ] Read methods (published + restricted draft-visibility endpoints)
 - [ ] Embedded-connection extraction
 - [ ] Per-user consent flow: auth link, fragment-capturing callback, introspection validation
 - [ ] Delete-flag mapping table for PUT partial updates
+- [ ] `applyServiceChange` against v11's POST/PUT endpoints
 - [ ] Wire `PtvAdapterConfig` for v11 (`credential_scope = user`, `supports_write = true` for production)
 
 ## Phase 3: Core platform services ⏸
 - [ ] Stream A — Auth (JWT, Argon2id, refresh rotation + denylist, RBAC)
-- [ ] Stream B — Tenant & credential management (`TenantEnvironment` + `UserPtvConnection`)
+- [ ] Stream B — Tenant & credential management (`UserPtvConnection` for v11; `TenantEnvironment` storage exercised by tests only, no UI yet)
 - [ ] Stream C — Audit logging
-- [ ] Stream D — Adapter registry implementation
+- [ ] Stream D — Adapter registry implementation (verify both credential-scope branches using the Phase 1 in-memory fake)
 
 ## Phase 4: MCP tool layer ⏸
 - [ ] Stream A — Search tools
@@ -61,16 +58,26 @@
 
 ## Phase 5: Web UI ⏸
 - [ ] Stream A — Auth & tenant/user management UI
-- [ ] Stream B — Credential management UI (tenant admin screen + personal "connect PTV" screen)
+- [ ] Stream B — Credential management UI: personal "connect PTV" screen only (v11); tenant-admin API-key screen deferred to Phase 7
 - [ ] Stream C — Audit log viewer / proposal review UI
 
 ## Phase 6: Integration hardening & MVP-0 launch ⏸
-- [ ] End-to-end tests, per role, against both adapters
+- [ ] End-to-end tests, per role (v11 only)
 - [ ] Multi-tenant isolation tests (incl. same-user-different-tenant reuse test)
 - [ ] Security review
-- [ ] Docs: deployment guide, adapter runbook
+- [ ] Docs: deployment guide, **adapter onboarding runbook** (formalized from Phase 2, to be run again in Phase 7)
 - [ ] Production Docker/Compose + CI/CD
 - [ ] Staged `PtvV11Adapter` write rollout
+- [ ] **MVP-0 SHIPS — v11-only**
 
-## Phase 7: MVP-1 — `PtvV12Adapter` write, test env — NOT STARTED (external gate)
-## Phase 8: MVP-2 — `PtvV12Adapter` write, production; retire `PtvV11Adapter` — NOT STARTED (external gate)
+## Phase 7: `PtvV12Adapter` implementation (post-MVP-0) ⏸
+- [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators
+- [ ] Read methods against domain model
+- [ ] `x-api-key` auth (tenant-scoped), retry/backoff+jitter
+- [ ] Write methods implemented against beta schemas, gated off (`supports_write: false`)
+- [ ] Tenant-admin API-key management UI (`TenantEnvironment`), deferred from Phase 5
+- [ ] Contract test suite run against `PtvV12Adapter`
+- [ ] Pilot tenant confirms real v12 search via the existing MCP tools, unchanged
+
+## Phase 8: MVP-1 — `PtvV12Adapter` write, test env — NOT STARTED (external gate)
+## Phase 9: MVP-2 — `PtvV12Adapter` write, production; retire `PtvV11Adapter` — NOT STARTED (external gate)

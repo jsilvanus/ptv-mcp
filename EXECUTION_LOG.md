@@ -182,3 +182,34 @@ Deviations:
   field-for-field mirror of either wire format's full schema. Adapters
   are free to carry additional version-specific detail internally as long
   as they map cleanly to/from this shape at the boundary.
+
+---
+
+## 2026-09-16 — Plan amendment: v11-first sequencing (user directive)
+
+Per explicit user instruction: `PtvV11Adapter` and `PtvV12Adapter` are no
+longer built side by side. What was "Phase 2, Stream 2A (`PtvV12Adapter`)"
+is removed from Phase 2 entirely and becomes its own new phase, inserted
+after the old Phase 6 (MVP-0 launch). What were Phase 7/8 (MVP-1/MVP-2)
+are renumbered to Phase 8/9. Phase 0 and Phase 1 are **unaffected and
+remain locked** — both were already built version-agnostic/polymorphic
+(the `PtvAdapter` interface, domain model, and `TenantEnvironment` +
+`UserPtvConnection` schema make no assumption about which adapter is
+built first), so nothing about this resequencing invalidates their sync
+points or requires reopening them.
+
+Updated: `docs/plan.md` (MVP-0/v12-integration/MVP-1/MVP-2 sections,
+"Vaiheistus"), `docs/phase-plan.md` (full rewrite — 10 phases now, was 9),
+`PLAN.md` (checklist restructured to match).
+
+Rationale recorded in docs/phase-plan.md's revision note: v11 alone is a
+complete, real-production-writing MCP server; building it alone first
+ships sooner than coordinating two adapters at once for a v12 write
+capability that doesn't exist yet on PTV's side regardless. New risk
+introduced and recorded in the phase plan's risk register: MVP-0 now
+depends on a single point of PTV integration rather than having v12 as an
+immediate fallback.
+
+Now resuming execution at Phase 2 (`PtvV11Adapter` implementation, the new
+single-adapter scope) — the next entry will cover its actual sync point
+verification.
