@@ -392,3 +392,93 @@ necessarily happens by token hash before the caller's identity is
 otherwise established, so no `current_setting('app.current_user_id')`
 context exists yet at query time. Access is controlled by query pattern
 (always an exact hash match, never a bare listing) instead.
+
+---
+
+## 2026-09-16 — Phase 3, Stream A (Auth) closed ✅ 🔒
+
+Owned files:
+- src/security/envelopeEncryption.ts, envelopeEncryption.test.ts
+- src/db/context.ts, context.integration.test.ts
+- src/auth/password.ts, password.test.ts
+- src/auth/tokens.ts
+- src/auth/jwt.ts, jwt.test.ts
+- src/auth/mailer.ts
+- src/auth/authService.ts, authService.integration.test.ts
+- src/auth/rbac.ts, rbac.integration.test.ts
+- src/routes/auth.ts, auth.integration.test.ts
+
+Also touched, as additive extensions of locked earlier-phase files (not
+reopens — same reasoning as Phase 1 Stream A's CI-file extension): 
+- src/config.ts: added `jwtSecret`, and switched `masterEncryptionKey`
+  from an optional placeholder to `requireEnv` now that Stream A/B
+  actually perform real cryptographic operations with it, not just carry
+  it as a placeholder. `.env.example` and `.github/workflows/ci.yml`
+  updated to match (CI's `MASTER_ENCRYPTION_KEY` placeholder also fixed
+  from a non-base64/wrong-length string to a valid 32-byte key, since it's
+  now actually decoded rather than just read as an opaque string).
+- src/app.ts: `buildApp` now takes `{ config, db?, mailer? }` instead of a
+  bare config object, and wires up `AuthService` + `authRoutes`. The `db`/
+  `mailer` injection points exist specifically so route-level integration
+  tests can run against a real Postgres connection with a fake mailer,
+  without the app owning connection lifecycle in tests.
+- src/server.ts, src/routes/health.test.ts: updated for `buildApp`'s new
+  call shape.
+
+`envelopeEncrypt`/`envelopeDecrypt` (AES-256-GCM envelope encryption, one
+data key per secret wrapped by a master key) are built now, ahead of
+Stream B integrating them into `TenantEnvironment`/`UserPtvConnection`
+storage, since Stream A's own scope didn't need them but Stream B does —
+built as a shared, standalone module rather than duplicated.
+
+A dedicated `JWT_SECRET` was introduced rather than reusing
+`MASTER_ENCRYPTION_KEY` for JWT signing — different purpose (session
+authentication vs. wrapping stored PTV credentials) and different
+rotation schedule; a leak of one shouldn't compromise the other.
+
+Sync point verified (this stream's slice of Phase 3's goal — "resolve
+tenant + role" via RBAC, "credentials decrypt" is Stream B/D's slice):
+- [x] `npm run typecheck`, `lint`, `format`, `test`, and `build` all pass.
+- [x] `npm run test:integration` — 48/48 passing, including:
+  - `authService.integration.test.ts` (15 tests against real Postgres):
+    register, duplicate-email rejection, email verification (incl.
+    already-consumed-token rejection), login, wrong-password rejection,
+    lockout after 5 failed attempts and recovery after the lockout window,
+    refresh-token rotation, denylisting the whole chain on replay of an
+    already-rotated token, logout revocation, password reset (incl.
+    revoking all outstanding sessions), no email-enumeration on reset
+    request, expired-refresh-token rejection.
+  - `auth.integration.test.ts` (9 tests via `app.inject()`): the same
+    flows exercised through real HTTP routes end to end, including a
+    302→401 rejected-reuse-after-logout case.
+  - `rbac.integration.test.ts` (4 tests): unauthenticated request
+    rejected, a Reader rejected below a Publisher-only route, a user with
+    no membership at all rejected, a Publisher let through with their
+    role correctly resolved on `request.role`.
+  - `context.integration.test.ts` (2 tests, from the Phase 3 foundation
+    commit): `withContext` actually threads `set_config` through
+    drizzle's transaction API against the real `ptv_mcp_app` role.
+
+Deviations:
+- **Email verification does not block login.** Registration issues a
+  verification token/email and `/auth/verify-email` consumes it, but
+  logging in doesn't require `email_verified_at` to be set. The phase
+  plan calls for "sähköpostin vahvistus" as a feature to exist, not
+  necessarily as a login gate, and gating login would need a product
+  decision (e.g. a grace period) the plan doesn't specify. Tracked here
+  as an explicit scope choice, easy to add as a `login()` precondition
+  later if the product wants it.
+- **No real email provider.** `LoggingMailer` (src/auth/mailer.ts) logs
+  the verification/reset link instead of sending it — there's no
+  SMTP/provider credential to configure yet. The `Mailer` interface is
+  the seam a real provider plugs into later without touching
+  `AuthService`.
+- **Argon2id selected by literal value (`2`), not the crate's `Algorithm`
+  enum import** — `@node-rs/argon2`'s `Algorithm` is an ambient `const
+  enum`, which `verbatimModuleSyntax` (already on in `tsconfig.json`)
+  can't import (TS2748). Documented inline in `password.ts` with the
+  crate's own docs reference so it doesn't look like a magic number.
+- **RBAC role check is per-request DB lookup, no caching** — matches
+  `docs/phase-plan.md`'s risk register note that membership must always
+  be re-checked at call time, never cached, since a user's PTV connection
+  outlives their tenant membership.

@@ -5,6 +5,11 @@ export interface AppConfig {
   logLevel: string;
   databaseUrl: string;
   masterEncryptionKey: string;
+  /** Signs/verifies access-token JWTs (Phase 3 Stream A) — deliberately separate from
+   * masterEncryptionKey, which wraps PTV credential data keys: different purposes,
+   * different rotation schedules, and a JWT-signing leak shouldn't also expose stored
+   * PTV credentials. */
+  jwtSecret: string;
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
@@ -37,6 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     logLevel: env.LOG_LEVEL ?? 'info',
     databaseUrl: requireEnv('DATABASE_URL', env),
-    masterEncryptionKey: env.MASTER_ENCRYPTION_KEY ?? '',
+    masterEncryptionKey: requireEnv('MASTER_ENCRYPTION_KEY', env),
+    jwtSecret: requireEnv('JWT_SECRET', env),
   };
 }

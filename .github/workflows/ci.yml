@@ -27,7 +27,8 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgres://ptv_mcp:ptv_mcp_dev@localhost:5432/ptv_mcp_dev
-      MASTER_ENCRYPTION_KEY: ci-placeholder-not-secure
+      MASTER_ENCRYPTION_KEY: MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=
+      JWT_SECRET: OTA5ODc2NTQzMjEwOTg3NjU0MzIxMDk4NzY1NDMyMTA=
 
     steps:
       - uses: actions/checkout@v4
