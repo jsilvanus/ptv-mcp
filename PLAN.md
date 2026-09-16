@@ -18,13 +18,13 @@
 - [x] CI pipeline skeleton (lint + test on push)
 
 ## Phase 1: Data layer, adapter contract, and domain model 🔄
-**Stream A — Data layer**
-- [ ] Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvAdapterConfig`, `UserPtvConnection`, `AuditEntry`
-- [ ] `TenantEnvironment` polymorphic encrypted credential blob (tenant-scoped, e.g. v12's API key)
-- [ ] `UserPtvConnection` (user-scoped, e.g. v11's OAuth token) keyed by `(user_id, api_version, environment)`
-- [ ] `PtvAdapterConfig` keyed by `(tenant_id, environment, api_version)` with `credential_scope`
-- [ ] Row-Level Security policies keyed on `tenant_id`; `UserPtvConnection` restricted to owning user
-- [ ] Seed script for local dev
+**Stream A — Data layer** ✅ 🔒
+- [x] Schema + migrations: `User`, `Tenant`, `Membership`, `TenantEnvironment`, `PtvAdapterConfig`, `UserPtvConnection`, `AuditEntry`
+- [x] `TenantEnvironment` polymorphic encrypted credential blob (tenant-scoped, e.g. v12's API key)
+- [x] `UserPtvConnection` (user-scoped, e.g. v11's OAuth token) keyed by `(user_id, api_version, environment)`
+- [x] `PtvAdapterConfig` keyed by `(tenant_id, environment, api_version)` with `credential_scope`
+- [x] Row-Level Security policies keyed on `tenant_id`; `UserPtvConnection` restricted to owning user
+- [x] Seed script for local dev
 
 **Stream B — `PtvAdapter` contract and domain model**
 - [ ] Define `PtvAdapter` TypeScript interface

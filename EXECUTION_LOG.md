@@ -59,3 +59,79 @@ Deviations:
   first install, after `npm audit` flagged a moderate path-traversal
   advisory in `@vitest/mocker` on the 3.x/4.x line — starting clean rather
   than accepting a known dev-dependency vulnerability on day one.
+
+---
+
+## 2026-09-16 — Phase 1, Stream A (Data layer) closed ✅ 🔒
+
+Owned files:
+- src/db/schema/enums.ts, user.ts, tenant.ts, membership.ts,
+  tenantEnvironment.ts, ptvAdapterConfig.ts, userPtvConnection.ts,
+  auditEntry.ts, index.ts
+- src/db/client.ts, src/db/migrate.ts, src/db/seed.ts
+- src/db/rls.integration.test.ts
+- drizzle.config.ts
+- drizzle/0000_right_chameleon.sql, drizzle/0001_row_level_security.sql,
+  drizzle/meta/*
+- scripts/bootstrap-roles.sql
+- vitest.config.ts (added to stop the compiled `dist/` output from being
+  re-discovered as its own duplicate test suite)
+
+Tooling: added `drizzle-orm`, `postgres`, `drizzle-kit` (dev), and
+`@node-rs/argon2` (for the seed script's password hash — the real Argon2id
+login flow is Phase 3's concern).
+
+Sync point verified (Phase 1's stated goal: "migrations run clean on a
+fresh Postgres"):
+- [x] Dropped and recreated `ptv_mcp_dev` from scratch, ran
+      `scripts/bootstrap-roles.sql` then `npm run db:migrate` end to end —
+      no manual intervention beyond those two steps.
+- [x] `pg_class.relrowsecurity`/`relforcerowsecurity` confirmed `t`/`t` on
+      all five RLS-protected tables.
+- [x] Automated integration test (`npm run test:integration`, 4 tests) run
+      against the real `ptv_mcp_app` role — not just `ptv_mcp` the owner —
+      proving: (a) zero rows visible with no session context set (fail
+      closed), (b) exactly the current tenant's `audit_entries` visible
+      once `app.current_tenant_id` is set, (c) no cross-tenant leakage
+      when both tenants have rows, (d) `user_ptv_connections` scoped by
+      `app.current_user_id`, independent of any tenant context.
+- [x] `npm run db:seed` runs cleanly against the migrated DB and produces
+      the expected two tenants / one cross-tenant user / two membership
+      rows (verified by querying with the correct tenant context set).
+
+Deviations:
+- **RLS session-variable mechanism**: the plan's own text used `SET LOCAL
+  app.current_tenant_id = '<uuid>'` as the illustrative example. That
+  turned out not to be parameterizable (`SET LOCAL ... = $1` is a Postgres
+  syntax error), so all application-side code — the integration test and
+  the seed script — uses `SELECT set_config('app.current_tenant_id', $1,
+  true)` instead, which is the parameterized-safe equivalent and behaves
+  identically for RLS purposes. **Phase 3's tenant resolver must use
+  `set_config()`, not literal `SET LOCAL`, when it wires this up for
+  real.**
+- **Role bootstrap moved out of the migration chain.** The original
+  intent was for the RLS migration to create the `ptv_mcp_app` role
+  itself. Postgres correctly refused: the migration-owning role has no
+  `CREATEROLE` privilege (and shouldn't — it's a broad, dangerous grant
+  with no other purpose here). Added `scripts/bootstrap-roles.sql`, a
+  separate one-time step run by a superuser, wired into
+  `docker-compose.yml` via `docker-entrypoint-initdb.d` for the Compose
+  path and documented as an explicit manual step (and a CI step) for
+  everywhere else. This is a **new prerequisite**: `npm run db:migrate`
+  will fail with a permissions error against any database where this
+  bootstrap hasn't run first.
+- Extended `.github/workflows/ci.yml` (a Phase 0 file) with a Postgres
+  service container, the bootstrap step, `db:migrate`, and
+  `test:integration` — Phase 0 was locked before Phase 1 Stream A's DB
+  work existed to test, so CI necessarily grows here. Treating this as an
+  expected, additive extension of a locked phase's file rather than a
+  reopen, since it adds new steps rather than changing or invalidating
+  anything Phase 0 verified.
+- Split `npm test` (fast, no DB) from `npm run test:integration` (DB
+  required) rather than one combined `test` script, so contributors
+  without a local Postgres running can still get fast feedback.
+- Accepted, not fixed: `npm audit`'s moderate `esbuild`/`@esbuild-kit`
+  advisory via `drizzle-kit`'s dev-only config loader (affects a local
+  dev server's request handling; not shipped to production; fixing would
+  mean downgrading `drizzle-kit` to `0.18.1`, a much larger regression
+  than the advisory's real-world risk here).

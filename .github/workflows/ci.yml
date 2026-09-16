@@ -8,6 +8,27 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ptv_mcp
+          POSTGRES_PASSWORD: ptv_mcp_dev
+          POSTGRES_DB: ptv_mcp_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ptv_mcp -d ptv_mcp_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://ptv_mcp:ptv_mcp_dev@localhost:5432/ptv_mcp_dev
+      MASTER_ENCRYPTION_KEY: ci-placeholder-not-secure
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,4 +42,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+
+      # The GitHub Actions postgres *service container* has no equivalent
+      # of docker-compose's docker-entrypoint-initdb.d wiring, so the
+      # one-time role bootstrap is run explicitly here instead.
+      - run: PGPASSWORD=ptv_mcp_dev psql -h localhost -U ptv_mcp -d ptv_mcp_dev -f scripts/bootstrap-roles.sql
+      - run: npm run db:migrate
+      - run: npm run test:integration
+
       - run: npm run build
