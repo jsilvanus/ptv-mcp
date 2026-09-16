@@ -565,3 +565,125 @@ Deviations:
   `fetch`, but a real callback against production PTV won't work until
   that registration exists. This is a continuation of Phase 2's open
   item, not a new one.
+
+---
+
+## 2026-09-16 — Phase 3, Stream C (Audit logging) closed ✅ 🔒
+
+Owned files:
+- src/audit/auditService.ts, auditService.integration.test.ts
+
+Delegated to a background Haiku subagent (per explicit instruction — this
+stream shares no files with Stream D, which was built directly), given
+detailed instructions including the project's RLS/`withContext` pattern,
+the transaction-nesting bug already found once this phase (see Stream B's
+entry), and the sibling services to imitate for style. Reviewed in full
+before accepting — implementation is correct, matches project
+conventions (terse JSDoc, `withContext` used correctly with no nesting,
+`and()`'s `undefined`-filtering used idiomatically for optional filters).
+
+**Also fixed, correctly, two files outside its assigned scope**:
+`src/db/context.integration.test.ts` and `src/db/rls.integration.test.ts`
+each had a raw `audit_entries` insert missing the new NOT NULL
+`correlation_id` column (added moments earlier in this same phase, before
+the subagent was dispatched — see the schema-changes entry above) — both
+inserts would otherwise fail. This was a real, necessary fix (this
+session's own oversight, not the subagent's), correctly identified and
+applied; accepted as-is rather than reverted.
+
+`AuditService`: `record()` (generates `correlationId` if omitted,
+append-only — no update/delete method exists on the class at all),
+`listForTenant()` (optional `resourceType`/`correlationId` filters,
+default limit 100, newest first), `listByCorrelationId()` (every entry
+for one logical operation, chronological, no limit).
+
+Sync point verified (this stream's slice):
+- [x] `npm run typecheck`, `lint`, `format` all pass.
+- [x] `npm run test:integration` — 9 new tests (insert/return-all-fields,
+  correlationId generation vs. caller-supplied, chronological grouping by
+  correlationId, cross-tenant RLS isolation, resourceType filtering,
+  limit respected, default-limit-100, descending order) — all passing
+  against real Postgres.
+
+---
+
+## 2026-09-16 — Phase 3, Stream D (Adapter registry) closed ✅ 🔒
+
+Owned files:
+- src/ptv/dbAdapterRegistry.ts, dbAdapterRegistry.integration.test.ts
+
+Built directly (not delegated) as the architecturally load-bearing piece
+of this phase, per this project's established practice.
+
+`DbPtvAdapterRegistry implements PtvAdapterRegistry` (the Phase 1
+interface, untouched): tenant/role authorization always runs first and
+is never cached (re-checked on every `resolve()` call, per
+docs/phase-plan.md's risk register); then the matching `PtvAdapterConfig`
+row is picked for the tenant/environment/operation; then credentials are
+resolved from `UserPtvConnection` or `TenantEnvironment` depending on the
+config's declared `credentialScope`; then an `AdapterFactory` (keyed by
+`api_version`, defaulting to `{ v11: ... }`) constructs the concrete
+adapter. `adapterFactories` is constructor-injectable specifically so
+tests can exercise the **tenant-scoped credential branch** with the Phase
+1 `InMemoryPtvAdapter` under a fake `api_version` — there's no second
+real adapter yet, but the resolution *logic* for that branch is fully
+exercised now rather than deferred to Phase 7, per the phase plan's
+explicit instruction to do so.
+
+Also added `checkV11Liveness()` (the phase plan's "liveness/readiness
+polling for the active adapter") — a real, unauthenticated call through
+`PtvV11Adapter.searchServices` against PTV's live test environment,
+reusing the exact same read path every real caller goes through rather
+than a bespoke ping.
+
+**Read vs. write credential strictness is asymmetric, deliberately**: a
+missing/absent credential for a *write* always throws
+`credential_missing_or_expired`; for a *read*, it's tolerated (the
+adapter gets constructed with no token at all) because v11's ordinary
+reads need no credential in the first place (docs/ptv-v11-notes.md) — the
+registry doesn't punish a read for a connection nobody has set up yet.
+
+Sync point verified — this is Phase 3's overall stated sync point, not
+just Stream D's: **"log in, resolve tenant + role, the registry picks
+`PtvV11Adapter`, credentials decrypt, a real PTV call succeeds, and an
+audit entry is recorded naming the adapter used."**
+- [x] `src/syncPoints/phase3.integration.test.ts` (new, cross-stream):
+  registers and logs in a real user (Stream A) against real Postgres;
+  creates a tenant and confirms `tenantService.listTenantsForUser`
+  resolves the correct role (Stream B, exercising the Phase 1 RLS
+  reopen); resolves a read via the registry with no connection stored,
+  gets a genuinely unauthenticated `PtvV11Adapter`, and makes a real
+  live call against PTV's test environment that succeeds (Stream D);
+  stores a user connection then resolves a write, capturing the exact
+  decrypted token via an injected factory to prove decryption is
+  byte-exact (Stream B + D together); records an audit entry naming
+  `apiVersion: 'v11'` and reads it back (Stream C). All against real
+  Postgres and real PTV, no mocks.
+- [x] `src/ptv/dbAdapterRegistry.integration.test.ts` — 10 tests: reader
+  rejected for write (`not_authorized`, before any credential lookup
+  runs at all — confirmed by there being no stored connection either),
+  outsider with no membership rejected, no-config → `no_adapter_configured`,
+  write unsupported by config → `operation_not_supported`, write with no
+  stored connection → `credential_missing_or_expired`, real live read
+  with no connection succeeds, exact-token-decryption assertion via
+  injected factory, **both credential-scope branches** (user-scoped via
+  real `PtvV11Adapter`, tenant-scoped via `InMemoryPtvAdapter` under a
+  fake `api_version` with the same registry instance), tenant-scoped
+  credential-missing case, `checkV11Liveness` against the real test
+  environment.
+- [x] Full pipeline: `typecheck`, `lint`, `format`, `test` (123),
+  `test:integration` (102), `build` all pass.
+
+New verified fact this phase (see docs/ptv-v11-notes.md's new section):
+sending a malformed `Authorization: Bearer` token to an otherwise-
+unauthenticated v11 GET endpoint gets **HTTP 500**, not 401 or a clean
+200 ignoring the header — found while writing the sync-point test itself
+(it originally tried to make a live call using a deliberately-fake stored
+token), not anticipated in advance. Fixed by restructuring the test to
+demonstrate "credentials decrypt" and "a real PTV call succeeds" as two
+separately-verified facts (a fake token is never sent over the wire),
+and documented as a second instance of the same "v11 500s on certain
+malformed input" pattern Phase 2 found with the all-zero GUID.
+
+**Phase 3 as a whole is now closed.** All four streams done; the
+cross-stream sync point passes against real Postgres and real PTV.

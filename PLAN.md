@@ -44,11 +44,11 @@
 - [x] `applyServiceChange` against v11's PUT endpoint (unit-tested; not exercised live — needs a real access token)
 - [ ] Wire `PtvAdapterConfig` for v11 (`credential_scope = user`, `supports_write = true` for production) — deferred to Phase 3, where the registry first reads this table
 
-## Phase 3: Core platform services 🔄
+## Phase 3: Core platform services ✅ 🔒
 - [x] Stream A — Auth (JWT, Argon2id, refresh rotation + denylist, RBAC) ✅
 - [x] Stream B — Tenant & credential management (`UserPtvConnection` for v11; `TenantEnvironment` storage exercised by tests only, no UI yet) ✅
-- [ ] Stream C — Audit logging
-- [ ] Stream D — Adapter registry implementation (verify both credential-scope branches using the Phase 1 in-memory fake)
+- [x] Stream C — Audit logging ✅
+- [x] Stream D — Adapter registry implementation (verify both credential-scope branches using the Phase 1 in-memory fake) ✅
 
 ## Phase 4: MCP tool layer ⏸
 - [ ] Stream A — Search tools

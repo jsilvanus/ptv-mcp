@@ -36,9 +36,13 @@ describe('withContext', () => {
 
   it('scopes an insert and read to the given tenant context', async () => {
     await withContext(asApp, { tenantId }, async (tx) => {
-      await tx
-        .insert(auditEntries)
-        .values({ tenantId, action: 'Test', resourceType: 'Service', result: 'Success' });
+      await tx.insert(auditEntries).values({
+        tenantId,
+        correlationId: randomUUID(),
+        action: 'Test',
+        resourceType: 'Service',
+        result: 'Success',
+      });
     });
 
     const rows = await withContext(asApp, { tenantId }, async (tx) => {

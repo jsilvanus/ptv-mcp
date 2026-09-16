@@ -271,6 +271,15 @@ audit log.
 **Depends on:** Phase 4, Phase 5
 **Goal:** Deployable, reviewed, documented, **v11-only** MVP-0.
 
+**Deployment target (user directive, 2026-09-16):** in-stack Postgres
+(the `docker-compose.yml` service) is for **dev and staging only**.
+**Production uses an external, separately-managed Postgres** (connected
+via `DATABASE_URL` same as any other environment — no code difference,
+just an infra/ops one) and, if object storage is needed, external MinIO.
+Production Docker/Compose config (step 5 below) must not bundle a
+production Postgres or MinIO container — those are provisioned outside
+this repo's compose file for prod.
+
 1. End-to-end tests across the full propose → validate → export/apply flow, per role
 2. Multi-tenant isolation tests (attempt cross-tenant reads/writes, confirm RLS actually blocks them, not just that policies exist) **and** a same-user-different-tenant test confirming one PTV connection is correctly reusable across every tenant that user is a Publisher for, while still being blocked for tenants they aren't
 3. Security review — secrets handling, key rotation, GDPR retention on audit fields, and the v11 OAuth credential lifecycle specifically (token capture via the fragment-reading callback page, introspection validation, revocation on disconnect)

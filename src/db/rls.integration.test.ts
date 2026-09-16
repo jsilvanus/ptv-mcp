@@ -36,12 +36,12 @@ describe('Row-Level Security', () => {
 
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
-      await tx`INSERT INTO audit_entries (tenant_id, action, resource_type, result) VALUES (${tenantA}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantA}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
       await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantA}, 'reader')`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
-      await tx`INSERT INTO audit_entries (tenant_id, action, resource_type, result) VALUES (${tenantB}, 'Test', 'Service', 'Success')`;
+      await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantB}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
       await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantB}, 'editor')`;
       await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userB}, ${tenantB}, 'reader')`;
     });
