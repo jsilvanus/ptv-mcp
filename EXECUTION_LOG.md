@@ -335,3 +335,60 @@ Deviations:
   fixture records ever change/disappear, `test:integration` (and thus CI)
   fails for reasons outside this repo's control. No mitigation applied
   yet — worth reconsidering if this becomes a recurring CI flake source.
+
+---
+
+## 2026-09-16 — Phase 1 reopened: `users` schema extended, `memberships` RLS policy widened
+
+While starting Phase 3 Stream A (auth) and Stream B (tenant/membership
+management), found two genuine gaps in Phase 1's locked output rather than
+just needing new Phase-3-owned files:
+
+1. **`users` had no columns for the auth features the phase plan itself
+   assigns to Phase 3** (email verification, login lockout) — Phase 1
+   deliberately scoped `password_hash` only, per its own log entry ("the
+   real Argon2id login flow is Phase 3's concern"), but verification and
+   lockout need dedicated columns, not just application logic. Added
+   `email_verified_at`, `failed_login_attempts` (default 0), `locked_until`
+   to `src/db/schema/user.ts`. Purely additive (new nullable columns / a
+   defaulted counter) — no existing column changed shape, so nothing that
+   already matched the old shape stops matching.
+2. **`memberships`' RLS policy (Phase 1, `drizzle/0001_row_level_security.sql`)
+   made "which tenants do I belong to" unanswerable under RLS.** The
+   policy only matched `tenant_id = app.current_tenant_id`, but a user
+   doesn't know which tenant_id to set as context until they've already
+   read their own memberships — this blocks the exact multi-tenant
+   membership example `docs/plan.md` itself gives (one user belonging to
+   several tenants with different roles). Genuine defect, not a
+   preference: the declared feature was unimplementable as the policy
+   stood. Fixed via a new migration (`drizzle/0003_membership_self_visibility.sql`,
+   preceded by `0002_phase3_auth_tables.sql` for the new tables/columns)
+   that widens the policy to `tenant_id = current_tenant_id OR user_id =
+   current_user_id`, keeping it fail-closed when neither is set and never
+   exposing another user's row in a tenant the caller doesn't share.
+
+Owned files touched (Phase 1 reopen):
+- src/db/schema/user.ts (columns added)
+- drizzle/0003_membership_self_visibility.sql (new migration; policy fix)
+- src/db/rls.integration.test.ts (three new test cases)
+
+New files, owned by Phase 3 from the start (not a reopen):
+- src/db/schema/refreshToken.ts, emailVerificationToken.ts, passwordResetToken.ts
+- drizzle/0002_phase3_auth_tables.sql
+- src/db/schema/index.ts (new exports appended)
+
+Re-verified Phase 1's sync point: dropped/recreated `ptv_mcp_dev`, ran
+`scripts/bootstrap-roles.sql` then `npm run db:migrate` through all four
+migrations with no manual intervention; `npm run test:integration` — now
+20 tests (17 before + 3 new) — all passing, including the new
+self-visibility, no-cross-user-leak, and still-works per-tenant-admin-view
+cases. Phase 1 re-locked.
+
+Deviation: the new auth-token tables (`refresh_tokens`,
+`email_verification_tokens`, `password_reset_tokens`) are **not**
+RLS-scoped, matching the existing `users`/`tenants` precedent documented
+in `drizzle/0001_row_level_security.sql` — a refresh/verify/reset lookup
+necessarily happens by token hash before the caller's identity is
+otherwise established, so no `current_setting('app.current_user_id')`
+context exists yet at query time. Access is controlled by query pattern
+(always an exact hash match, never a bare listing) instead.
