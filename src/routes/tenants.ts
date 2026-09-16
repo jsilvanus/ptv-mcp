@@ -79,7 +79,7 @@ export async function tenantRoutes(
         return reply.badRequest('email and role are required');
       }
       try {
-        await tenantService.addMember(tenantId, email, role);
+        await tenantService.addMember(tenantId, email, role, request.userId!);
         return reply.code(204).send();
       } catch (err) {
         if (err instanceof UserNotFoundError) {
@@ -100,7 +100,7 @@ export async function tenantRoutes(
         return reply.badRequest('role is required');
       }
       try {
-        await tenantService.updateMemberRole(tenantId, userId, role);
+        await tenantService.updateMemberRole(tenantId, userId, role, request.userId!);
         return reply.code(204).send();
       } catch (err) {
         if (err instanceof MembershipNotFoundError) {
@@ -116,7 +116,7 @@ export async function tenantRoutes(
     { preHandler: [authenticate, requireTenantAdmin] },
     async (request, reply) => {
       const { tenantId, userId } = request.params as { tenantId: string; userId: string };
-      await tenantService.removeMember(tenantId, userId);
+      await tenantService.removeMember(tenantId, userId, request.userId!);
       return reply.code(204).send();
     },
   );

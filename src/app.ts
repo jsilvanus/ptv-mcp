@@ -15,6 +15,7 @@ import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { tenantRoutes } from './routes/tenants.js';
 import { ptvConnectionRoutes } from './routes/ptvConnections.js';
+import { auditLogRoutes } from './routes/auditLog.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 
 export interface BuildAppOptions {
@@ -47,7 +48,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
   const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
-  const tenantService = new TenantService(db);
+  const auditService = new AuditService(db);
+  const tenantService = new TenantService(db, auditService);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
   const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
   const adapterConfigService = new PtvAdapterConfigService(db);
@@ -57,7 +59,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     tenantEnvironmentService,
     connectionService,
   );
-  const auditService = new AuditService(db);
   const validator = new V11ChangeValidator();
 
   await app.register(sensible);
@@ -66,6 +67,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });
   await app.register(ptvConnectionRoutes, {
     connectionService,
+    tenantService,
+    auditService,
     jwtSecret: config.jwtSecret,
     oauth: {
       clientId: config.ptvV11OAuthClientId,
@@ -77,6 +80,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     jwtSecret: config.jwtSecret,
     serverDeps: { db, registry, auditService, validator },
   });
+  await app.register(auditLogRoutes, { auditService, jwtSecret: config.jwtSecret, db });
 
   return app;
 }

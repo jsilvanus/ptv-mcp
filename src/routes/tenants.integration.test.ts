@@ -6,7 +6,7 @@ import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { memberships, tenants, users } from '../db/schema/index.js';
+import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
 import { signAccessToken } from '../auth/jwt.js';
 
 describe('tenant routes', () => {
@@ -28,6 +28,7 @@ describe('tenant routes', () => {
   afterEach(async () => {
     for (const tenantId of createdTenantIds) {
       await withContext(db, { tenantId }, async (tx) => {
+        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
         await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
       });
     }

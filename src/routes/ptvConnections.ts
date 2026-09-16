@@ -10,9 +10,13 @@ import type {
   PtvEnvironment,
   UserPtvConnectionService,
 } from '../credentials/userPtvConnectionService.js';
+import type { TenantService } from '../tenants/tenantService.js';
+import type { AuditService } from '../audit/auditService.js';
 
 export interface PtvConnectionRoutesOptions {
   connectionService: UserPtvConnectionService;
+  tenantService: TenantService;
+  auditService: AuditService;
   jwtSecret: string;
   oauth: {
     clientId: string;
@@ -43,8 +47,37 @@ export async function ptvConnectionRoutes(
   app: FastifyInstance,
   options: PtvConnectionRoutesOptions,
 ): Promise<void> {
-  const { connectionService, oauth } = options;
+  const { connectionService, tenantService, auditService, oauth } = options;
   const authenticate = createAuthenticate(options.jwtSecret);
+
+  /**
+   * `user_ptv_connections` is user-scoped, not tenant-scoped (the same
+   * personal credential is reusable across every tenant the user belongs
+   * to — see userPtvConnectionService.ts), but `audit_entries` requires a
+   * tenantId. Record the event once per tenant the user is currently a
+   * member of, so every tenant relying on this credential can see it in
+   * its own audit log.
+   */
+  async function recordConnectionEvent(
+    userId: string,
+    action: 'ConnectPtvAccount' | 'DisconnectPtvAccount',
+    environment: PtvEnvironment,
+  ): Promise<void> {
+    const tenantMemberships = await tenantService.listTenantsForUser(userId);
+    await Promise.all(
+      tenantMemberships.map((membership) =>
+        auditService.record({
+          tenantId: membership.tenantId,
+          userId,
+          action,
+          resourceType: 'PtvConnection',
+          apiVersion: 'v11',
+          environment,
+          result: 'Success',
+        }),
+      ),
+    );
+  }
 
   app.get('/ptv-connections', { preHandler: authenticate }, async (request) => {
     return connectionService.listConnections(request.userId!);
@@ -97,6 +130,7 @@ export async function ptvConnectionRoutes(
         parsed.accessToken,
         expiresAt,
       );
+      await recordConnectionEvent(request.userId!, 'ConnectPtvAccount', environment);
       return reply.code(204).send();
     },
   );
@@ -121,6 +155,7 @@ export async function ptvConnectionRoutes(
         // own record is the source of truth for whether we'll use this token again.
       }
       await connectionService.revokeConnection(request.userId!, 'v11', environment);
+      await recordConnectionEvent(request.userId!, 'DisconnectPtvAccount', environment);
       return reply.code(204).send();
     },
   );
