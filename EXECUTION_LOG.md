@@ -1051,3 +1051,105 @@ Validation run:
 - [ ] `npm run test:integration` in this sandbox (blocked: no local Postgres
       server and no DNS access to `api.palvelutietovaranto.trn.suomi.fi` for
       the live v11 adapter integration suite)
+
+---
+
+## 2026-09-16 — Phase 6 CI-red incident fixed; Phase 7 (MCP resources) and Phase 8 (proposal queue) retroactively documented and closed
+
+This entry covers work landed on `main` (PR #7, branch
+`copilot/implement-phase-6`) while the primary session was rate-limited,
+plus the fixes and documentation this session made once it resumed and
+audited that work (via a background research agent, then verified
+directly against a real Postgres instance).
+
+**What actually shipped in PR #7, beyond its own name**: the branch and
+PR title only say "Phase 6", but its commit history
+(`5e0d2e0 Implement Phase 7 resources and Phase 8 proposal queue
+foundations` onward) also built two more features in full: MCP resources
+wrapping the get-by-id tools, and a persisted propose→review→resolve
+queue (Reader queues, Editor+ resolves). Neither `PLAN.md` nor
+`docs/phase-plan.md` was updated to give this work its own phase
+numbers or document it as built — the previous "Phase 6 closed" entry
+above is accurate for Phase 6 itself, but the repo had zero documentation
+trace of the Phase 7/8 work until this entry. Independently, this session
+had already drafted (pre-rate-limit) a phase-plan amendment inserting
+exactly these two phases in this position — see `docs/phase-plan.md` and
+`PLAN.md`'s current Phase 7/8 sections, written to describe what was
+**actually built**, confirmed file-by-file, not the original speculative
+design (a few details differ from the original draft — e.g. the resource
+URI's `code-lists` segment name, the `queued_diff` column name, the
+`ReviewProposal`/`ResolveProposal` audit action names).
+
+**Bug found and fixed**: `src/syncPoints/phase6.integration.test.ts`'s
+tenant-isolation test asserted a wrong error shape. A user with *no*
+membership at all in a tenant calling `ptv_apply_changes` fails the
+Editor-level business check inside `proposeChanges()`
+(`src/mcp/authorization.ts`'s `NotAuthorizedError`, message "Not
+authorized: this action requires at least 'editor' role...") *before*
+ever reaching `PtvAdapterRegistry.resolve({operation: 'write'})` — only a
+*member* whose role is too low reaches the registry and gets its
+`reason: 'not_authorized'` (a different string: `not_authorized` with an
+underscore, vs. "Not authorized" with a space — the assertion checked for
+the former in a case where the latter is what's actually thrown).
+Verified by running the identical test against a real Postgres at the
+original "Phase 6 closed" commit (`c5d6f64`), before any Phase 7/8
+changes — this was a Phase 6 bug, not something the later work
+introduced. Fixed the assertion to match the actual (correct) behavior
+rather than changing the behavior itself.
+
+**Also fixed**: `src/routes/webUi.ts` failed `npm run format` (prettier)
+— a 3-line whitespace-only fix. `src/mcp/proposeChanges.ts`'s doc comment
+still claimed "a bare Reader can search/read but not propose", which
+stopped being true for the `ptv_propose_changes` **tool** once Phase 8
+retargeted it at `queueProposal` (Reader+); corrected the comment to
+describe what `proposeChanges()` actually is now — an internal re-diff
+helper used only when resolving an already-queued proposal.
+
+**Real process gap, not just a code bug — CI was red on both the PR and
+the merge itself**: GitHub Actions run `35125426224` (the PR) and
+`35134215650` (the push to `main` from the merge) both have
+`conclusion: failure`, failing at the very first step, `npm run format`
+— which meant `lint`/`typecheck`/`test`/`test:integration`/`build` were
+all **skipped**, not passed. The above `phase6.integration.test.ts` bug
+was therefore never actually exercised by CI before this merge — the
+previous "Phase 6 closed" entry's checked-off validation-run items were
+run locally/in a sandbox without Postgres, not confirmed by CI. This PR
+was merged with CI red. Recorded here as a factual account, not to
+relitigate the merge decision.
+
+**Verified after these fixes** (real Postgres, full pipeline, this
+session):
+- [x] `npm run typecheck`, `npm run format`, `npx eslint .`
+- [x] `npm test` — 193 unit tests passing
+- [x] `npm run test:integration` — **119/119 integration tests passing**
+      (was 118/119 before the assertion fix above), including
+      `src/syncPoints/phase6.integration.test.ts`,
+      `src/syncPoints/phase8.integration.test.ts` (both tests),
+      `src/routes/proposals.integration.test.ts`, and the resource-read
+      test in `src/mcp/httpTransport.integration.test.ts`
+- [x] `npm run build`
+- [x] `cd web && npm run build && npm run lint` (oxlint — only
+      pre-existing warning patterns, e.g. `set-state-in-effect`, already
+      present in `AuditLogPage.tsx`/`MembersPage.tsx`/
+      `PtvConnectionsPage.tsx` before this work; `ProposalQueuePage.tsx`
+      inherits the same pattern, not a new one)
+
+**Known, deliberately-unfixed gap** (documented in `docs/phase-plan.md`'s
+Phase 7 write-up, not silently dropped): the new MCP resource read
+callbacks in `src/mcp/mcpServer.ts` don't wrap their body in the tools'
+`try/catch → errorResult` convention. Investigated directly against the
+`@modelcontextprotocol/sdk` source (`ReadResourceRequestSchema`'s
+handler): a resource read has no `isError`-style result field the way
+`CallToolResult` does, and the SDK's own "not found"/"disabled" cases use
+the same mechanism this code does (throw, let it become a JSON-RPC
+error) — tools and resources have genuinely different error-reporting
+conventions by MCP protocol design, so this is not the same defect class
+as the (correctly-caught) Phase 4 authorization gap. Left as-is because
+"fixing" it into a tool-style result would violate `ReadResourceResult`'s
+actual schema. The real gap is narrower: no test yet confirms what an
+unauthorized or not-found resource read actually returns to a client.
+
+See `docs/phase-plan.md`'s Phase 7 and Phase 8 sections for full
+as-built detail (schema, role model, URI shapes, audit actions) — written
+to describe the merged code exactly, confirmed file-by-file rather than
+assumed from the original design draft.

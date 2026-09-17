@@ -49,7 +49,9 @@ export async function webUiRoutes(
   });
   const staticFiles = new Set(await listStaticFiles(webDistRoot));
 
-  app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').sendFile('index.html'));
+  app.get('/', async (_request, reply) =>
+    reply.type('text/html; charset=utf-8').sendFile('index.html'),
+  );
 
   app.get('/*', async (request, reply) => {
     const wildcard = (request.params as { '*': string | undefined })['*'] ?? '';
