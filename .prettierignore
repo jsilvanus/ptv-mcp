@@ -5,3 +5,5 @@ coverage/
 drizzle/meta/
 src/ptv/v11/swagger.json
 src/ptv/v11/wire-types.ts
+src/ptv/v12/openapi.json
+src/ptv/v12/wire-types.ts
