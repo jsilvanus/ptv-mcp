@@ -134,13 +134,21 @@ export async function prepareProposal(
 }
 
 /**
- * `ptv_propose_changes` (Phase 4 Stream B): fetches the current service,
- * merges the proposed changes, and returns current/proposed/diff — never
- * writes anything. Read-only against PTV (`PtvAdapterRegistry` only needs
- * `operation: 'read'`), but docs/plan.md's role model reserves *proposing*
- * a change for Editor and above — a bare Reader can search/read but not
- * propose — so this checks tenant role itself rather than relying on the
- * registry's coarser read/write distinction.
+ * Fetches the current service, merges the proposed changes, and returns
+ * current/proposed/diff — never writes anything. Read-only against PTV
+ * (`PtvAdapterRegistry` only needs `operation: 'read'`), so this checks
+ * tenant role itself rather than relying on the registry's coarser
+ * read/write distinction.
+ *
+ * Originally *was* `ptv_propose_changes` itself (Phase 4 Stream B), gated
+ * at Editor+ per docs/plan.md's original role model. Since Phase 8 (the
+ * proposal queue), the `ptv_propose_changes` **tool** is `queueProposal`
+ * (mcp/proposalQueue.ts), gated at Reader+ — a Reader can queue a proposal
+ * without being able to approve one. This function now only runs
+ * internally, as the re-diff step `exportForManualPublish`/`applyChanges`
+ * use when resolving an already-queued proposal — both of those are
+ * already gated Editor+ by `resolveProposal`, so the Editor check here is
+ * a redundant-but-harmless double-check, not a second authorization gate.
  */
 export async function proposeChanges(
   resolveRole: MembershipRoleResolver,

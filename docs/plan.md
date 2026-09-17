@@ -193,7 +193,7 @@ v12 ei ole MVP-0:n edellytys, vain myöhempi laajennus/migraatio.
 
 Kun MVP-0 on julkaistu ja v11-sovitin toimii tuotannossa, rakennetaan
 `PtvV12Adapter` **omana, erillisenä vaiheenaan** ennen MVP-1/MVP-2:ta
-(ks. `docs/phase-plan.md`:n Phase 7). Tässä vaiheessa:
+(ks. `docs/phase-plan.md`:n Phase 9). Tässä vaiheessa:
 
 ✅ `PtvV12Adapter` toteutetaan hakuun (haku on jo tuotannossa v12:ssa)
 ✅ v12:n kirjoitusoperaatiot rakennetaan beta-skeemoja vasten, mutta

@@ -374,8 +374,13 @@ describe('Phase 6 sync point', () => {
       },
     });
     expect(forbiddenWrite.isError).toBe(true);
+    // A total non-member has no role at all, so `ptv_apply_changes` fails the
+    // Editor-level business check inside `proposeChanges()` (mcp/authorization.ts's
+    // `NotAuthorizedError`) before ever reaching the registry's write-capable-adapter
+    // resolution — a *member* whose role is too low is what produces the registry's
+    // own `reason: 'not_authorized'` (see the Editor-can't-apply case above).
     expect((forbiddenWrite.content as Array<{ text: string }>)[0]?.text).toContain(
-      'not_authorized',
+      "requires at least 'editor' role",
     );
 
     const forbiddenRead = await sharedClient.callTool({

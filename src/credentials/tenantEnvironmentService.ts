@@ -23,7 +23,7 @@ export class TenantEnvironmentNotFoundError extends Error {
  * Envelope-encrypted storage for `TenantEnvironment` (Phase 3 Stream B) —
  * a tenant-scoped credential (e.g. v12's future API key). Storage and
  * encryption only: **no route wires into this yet, deliberately** — there
- * is nothing to configure until Phase 7's `PtvV12Adapter` exists, per
+ * is nothing to configure until Phase 9's `PtvV12Adapter` exists, per
  * docs/phase-plan.md's Phase 3 scope note. Exercised by tests only.
  */
 export class TenantEnvironmentService {

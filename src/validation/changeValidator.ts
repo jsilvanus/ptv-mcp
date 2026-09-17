@@ -15,7 +15,7 @@ export interface ValidationResult {
 
 /**
  * Common interface so a second rule set (v12's, once its write schemas are
- * final — see docs/phase-plan.md Phase 7) can be registered without
+ * final — see docs/phase-plan.md Phase 9) can be registered without
  * restructuring how callers use this.
  */
 export interface ChangeValidator {
