@@ -231,4 +231,61 @@ describe('MCP HTTP transport', () => {
     expect(first?.uri).toBe(`ptv://${tenantId}/test/services/af60add0-c3be-40f6-9c22-3e29c2b8da0a`);
     await client.close();
   });
+
+  it('surfaces an unauthorized resource read as a protocol-level error', async () => {
+    const { token } = await registeredUserWithTenant();
+    const otherTenantId = randomUUID();
+    await db
+      .insert(tenants)
+      .values({ id: otherTenantId, name: 'Someone Else', slug: `other-${otherTenantId}` });
+    createdTenantIds.push(otherTenantId);
+    await configService.upsert(otherTenantId, 'test', 'v11', {
+      authMode: 'oauth2',
+      credentialScope: 'user',
+      supportsRead: true,
+      supportsWrite: false,
+      supportsDraftRead: false,
+    });
+
+    // Resource handlers (unlike tools) don't catch PtvAdapterResolutionError,
+    // so it propagates out of the SDK's ReadResourceRequestSchema handler and
+    // becomes a JSON-RPC-level error, not a structured CallToolResult-style
+    // error the way the equivalent tool call surfaces it (see the
+    // 'surfaces a not_authorized tool error' test above for the contrast).
+    // Confirmed live: the client receives an `McpError` with the generic
+    // JSON-RPC "Internal error" code (-32603) — there is no equivalent to the
+    // tool-error path's machine-readable `not_authorized` reason string here,
+    // only PtvAdapterResolutionError's human-readable message text.
+    const client = await connectedClient(token);
+    await expect(
+      client.readResource({
+        uri: `ptv://${otherTenantId}/test/services/11111111-2222-3333-4444-555555555555`,
+      }),
+    ).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining('is not authorized'),
+    });
+    await client.close();
+  });
+
+  it('returns null content for a not-found resource read', async () => {
+    const { token, tenantId } = await registeredUserWithTenant();
+    await configService.upsert(tenantId, 'test', 'v11', {
+      authMode: 'oauth2',
+      credentialScope: 'user',
+      supportsRead: true,
+      supportsWrite: false,
+      supportsDraftRead: false,
+    });
+
+    const client = await connectedClient(token);
+    const read = await client.readResource({
+      uri: `ptv://${tenantId}/test/services/11111111-2222-3333-4444-555555555555`,
+    });
+
+    const first = read.contents[0] as { mimeType?: string; text?: string } | undefined;
+    expect(first?.mimeType).toBe('application/json');
+    expect(first?.text).toBe('null');
+    await client.close();
+  });
 });
