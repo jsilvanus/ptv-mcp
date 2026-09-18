@@ -99,12 +99,9 @@ export class PtvV12Adapter implements PtvAdapter {
     );
 
     const query = params.query?.trim();
-    let organizationId = params.organizationId;
-    if (query && !organizationId) organizationId = await this.resolveOrganizationId(query);
-
     const filtered = all.filter((service) =>
-      (!organizationId || service.organizationId === organizationId) &&
-      (!query || organizationId !== undefined || matchesService(service, query)),
+      (!params.organizationId || service.organizationId === params.organizationId) &&
+      (!query || matchesService(service, query)),
     );
     return paginate(filtered, page, pageSize);
   }
