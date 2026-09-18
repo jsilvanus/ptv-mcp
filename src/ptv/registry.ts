@@ -19,6 +19,7 @@ export interface PtvAdapterResolutionRequest {
    */
   tenantId?: string;
   environment: PtvEnvironment;
+  apiVersion: string;
   operation: PtvOperation;
   /**
    * The authenticated MCP user. It is still required for the MCP session,
