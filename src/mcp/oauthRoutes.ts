@@ -53,13 +53,23 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
   app.post<{ Body: Record<string, unknown> }>('/oauth/register', async (request, reply) => {
     try {
       const result = await options.oauthService.registerClient({
-        client_id: typeof request.body.client_id === 'string' ? request.body.client_id : undefined,
-        client_name: typeof request.body.client_name === 'string' ? request.body.client_name : undefined,
-        redirect_uris: Array.isArray(request.body.redirect_uris) ? request.body.redirect_uris.filter((v): v is string => typeof v === 'string') : [],
-        grant_types: Array.isArray(request.body.grant_types) ? request.body.grant_types.filter((v): v is string => typeof v === 'string') : undefined,
-        response_types: Array.isArray(request.body.response_types) ? request.body.response_types.filter((v): v is string => typeof v === 'string') : undefined,
-        token_endpoint_auth_method: typeof request.body.token_endpoint_auth_method === 'string' ? request.body.token_endpoint_auth_method : undefined,
-        application_type: typeof request.body.application_type === 'string' ? request.body.application_type : undefined,
+        ...(typeof request.body.client_id === 'string' ? { client_id: request.body.client_id } : {}),
+        ...(typeof request.body.client_name === 'string' ? { client_name: request.body.client_name } : {}),
+        redirect_uris: Array.isArray(request.body.redirect_uris)
+          ? request.body.redirect_uris.filter((v): v is string => typeof v === 'string')
+          : [],
+        ...(Array.isArray(request.body.grant_types)
+          ? { grant_types: request.body.grant_types.filter((v): v is string => typeof v === 'string') }
+          : {}),
+        ...(Array.isArray(request.body.response_types)
+          ? { response_types: request.body.response_types.filter((v): v is string => typeof v === 'string') }
+          : {}),
+        ...(typeof request.body.token_endpoint_auth_method === 'string'
+          ? { token_endpoint_auth_method: request.body.token_endpoint_auth_method }
+          : {}),
+        ...(typeof request.body.application_type === 'string'
+          ? { application_type: request.body.application_type }
+          : {}),
       });
       return reply.code(201).send(result);
     } catch (err) {
@@ -108,15 +118,21 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     try { q = Object.fromEntries(new URLSearchParams(Buffer.from(request.body.oauth, 'base64url').toString('utf8'))); }
     catch { return reply.badRequest('Invalid authorization request'); }
     try {
+      const clientId = q.client_id;
+      const redirectUri = q.redirect_uri;
+      const codeChallenge = q.code_challenge;
+      if (!clientId || !redirectUri || !codeChallenge) {
+        return reply.badRequest('Invalid authorization request');
+      }
       const session = await options.authService.login(request.body.email, request.body.password);
       const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
       if (q.resource && q.resource !== options.publicUrl + '/mcp') {
         return reply.badRequest('Unsupported resource');
       }
       const code = await options.oauthService.createAuthorizationCode(userId, {
-        clientId: q.client_id, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, state: q.state, scope: q.scope ?? 'mcp',
+        clientId, redirectUri, codeChallenge, ...(q.state ? { state: q.state } : {}), scope: q.scope ?? 'mcp',
       });
-      const redirect = new URL(q.redirect_uri);
+      const redirect = new URL(redirectUri);
       redirect.searchParams.set('code', code);
       if (q.state) redirect.searchParams.set('state', q.state);
       // RFC 9207 issuer identification: lets ChatGPT use its stable OAuth callback.
