@@ -96,13 +96,17 @@ function actingUserId(extra: Extra): string {
 }
 
 const environmentSchema = z.enum(['test', 'production']);
-const searchParamsSchema = {
-  tenantId: z.string(),
+const publicReadSearchParamsSchema = {
+  tenantId: z.string().optional(),
   environment: environmentSchema,
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(1000).optional(),
 };
-const getByIdSchema = { tenantId: z.string(), environment: environmentSchema, id: z.string() };
+const publicReadGetByIdSchema = {
+  tenantId: z.string().optional(),
+  environment: environmentSchema,
+  id: z.string(),
+};
 
 const oauthSecuritySchemes = [{ type: 'oauth2' as const, scopes: ['mcp'] }];
 
@@ -111,11 +115,11 @@ function withOAuthSecurity<T extends object>(config: T): T & { securitySchemes: 
 }
 
 function toolContext(
-  args: { tenantId: string; environment: 'test' | 'production' },
+  args: { tenantId?: string | undefined; environment: 'test' | 'production' },
   extra: Extra,
 ): ToolContext {
   return {
-    tenantId: args.tenantId,
+    ...(args.tenantId !== undefined ? { tenantId: args.tenantId } : {}),
     environment: args.environment,
     actingUserId: actingUserId(extra),
   };
@@ -146,8 +150,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_search_services', withOAuthSecurity({
-      description: 'Search PTV services for a tenant/environment.',
-      inputSchema: searchParamsSchema,
+      description:
+        'Search published PTV services. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration (and does not restrict which PTV organisation is returned).',
+      inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
       try {
@@ -161,7 +166,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_service', withOAuthSecurity({ description: 'Fetch one PTV service by id.', inputSchema: getByIdSchema }),
+    'ptv_get_service', withOAuthSecurity({
+      description:
+        'Fetch one published PTV service by id. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadGetByIdSchema,
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -175,8 +184,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_search_channels', withOAuthSecurity({
-      description: 'Search PTV service channels for a tenant/environment.',
-      inputSchema: searchParamsSchema,
+      description:
+        'Search published PTV service channels. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
       try {
@@ -190,7 +200,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_channel', withOAuthSecurity({ description: 'Fetch one PTV service channel by id.', inputSchema: getByIdSchema }),
+    'ptv_get_channel', withOAuthSecurity({
+      description:
+        'Fetch one published PTV service channel by id. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadGetByIdSchema,
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -203,7 +217,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation', withOAuthSecurity({ description: 'Fetch one PTV organisation by id.', inputSchema: getByIdSchema }),
+    'ptv_get_organisation', withOAuthSecurity({
+      description:
+        'Fetch one published PTV organisation by id. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration. The tenant does not limit which PTV organisation may be queried.',
+      inputSchema: publicReadGetByIdSchema,
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -217,8 +235,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_get_organisation_hierarchy', withOAuthSecurity({
-      description: 'Fetch a PTV organisation and every ancestor up to its root.',
-      inputSchema: getByIdSchema,
+      description:
+        'Fetch a published PTV organisation and every ancestor up to its root. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
@@ -233,8 +252,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_search_service_collections', withOAuthSecurity({
-      description: 'Search PTV service collections for a tenant/environment.',
-      inputSchema: searchParamsSchema,
+      description:
+        'Search published PTV service collections. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
       try {
@@ -253,8 +273,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_search_general_descriptions', withOAuthSecurity({
-      description: 'Search PTV general descriptions for a tenant/environment.',
-      inputSchema: searchParamsSchema,
+      description:
+        'Search published PTV general descriptions. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
       try {
@@ -273,8 +294,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   server.registerTool(
     'ptv_search_connections', withOAuthSecurity({
-      description: 'List service<->channel connections for a service or channel id.',
-      inputSchema: getByIdSchema,
+      description:
+        'List published PTV service/channel connections. tenantId is optional for public v11 OUT reads; when supplied, it selects the configured tenant/integration.',
+      inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
@@ -291,7 +313,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_codes', withOAuthSecurity({
       description: 'List entries in a PTV code list (e.g. "languages", "service-classes").',
       inputSchema: {
-        tenantId: z.string(),
+        tenantId: z.string().optional(),
         environment: environmentSchema,
         codeListName: z.string(),
       },
