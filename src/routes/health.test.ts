@@ -13,6 +13,7 @@ describe('GET /health', () => {
         ptvV11OAuthClientId: '',
         ptvV11OAuthClientSecret: '',
         ptvV11OAuthRedirectUri: '',
+        mcpPublicUrl: 'https://ptv.mcp.test',
       },
     });
 
