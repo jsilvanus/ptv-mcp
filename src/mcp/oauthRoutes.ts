@@ -35,6 +35,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     token_endpoint_auth_methods_supported: ['none'],
     scopes_supported: ['mcp'],
     client_id_metadata_document_supported: false,
+    authorization_response_iss_parameter_supported: true,
   };
 
   app.get('/.well-known/oauth-authorization-server', async (_req, reply) =>
@@ -118,6 +119,8 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
       const redirect = new URL(q.redirect_uri);
       redirect.searchParams.set('code', code);
       if (q.state) redirect.searchParams.set('state', q.state);
+      // RFC 9207 issuer identification: lets ChatGPT use its stable OAuth callback.
+      redirect.searchParams.set('iss', options.publicUrl);
       return reply.redirect(redirect.toString());
     } catch (err) {
       return reply.type('text/html').send(html('<h1>Sign-in failed</h1><p class="error">Invalid email or password.</p><p><a href="javascript:history.back()">Try again</a></p>'));
