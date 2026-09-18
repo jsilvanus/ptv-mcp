@@ -66,7 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid NODE_ENV: ${nodeEnv}`);
   }
 
-  const port = Number(env.PORT ?? '3000');
+  const port = Number(env.PORT ?? '5999');
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error(`Invalid PORT: ${env.PORT}`);
   }
