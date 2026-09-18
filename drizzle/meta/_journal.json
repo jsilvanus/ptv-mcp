@@ -64,6 +64,13 @@
       "when": 1789762000000,
       "tag": "0008_oauth_tenant_context",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789763000000,
+      "tag": "0010_oauth_connection_context",
+      "breakpoints": true
     }
   ]
 }
