@@ -151,7 +151,7 @@ describe('MCP HTTP transport', () => {
     const client = await connectedClient(token);
     const result = await client.callTool({
       name: 'ptv_search_services',
-      arguments: { tenantId, environment: 'test', pageSize: 1 },
+      arguments: { tenantId, environment: 'test', query: 'service', pageSize: 1 },
     });
 
     expect(result.isError).not.toBe(true);
