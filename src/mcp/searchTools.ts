@@ -15,12 +15,9 @@ import type { ToolContext } from './toolContext.js';
 
 /**
  * Search/read tools are thin pass-throughs to a registry-resolved
- * PtvAdapter. A supplied tenantId selects the tenant's configured PTV
- * integration; it does not scope the public PTV data being returned.
- *
- * When tenantId is omitted, the registry uses v11's credential-free OUT
- * adapter. This is intentionally a public-data path, while the MCP itself
- * still requires an authenticated user.
+ * PtvAdapter. The tenant comes from the OAuth-selected MCP connection;
+ * search criteria are carried separately in SearchParams and never inferred
+ * from the tenant or its organisation membership.
  */
 async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ToolContext) {
   return registry.resolve({
