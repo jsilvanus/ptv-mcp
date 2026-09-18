@@ -98,7 +98,7 @@ export class OAuthService {
       throw new Error('invalid_grant');
     }
     await this.db.execute(sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`);
-    const accessToken = await this.signAccessToken(row.user_id, clientId, row.scope);
+    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope);
     const refreshToken = generateOpaqueToken();
     await this.db.execute(sql`
       INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, expires_at)
@@ -115,7 +115,7 @@ export class OAuthService {
     if (!row || row.revoked_at || new Date(row.expires_at) < new Date() || row.client_id !== clientId) {
       throw new Error('invalid_grant');
     }
-    const accessToken = await this.signAccessToken(row.user_id, clientId, row.scope);
+    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope);
     return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, scope: row.scope };
   }
 
