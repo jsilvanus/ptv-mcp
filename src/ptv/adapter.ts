@@ -63,6 +63,7 @@ export interface PtvAdapter {
   searchChannels(params: SearchParams): Promise<PaginatedResult<ServiceChannel>>;
   getChannel(id: PtvContentId): Promise<ServiceChannel | null>;
 
+  searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>>;
   getOrganisation(id: PtvContentId): Promise<Organization | null>;
   getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]>;
 
