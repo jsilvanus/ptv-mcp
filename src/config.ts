@@ -25,10 +25,20 @@ export interface AppConfig {
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
-  const value = env[name];
+  let value = env[name];
+
   if (value === undefined || value === '') {
     throw new Error(`Missing required environment variable: ${name}`);
   }
+
+  // Be tolerant of deployment scripts that accidentally write the variable
+  // name into the value (for example, DATABASE_URL=DATABASE_URL=postgres://...).
+  // This keeps local/dev startup usable while still rejecting unrelated values.
+  const accidentalPrefix = `${name}=`;
+  if (value.startsWith(accidentalPrefix)) {
+    value = value.slice(accidentalPrefix.length);
+  }
+
   return value;
 }
 
