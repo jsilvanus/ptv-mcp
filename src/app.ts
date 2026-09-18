@@ -24,7 +24,6 @@ import { ptvV12Routes } from './routes/ptvV12.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 import { mcpOAuthRoutes } from './mcp/oauthRoutes.js';
 import { OAuthService } from './mcp/oauthService.js';
-import { oauthFormBody } from './mcp/oauthFormBody.js';
 
 export interface BuildAppOptions {
   config: Pick<
@@ -39,11 +38,8 @@ export interface BuildAppOptions {
     | 'ptvV11OAuthRedirectUri'
     | 'mcpPublicUrl'
   >;
-  /** Injectable for tests against an already-open connection; defaults to a fresh one from `config.databaseUrl`. */
   db?: Database;
-  /** Injectable for tests; defaults to logging the link instead of sending real email (see mailer.ts). */
   mailer?: Mailer;
-  /** Injectable for tests to replace adapter implementations by apiVersion key. */
   adapterFactories?: Record<string, AdapterFactory>;
 }
 
@@ -76,7 +72,17 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const proposalService = new ProposalService(db);
 
   await app.register(sensible);
-  await app.register(oauthFormBody);
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
   await app.register(healthRoutes);
   await app.register(authRoutes, { authService, jwtSecret: config.jwtSecret });
   await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });
