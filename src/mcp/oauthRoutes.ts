@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { OAuthService } from './oauthService.js';
 import type { AuthService } from '../auth/authService.js';
 import type { TenantService } from '../tenants/tenantService.js';
+import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { verifyAccessToken } from '../auth/jwt.js';
 
 const LEGACY_RESOURCE_SUFFIX = '/mcp';
@@ -16,6 +17,7 @@ export interface McpOAuthRouteOptions {
   publicUrl: string;
   jwtSecret: string;
   tenantService: TenantService;
+  adapterConfigService: PtvAdapterConfigService;
 }
 
 function html(body: string) {
@@ -121,17 +123,19 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
   });
 
   app.post<{
-    Body: { oauth?: string; email?: string; password?: string; tenant_id?: string; selection_token?: string }
+    Body: { oauth?: string; email?: string; password?: string; tenant_id?: string; selection_token?: string; connection?: string }
   }>('/oauth/authorize', async (request, reply) => {
     // Step 1: authenticate the human, then ask which tenant this OAuth
     // connection should represent. The tenant choice belongs to the OAuth
     // grant, not to the user's identity, so one user can authorize multiple
     // independent ChatGPT/Claude connections for different tenants.
-    if (request.body.selection_token && request.body.tenant_id) {
+    if (request.body.selection_token && request.body.connection) {
+      const [tenantId, environment, apiVersion] = request.body.connection.split('|');
+      if (!tenantId || (environment !== 'test' && environment !== 'production') || !apiVersion) return reply.badRequest('Invalid PTV connection selection');
       try {
         const selection = await options.oauthService.verifyTenantSelectionToken(request.body.selection_token);
         const memberships = await options.tenantService.listTenantsForUser(selection.userId);
-        const membership = memberships.find((item) => item.tenantId === request.body.tenant_id);
+        const membership = memberships.find((item) => item.tenantId === tenantId);
         if (!membership) return reply.badRequest('You are not a member of that organisation');
 
         const code = await options.oauthService.createAuthorizationCode(selection.userId, {
@@ -140,6 +144,8 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
           codeChallenge: selection.codeChallenge,
           scope: selection.scope,
           tenantId: membership.tenantId,
+          environment: selection.environment!,
+          apiVersion: selection.apiVersion!,
         });
         const redirect = new URL(selection.redirectUri);
         redirect.searchParams.set('code', code);
