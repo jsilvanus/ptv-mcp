@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '../api/client';
 import type { ConnectionStatus, PtvEnvironment } from '../api/types';
+import { useTenants } from '../tenants/TenantContext';
 
 export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
 
@@ -12,6 +13,11 @@ export function PtvConnectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [connectingEnv, setConnectingEnv] = useState<PtvEnvironment | null>(null);
   const [disconnectingEnv, setDisconnectingEnv] = useState<PtvEnvironment | null>(null);
+  const { currentTenant } = useTenants();
+  const [v12Environment, setV12Environment] = useState<PtvEnvironment>('production');
+  const [v12ApiKey, setV12ApiKey] = useState('');
+  const [v12Busy, setV12Busy] = useState(false);
+  const [v12Status, setV12Status] = useState<string | null>(null);
 
   async function loadConnections(): Promise<void> {
     setLoading(true);
@@ -58,6 +64,29 @@ export function PtvConnectionsPage() {
       setError(err instanceof ApiError ? err.message : 'Could not disconnect the PTV account.');
     } finally {
       setDisconnectingEnv(null);
+    }
+  }
+
+  async function saveAndTestV12(): Promise<void> {
+    if (!currentTenant || !v12ApiKey.trim()) return;
+    setV12Busy(true);
+    setV12Status(null);
+    setError(null);
+    try {
+      await apiFetch<void>(`/tenants/${currentTenant.tenantId}/ptv/v12`, {
+        method: 'PUT',
+        body: JSON.stringify({ environment: v12Environment, apiKey: v12ApiKey }),
+      });
+      await apiFetch<{ ok: boolean; environment: string; apiVersion: string }>(
+        `/tenants/${currentTenant.tenantId}/ptv/v12/${v12Environment}/test`,
+        { method: 'POST' },
+      );
+      setV12ApiKey('');
+      setV12Status(`Connected to PTV v12 (${v12Environment}).`);
+    } catch (err) {
+      setV12Status(err instanceof ApiError ? err.message : 'PTV v12 connection test failed.');
+    } finally {
+      setV12Busy(false);
     }
   }
 
@@ -123,6 +152,35 @@ export function PtvConnectionsPage() {
           </tbody>
         </table>
       )}
+
+      <h2 style={{ marginTop: 32 }}>Connect a PTV v12 API key</h2>
+      <p className="muted">
+        The v12 API key is stored encrypted and belongs to the selected tenant.
+        It is used for read access to PTV.
+      </p>
+      {currentTenant ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong>{currentTenant.tenantName}</strong>
+          <select value={v12Environment} onChange={(e) => setV12Environment(e.target.value as PtvEnvironment)}>
+            <option value="production">production</option>
+            <option value="test">test</option>
+          </select>
+          <input
+            type="password"
+            value={v12ApiKey}
+            onChange={(e) => setV12ApiKey(e.target.value)}
+            placeholder="PTV v12 API key"
+            autoComplete="off"
+            style={{ minWidth: 320 }}
+          />
+          <button className="primary" onClick={() => void saveAndTestV12()} disabled={v12Busy || !v12ApiKey.trim()}>
+            {v12Busy ? 'Testing…' : 'Save & test'}
+          </button>
+        </div>
+      ) : (
+        <p className="muted">Select a tenant first.</p>
+      )}
+      {v12Status && <p className={v12Status.startsWith('Connected') ? 'muted' : 'error'}>{v12Status}</p>}
 
       <h2 style={{ marginTop: 24 }}>Connect a PTV v11 account</h2>
       <div style={{ display: 'flex', gap: 8 }}>
