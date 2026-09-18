@@ -25,7 +25,9 @@ export interface AuthorizationRequest {
   codeChallenge: string;
   state?: string;
   scope: string;
-  tenantId: string;
+  tenantId?: string;
+  environment?: 'test' | 'production';
+  apiVersion?: string;
   state?: string;
 }
 
