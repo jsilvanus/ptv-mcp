@@ -188,6 +188,48 @@ export class OAuthService {
       a === 0;
   }
 
+  async createTenantSelectionToken(userId: string, request: AuthorizationRequest): Promise<string> {
+    return new SignJWT({
+      kind: 'tenant_selection',
+      client_id: request.clientId,
+      redirect_uri: request.redirectUri,
+      code_challenge: request.codeChallenge,
+      scope: request.scope,
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(userId)
+      .setIssuer(this.issuer)
+      .setAudience(this.resource)
+      .setIssuedAt()
+      .setExpirationTime('10m')
+      .sign(Buffer.from(this.jwtSecret, 'base64'));
+  }
+
+  async verifyTenantSelectionToken(token: string) {
+    const { payload } = await jwtVerify(token, Buffer.from(this.jwtSecret, 'base64'), {
+      algorithms: ['HS256'],
+      issuer: this.issuer,
+      audience: this.resource,
+    });
+    if (
+      payload.kind !== 'tenant_selection' ||
+      typeof payload.sub !== 'string' ||
+      typeof payload.client_id !== 'string' ||
+      typeof payload.redirect_uri !== 'string' ||
+      typeof payload.code_challenge !== 'string' ||
+      typeof payload.scope !== 'string'
+    ) {
+      throw new Error('invalid_selection');
+    }
+    return {
+      userId: payload.sub,
+      clientId: payload.client_id,
+      redirectUri: payload.redirect_uri,
+      codeChallenge: payload.code_challenge,
+      scope: payload.scope,
+    };
+  }
+
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
       throw new Error('Invalid client or redirect_uri');
