@@ -24,6 +24,7 @@ import { ptvV12Routes } from './routes/ptvV12.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 import { mcpOAuthRoutes } from './mcp/oauthRoutes.js';
 import { OAuthService } from './mcp/oauthService.js';
+import { oauthFormBody } from './mcp/oauthFormBody.js';
 
 export interface BuildAppOptions {
   config: Pick<
@@ -75,6 +76,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const proposalService = new ProposalService(db);
 
   await app.register(sensible);
+  await app.register(oauthFormBody);
   await app.register(healthRoutes);
   await app.register(authRoutes, { authService, jwtSecret: config.jwtSecret });
   await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });
