@@ -22,6 +22,7 @@ export interface AppConfig {
   ptvV11OAuthClientId: string;
   ptvV11OAuthClientSecret: string;
   ptvV11OAuthRedirectUri: string;
+  mcpPublicUrl: string;
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
@@ -82,5 +83,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ptvV11OAuthClientId: env.PTV_V11_OAUTH_CLIENT_ID ?? '',
     ptvV11OAuthClientSecret: env.PTV_V11_OAUTH_CLIENT_SECRET ?? '',
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
+    mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
   };
 }
