@@ -22,6 +22,8 @@ import { proposalRoutes } from './routes/proposals.js';
 import { webUiRoutes } from './routes/webUi.js';
 import { ptvV12Routes } from './routes/ptvV12.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
+import { mcpOAuthRoutes } from './mcp/oauthRoutes.js';
+import { OAuthService } from './mcp/oauthService.js';
 
 export interface BuildAppOptions {
   config: Pick<
@@ -34,6 +36,7 @@ export interface BuildAppOptions {
     | 'ptvV11OAuthClientId'
     | 'ptvV11OAuthClientSecret'
     | 'ptvV11OAuthRedirectUri'
+    | 'mcpPublicUrl'
   >;
   /** Injectable for tests against an already-open connection; defaults to a fresh one from `config.databaseUrl`. */
   db?: Database;
@@ -55,6 +58,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
   const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
+  const oauthService = new OAuthService(db, config.jwtSecret, config.mcpPublicUrl, config.mcpPublicUrl + '/mcp');
   const auditService = new AuditService(db);
   const tenantService = new TenantService(db, auditService);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
@@ -85,6 +89,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       redirectUri: config.ptvV11OAuthRedirectUri,
     },
   });
+  await app.register(mcpOAuthRoutes, { oauthService, authService, publicUrl: config.mcpPublicUrl, jwtSecret: config.jwtSecret });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
     serverDeps: { db, registry, auditService, validator, proposalService },
