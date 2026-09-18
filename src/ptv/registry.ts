@@ -9,16 +9,20 @@ import type { PtvAdapter, PtvEnvironment } from './adapter.js';
 export type PtvOperation = 'read' | 'write';
 
 export interface PtvAdapterResolutionRequest {
-  tenantId: string;
+  /**
+   * Tenant whose configured PTV integration/credentials should be used.
+   *
+   * This is optional for public v11 OUT reads: v11 published OUT data is
+   * public and does not require a tenant membership or credential. For
+   * tenant-scoped operations (including v12 reads, whose API key is
+   * integration-specific) it remains required.
+   */
+  tenantId?: string;
   environment: PtvEnvironment;
   operation: PtvOperation;
   /**
-   * Required even for tenant-scoped adapters, because tenant/role
-   * authorization (is this user a Publisher for this tenant?) is always
-   * checked before any credential lookup — see docs/ptv-v11-notes.md's
-   * "Do we still need tenant_id" section. For a user-scoped adapter
-   * (credentialScope: 'user'), this is also whose UserPtvConnection row
-   * gets resolved.
+   * The authenticated MCP user. It is still required for the MCP session,
+   * even when the underlying PTV read is public.
    */
   actingUserId: string;
 }
@@ -38,11 +42,9 @@ export class PtvAdapterResolutionError extends Error {
 }
 
 /**
- * Resolution contract only — the real implementation (DB-backed lookups
- * against PtvAdapterConfig, TenantEnvironment, and UserPtvConnection,
- * plus the tenant/role authorization check) is Phase 3 Stream D. Defined
- * here in Phase 1 so Phase 2's adapters and Phase 4's MCP tools can be
- * built against a stable shape without waiting on Phase 3.
+ * Resolution contract only — the real implementation resolves either a
+ * tenant-scoped PTV integration or, for public v11 OUT reads, the
+ * credential-free public adapter.
  */
 export interface PtvAdapterRegistry {
   resolve(request: PtvAdapterResolutionRequest): Promise<PtvAdapter>;
