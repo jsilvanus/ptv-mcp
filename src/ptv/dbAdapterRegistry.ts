@@ -99,7 +99,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
   }
 
   async resolve(request: PtvAdapterResolutionRequest): Promise<PtvAdapter> {
-    const { tenantId, environment, operation, actingUserId } = request;
+    const { tenantId, environment, apiVersion, operation, actingUserId } = request;
 
     // PTV v11 OUT is public published data. The MCP itself still requires
     // an authenticated user, but no tenant membership or PTV credential is
@@ -107,13 +107,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     // mandatory for writes and for v12 reads because v12 requires an
     // integration-specific API key.
     if (tenantId === undefined) {
-      if (operation !== 'read') {
-        throw new PtvAdapterResolutionError(
-          'A tenant is required for PTV write operations',
-          'not_authorized',
-        );
-      }
-      return new PtvV11Adapter({ environment });
+      throw new PtvAdapterResolutionError('A tenant is required for this PTV connection', 'not_authorized');
     }
 
     const minRole: MembershipRole = operation === 'write' ? 'publisher' : 'reader';
@@ -130,10 +124,10 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     }
 
     const configs = await this.configService.list(tenantId);
-    const inEnvironment = configs.filter((c) => c.environment === environment);
+    const inEnvironment = configs.filter((c) => c.environment === environment && c.apiVersion === apiVersion);
     if (inEnvironment.length === 0) {
       throw new PtvAdapterResolutionError(
-        `No PTV adapter configured for tenant ${tenantId} in ${environment}`,
+        `No PTV adapter configured for tenant ${tenantId} in ${environment}/${apiVersion}`,
         'no_adapter_configured',
       );
     }
@@ -143,7 +137,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     );
     if (!config) {
       throw new PtvAdapterResolutionError(
-        `No active PTV adapter for tenant ${tenantId}/${environment} supports '${operation}'`,
+        `No active PTV adapter for tenant ${tenantId}/${environment}/${apiVersion} supports '${operation}'`,
         'operation_not_supported',
       );
     }
