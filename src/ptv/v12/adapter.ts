@@ -145,7 +145,7 @@ function localized(value: unknown): Record<string, string> {
 function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
   if (!values) return [];
   return values.map((value) => {
-    if (!value || typeof value !== 'object') return {};
+    if (!value || typeof value !== 'object') return { names: {} };
     const v = value as Record<string, unknown>;
     return {
       ...(typeof v.code === 'string' ? { code: v.code } : {}),
