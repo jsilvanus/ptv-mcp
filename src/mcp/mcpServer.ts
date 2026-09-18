@@ -118,10 +118,18 @@ function toolContext(
   args: { tenantId?: string | undefined; environment: 'test' | 'production' },
   extra: Extra,
 ): ToolContext {
+  const userId = actingUserId(extra);
+  const activeTenantId = extra.authInfo?.extra?.tenantId;
+  if (typeof activeTenantId !== 'string' || activeTenantId === '') {
+    throw new Error('No active tenant for this MCP connection; reconnect and select an organisation');
+  }
+  if (args.tenantId !== undefined && args.tenantId !== activeTenantId) {
+    throw new Error('tenantId does not match the organisation selected for this MCP connection');
+  }
   return {
-    ...(args.tenantId !== undefined ? { tenantId: args.tenantId } : {}),
+    tenantId: activeTenantId,
     environment: args.environment,
-    actingUserId: actingUserId(extra),
+    actingUserId: userId,
   };
 }
 
