@@ -95,9 +95,7 @@ function actingUserId(extra: Extra): string {
   return userId;
 }
 
-const environmentSchema = z.enum(['test', 'production']);
 const publicReadSearchParamsSchema = {
-  environment: environmentSchema,
   query: z.string().optional().describe('Optional PTV text search. Omit it to browse using the other filters.'),
   organizationId: z.string().uuid().optional().describe('Optional PTV organisation filter. This is not the OAuth tenant.'),
   page: z.number().int().min(1).optional(),
@@ -114,20 +112,21 @@ function withOAuthSecurity<T extends object>(config: T): T & { securitySchemes: 
   return { ...config, securitySchemes: oauthSecuritySchemes };
 }
 
-function toolContext(
-  args: { environment: 'test' | 'production' },
-  extra: Extra,
-): ToolContext {
+function toolContext(extra: Extra): ToolContext {
   const userId = actingUserId(extra);
   const activeTenantId = extra.authInfo?.extra?.tenantId;
+  const environment = extra.authInfo?.extra?.environment;
+  const apiVersion = extra.authInfo?.extra?.apiVersion;
   if (typeof activeTenantId !== 'string' || activeTenantId === '') {
     throw new Error('No active tenant for this MCP connection; reconnect and select an organisation');
   }
-  return {
-    tenantId: activeTenantId,
-    environment: args.environment,
-    actingUserId: userId,
-  };
+  if (environment !== 'test' && environment !== 'production') {
+    throw new Error('No active PTV environment for this MCP connection; reconnect and select a connection');
+  }
+  if (typeof apiVersion !== 'string' || apiVersion === '') {
+    throw new Error('No active PTV API version for this MCP connection; reconnect and select a connection');
+  }
+  return { tenantId: activeTenantId, environment, apiVersion, actingUserId: userId };
 }
 
 /** `exactOptionalPropertyTypes` means an explicit `page: undefined` doesn't satisfy `page?: number` — omit the key entirely instead. */
@@ -160,13 +159,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_services', withOAuthSecurity({
       description:
-        'Search published PTV services. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
+        'Search published PTV services. The OAuth-selected PTV connection determines tenant, environment and API version; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchServices(registry, toolContext(args, extra), searchParams(args)),
+          await searchTools.searchServices(registry, toolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -177,13 +176,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_get_service', withOAuthSecurity({
       description:
-        'Fetch one published PTV service by id. The organisation context is selected during OAuth authorization.',
+        'Fetch one published PTV service by id. The PTV tenant, environment and API version are selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getService(registry, toolContext(args, extra), args.id),
+          await searchTools.getService(registry, toolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -200,7 +199,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchChannels(registry, toolContext(args, extra), searchParams(args)),
+          await searchTools.searchChannels(registry, toolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -217,7 +216,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getChannel(registry, toolContext(args, extra), args.id),
+          await searchTools.getChannel(registry, toolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -241,7 +240,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchOrganisations(
             registry,
-            toolContext(args, extra),
+            toolContext(extra),
             {
               query: args.query,
               ...(args.page !== undefined ? { page: args.page } : {}),
@@ -269,7 +268,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.findOrganisationAndChildren(
             registry,
-            toolContext(args, extra),
+            toolContext(extra),
             args.query,
           ),
         );
@@ -282,13 +281,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_get_organisation', withOAuthSecurity({
       description:
-        'Fetch one published PTV organisation by id. The organisation context is selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
+        'Fetch one published PTV organisation by id. The PTV tenant, environment and API version are selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getOrganisation(registry, toolContext(args, extra), args.id),
+          await searchTools.getOrganisation(registry, toolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -305,7 +304,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getOrganisationHierarchy(registry, toolContext(args, extra), args.id),
+          await searchTools.getOrganisationHierarchy(registry, toolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -324,7 +323,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchServiceCollections(
             registry,
-            toolContext(args, extra),
+            toolContext(extra),
             searchParams(args),
           ),
         );
@@ -345,7 +344,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchGeneralDescriptions(
             registry,
-            toolContext(args, extra),
+            toolContext(extra),
             searchParams(args),
           ),
         );
@@ -364,7 +363,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchConnections(registry, toolContext(args, extra), args.id),
+          await searchTools.searchConnections(registry, toolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -383,7 +382,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.listCodes(registry, toolContext(args, extra), args.codeListName),
+          await searchTools.listCodes(registry, toolContext(extra), args.codeListName),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -416,7 +415,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             registry,
             auditService,
             proposalService,
-            toolContext(args, extra),
+            toolContext(extra),
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
@@ -439,7 +438,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await listProposals(resolveRole, proposalService, toolContext(args, extra), args.status),
+          await listProposals(resolveRole, proposalService, toolContext(extra), args.status),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -464,7 +463,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             registry,
             proposalService,
             auditService,
-            toolContext(args, extra),
+            toolContext(extra),
             args.proposalId,
           ),
         );
@@ -493,7 +492,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             proposalService,
             auditService,
             validator,
-            toolContext(args, extra),
+            toolContext(extra),
             args.proposalId,
             args.action,
           ),
@@ -520,7 +519,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await validateChanges(
             auditService,
             validator,
-            toolContext(args, extra),
+            toolContext(extra),
             args.proposed as unknown as Service,
             args.correlationId,
           ),
@@ -549,7 +548,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             resolveRole,
             registry,
             auditService,
-            toolContext(args, extra),
+            toolContext(extra),
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
@@ -580,7 +579,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             registry,
             auditService,
             validator,
-            toolContext(args, extra),
+            toolContext(extra),
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
@@ -614,13 +613,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     serviceTemplate,
     { description: 'Get one PTV service by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(
-        {
-          tenantId: variables.tenantId as string,
-          environment: variables.environment as 'test' | 'production',
-        },
-        extra,
-      );
+      const ctx = toolContext(extra);
       const service = await searchTools.getService(registry, ctx, variables.serviceId as string);
       return {
         contents: [
