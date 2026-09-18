@@ -196,7 +196,7 @@ describe('Phase 6 sync point', () => {
     const readerClient = await connectedClient(reader.token);
     const readerSearch = await readerClient.callTool({
       name: 'ptv_search_services',
-      arguments: { tenantId, environment: 'test', pageSize: 1 },
+      arguments: { tenantId, environment: 'test', query: 'service', pageSize: 1 },
     });
     expect(readerSearch.isError).not.toBe(true);
     const readerPropose = await readerClient.callTool({
