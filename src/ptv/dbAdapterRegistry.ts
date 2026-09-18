@@ -16,6 +16,7 @@ import type {
   PtvAdapterConfigService,
 } from '../credentials/ptvAdapterConfigService.js';
 import { PtvV11Adapter } from './v11/adapter.js';
+import { PtvV12Adapter } from './v12/adapter.js';
 import type { PtvAdapter, PtvEnvironment } from './adapter.js';
 import {
   PtvAdapterResolutionError,
@@ -53,7 +54,21 @@ function v11Factory(options: AdapterConstructionOptions): PtvAdapter {
   });
 }
 
-const DEFAULT_ADAPTER_FACTORIES: Record<string, AdapterFactory> = { v11: v11Factory };
+function v12Factory(options: AdapterConstructionOptions): PtvAdapter {
+  if (options.credential.scope !== 'tenant') {
+    throw new Error(`v12 adapter requires a tenant-scoped credential, got '${options.credential.scope}'`);
+  }
+  const apiKey = options.credential.credentials?.apiKey;
+  if (typeof apiKey !== 'string' || !apiKey) {
+    throw new Error('v12 adapter requires an API key');
+  }
+  return new PtvV12Adapter({ environment: options.environment, apiKey });
+}
+
+const DEFAULT_ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
+  v11: v11Factory,
+  v12: v12Factory,
+};
 
 /**
  * Real `PtvAdapterRegistry` implementation (Phase 3 Stream D): resolves
