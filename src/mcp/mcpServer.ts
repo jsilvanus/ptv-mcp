@@ -98,6 +98,8 @@ function actingUserId(extra: Extra): string {
 const environmentSchema = z.enum(['test', 'production']);
 const publicReadSearchParamsSchema = {
   environment: environmentSchema,
+  query: z.string().min(1).describe('PTV search text; this is independent of the OAuth tenant.'),
+  organizationId: z.string().uuid().optional().describe('Optional PTV organisation filter. This is not the OAuth tenant.'),
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(1000).optional(),
 };
@@ -130,10 +132,14 @@ function toolContext(
 
 /** `exactOptionalPropertyTypes` means an explicit `page: undefined` doesn't satisfy `page?: number` — omit the key entirely instead. */
 function searchParams(args: {
+  query?: string | undefined;
+  organizationId?: string | undefined;
   page?: number | undefined;
   pageSize?: number | undefined;
 }): SearchParams {
   return {
+    ...(args.query !== undefined ? { query: args.query } : {}),
+    ...(args.organizationId !== undefined ? { organizationId: args.organizationId } : {}),
     ...(args.page !== undefined ? { page: args.page } : {}),
     ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
   };
@@ -154,7 +160,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_services', withOAuthSecurity({
       description:
-        'Search published PTV services. The organisation context is selected during OAuth authorization; it is not a PTV data filter.',
+        'Search published PTV services. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
@@ -188,7 +194,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_channels', withOAuthSecurity({
       description:
-        'Search published PTV service channels. The organisation context is selected during OAuth authorization.',
+        'Search published PTV service channels. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
@@ -256,7 +262,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_service_collections', withOAuthSecurity({
       description:
-        'Search published PTV service collections. The organisation context is selected during OAuth authorization.',
+        'Search published PTV service collections. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
@@ -277,7 +283,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_general_descriptions', withOAuthSecurity({
       description:
-        'Search published PTV general descriptions. The organisation context is selected during OAuth authorization.',
+        'Search published PTV general descriptions. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
