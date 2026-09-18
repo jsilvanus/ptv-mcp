@@ -101,6 +101,21 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
   async resolve(request: PtvAdapterResolutionRequest): Promise<PtvAdapter> {
     const { tenantId, environment, operation, actingUserId } = request;
 
+    // PTV v11 OUT is public published data. The MCP itself still requires
+    // an authenticated user, but no tenant membership or PTV credential is
+    // needed to perform a public read. Tenant-scoped resolution remains
+    // mandatory for writes and for v12 reads because v12 requires an
+    // integration-specific API key.
+    if (tenantId === undefined) {
+      if (operation !== 'read') {
+        throw new PtvAdapterResolutionError(
+          'A tenant is required for PTV write operations',
+          'not_authorized',
+        );
+      }
+      return new PtvV11Adapter({ environment });
+    }
+
     const minRole: MembershipRole = operation === 'write' ? 'publisher' : 'reader';
     const membership = await withContext(this.db, { tenantId, userId: actingUserId }, async (tx) =>
       tx.query.memberships.findFirst({
