@@ -178,6 +178,7 @@ export class OAuthService {
     const octets = address.split('.').map(Number);
     if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return true;
     const [a, b] = octets;
+    if (a === undefined || b === undefined) return true;
     return a === 10 ||
       a === 127 ||
       (a === 169 && b === 254) ||
