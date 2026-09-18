@@ -137,6 +137,9 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
         const memberships = await options.tenantService.listTenantsForUser(selection.userId);
         const membership = memberships.find((item) => item.tenantId === tenantId);
         if (!membership) return reply.badRequest('You are not a member of that organisation');
+        const configs = await options.adapterConfigService.list(membership.tenantId);
+        const config = configs.find((item) => item.environment === environment && item.apiVersion === apiVersion && item.supportsRead);
+        if (!config) return reply.badRequest('That PTV connection is not configured for this organisation');
 
         const code = await options.oauthService.createAuthorizationCode(selection.userId, {
           clientId: selection.clientId,
