@@ -47,10 +47,11 @@ try {
     'mcp',
   );
 
-  console.log('\nMCP access token:');
-  console.log(token);
+  console.log('\nCopy-paste this into your shell:');
+  console.log(`export MCP_ACCESS_TOKEN='${token}'`);
+  console.log('\nThen use it as:');
+  console.log('Authorization: Bearer $MCP_ACCESS_TOKEN');
   console.log('\nExpires in: 3600 seconds');
-  console.log('\nUse this as: Authorization: Bearer <token>');
 } finally {
   rl.close();
   await db.$client.end();
