@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import dns from 'node:dns/promises';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
@@ -64,11 +65,125 @@ export class OAuthService {
   }
 
   async validateClient(clientId: string, redirectUri: string): Promise<boolean> {
+    if (this.isCimdClientId(clientId)) {
+      const metadata = await this.fetchCimdMetadata(clientId);
+      return metadata.redirect_uris.includes(redirectUri);
+    }
+
     const rows = await this.db.execute<{ redirect_uris: string[] }>(
       sql`SELECT redirect_uris FROM oauth_clients WHERE client_id = ${clientId}`,
     );
     const row = rows[0];
     return !!row && Array.isArray(row.redirect_uris) && row.redirect_uris.includes(redirectUri);
+  }
+
+  private isCimdClientId(clientId: string): boolean {
+    try {
+      const url = new URL(clientId);
+      return url.protocol === 'https:' &&
+        url.pathname !== '/' &&
+        url.username === '' &&
+        url.password === '' &&
+        url.search === '' &&
+        url.hash === '';
+    } catch {
+      return false;
+    }
+  }
+
+  private async fetchCimdMetadata(clientId: string): Promise<OAuthClientMetadata> {
+    const url = new URL(clientId);
+    if (!this.isCimdClientId(clientId)) throw new Error('Invalid CIMD client_id');
+
+    const addresses = await dns.lookup(url.hostname, { all: true });
+    if (addresses.length === 0 || addresses.some(({ address }) => this.isPrivateIp(address))) {
+      throw new Error('CIMD client_id resolves to a private address');
+    }
+
+    let current = url;
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      const response = await fetch(current, {
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location || redirects === 3) throw new Error('Invalid CIMD redirect');
+        const next = new URL(location, current);
+        if (!this.isCimdClientId(next.toString())) throw new Error('Invalid CIMD redirect');
+        const nextAddresses = await dns.lookup(next.hostname, { all: true });
+        if (nextAddresses.length === 0 || nextAddresses.some(({ address }) => this.isPrivateIp(address))) {
+          throw new Error('CIMD redirect resolves to a private address');
+        }
+        current = next;
+        continue;
+      }
+
+      if (!response.ok) throw new Error('Unable to fetch CIMD document');
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && Number(contentLength) > 64 * 1024) throw new Error('CIMD document is too large');
+
+      let metadata: unknown;
+      try {
+        metadata = JSON.parse(await response.text());
+      } catch {
+        throw new Error('Invalid CIMD document');
+      }
+
+      if (!metadata || typeof metadata !== 'object') throw new Error('Invalid CIMD document');
+      const value = metadata as Record<string, unknown>;
+      if (value.client_id !== clientId ||
+          typeof value.client_name !== 'string' ||
+          !Array.isArray(value.redirect_uris) ||
+          value.redirect_uris.some((uri) => typeof uri !== 'string')) {
+        throw new Error('Invalid CIMD document');
+      }
+
+      return {
+        client_id: clientId,
+        client_name: value.client_name,
+        redirect_uris: value.redirect_uris as string[],
+        ...(Array.isArray(value.grant_types)
+          ? { grant_types: value.grant_types.filter((v): v is string => typeof v === 'string') }
+          : {}),
+        ...(Array.isArray(value.response_types)
+          ? { response_types: value.response_types.filter((v): v is string => typeof v === 'string') }
+          : {}),
+        ...(typeof value.token_endpoint_auth_method === 'string'
+          ? { token_endpoint_auth_method: value.token_endpoint_auth_method }
+          : {}),
+        ...(typeof value.application_type === 'string'
+          ? { application_type: value.application_type }
+          : {}),
+      };
+    }
+
+    throw new Error('Unable to fetch CIMD document');
+  }
+
+  private isPrivateIp(address: string): boolean {
+    if (address.includes(':')) {
+      const normalized = address.toLowerCase();
+      return normalized === '::1' ||
+        normalized.startsWith('fc') ||
+        normalized.startsWith('fd') ||
+        normalized.startsWith('fe8') ||
+        normalized.startsWith('fe9') ||
+        normalized.startsWith('fea') ||
+        normalized.startsWith('feb');
+    }
+
+    const octets = address.split('.').map(Number);
+    if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return true;
+    const [a, b] = octets;
+    return a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a === 0;
   }
 
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
