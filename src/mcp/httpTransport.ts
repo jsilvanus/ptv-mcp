@@ -5,10 +5,13 @@ import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { InvalidAccessTokenError, verifyAccessToken } from '../auth/jwt.js';
 import { createMcpServer, type McpServerDeps } from './mcpServer.js';
+import type { OAuthService } from './oauthService.js';
 
 export interface McpRouteOptions {
   jwtSecret: string;
   serverDeps: McpServerDeps;
+  oauthService: OAuthService;
+  publicUrl: string;
 }
 
 function methodNotAllowed(): {
@@ -33,19 +36,24 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
   app.post('/mcp', async (request, reply) => {
     const header = request.headers.authorization;
     if (!header?.startsWith('Bearer ')) {
-      return reply.unauthorized('Missing bearer token');
+      reply.header('WWW-Authenticate', `Bearer resource_metadata="${options.publicUrl}/.well-known/oauth-protected-resource", scope="mcp"`);
+      return reply.code(401).send({ error: 'unauthorized', error_description: 'Bearer token required' });
     }
 
     let authInfo: AuthInfo;
     try {
-      const payload = await verifyAccessToken(header.slice('Bearer '.length), options.jwtSecret);
+      const payload = await options.oauthService.verifyAccessToken(header.slice('Bearer '.length));
       authInfo = {
         token: header,
-        clientId: payload.sub,
-        scopes: [],
+        clientId: payload.clientId ?? 'oauth-client',
+        scopes: payload.scope ? payload.scope.split(' ') : [],
         extra: { userId: payload.sub },
       };
     } catch (err) {
+      if (err instanceof Error && err.message === 'invalid_token') {
+        reply.header('WWW-Authenticate', `Bearer resource_metadata="${options.publicUrl}/.well-known/oauth-protected-resource", error="invalid_token", scope="mcp"`);
+        return reply.code(401).send({ error: 'invalid_token' });
+      }
       if (err instanceof InvalidAccessTokenError) {
         return reply.unauthorized(err.message);
       }
