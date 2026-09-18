@@ -135,7 +135,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_services', withOAuthSecurity({
       description: 'Search PTV services for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -148,7 +148,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_service', withOAuthSecurity({ description: 'Fetch one PTV service by id.', inputSchema: getByIdSchema )},
+    'ptv_get_service', withOAuthSecurity({ description: 'Fetch one PTV service by id.', inputSchema: getByIdSchema }),
     async (args, extra) => {
       try {
         return textResult(
@@ -164,7 +164,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_channels', withOAuthSecurity({
       description: 'Search PTV service channels for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -177,7 +177,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_channel', withOAuthSecurity({ description: 'Fetch one PTV service channel by id.', inputSchema: getByIdSchema )},
+    'ptv_get_channel', withOAuthSecurity({ description: 'Fetch one PTV service channel by id.', inputSchema: getByIdSchema }),
     async (args, extra) => {
       try {
         return textResult(
@@ -190,7 +190,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation', withOAuthSecurity({ description: 'Fetch one PTV organisation by id.', inputSchema: getByIdSchema )},
+    'ptv_get_organisation', withOAuthSecurity({ description: 'Fetch one PTV organisation by id.', inputSchema: getByIdSchema }),
     async (args, extra) => {
       try {
         return textResult(
@@ -206,7 +206,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_get_organisation_hierarchy', withOAuthSecurity({
       description: 'Fetch a PTV organisation and every ancestor up to its root.',
       inputSchema: getByIdSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -222,7 +222,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_service_collections', withOAuthSecurity({
       description: 'Search PTV service collections for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -242,7 +242,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_general_descriptions', withOAuthSecurity({
       description: 'Search PTV general descriptions for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -262,7 +262,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_connections', withOAuthSecurity({
       description: 'List service<->channel connections for a service or channel id.',
       inputSchema: getByIdSchema,
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -282,7 +282,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         environment: environmentSchema,
         codeListName: z.string(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -311,7 +311,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -340,7 +340,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         environment: environmentSchema,
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -361,7 +361,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         environment: environmentSchema,
         proposalId: z.string(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -390,7 +390,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -421,7 +421,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         proposed: z.record(z.string(), z.unknown()),
         correlationId: z.string().optional(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -450,7 +450,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
@@ -481,7 +481,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    )},
+    }),
     async (args, extra) => {
       try {
         return textResult(
