@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import dns from 'node:dns/promises';
+import { lookup } from 'node:dns/promises';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
@@ -95,7 +95,7 @@ export class OAuthService {
     const url = new URL(clientId);
     if (!this.isCimdClientId(clientId)) throw new Error('Invalid CIMD client_id');
 
-    const addresses = await dns.lookup(url.hostname, { all: true });
+    const addresses = await lookup(url.hostname, { all: true });
     if (addresses.length === 0 || addresses.some(({ address }) => this.isPrivateIp(address))) {
       throw new Error('CIMD client_id resolves to a private address');
     }
@@ -113,7 +113,7 @@ export class OAuthService {
         if (!location || redirects === 3) throw new Error('Invalid CIMD redirect');
         const next = new URL(location, current);
         if (!this.isCimdClientId(next.toString())) throw new Error('Invalid CIMD redirect');
-        const nextAddresses = await dns.lookup(next.hostname, { all: true });
+        const nextAddresses = await lookup(next.hostname, { all: true });
         if (nextAddresses.length === 0 || nextAddresses.some(({ address }) => this.isPrivateIp(address))) {
           throw new Error('CIMD redirect resolves to a private address');
         }
