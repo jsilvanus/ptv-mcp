@@ -637,13 +637,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     channelTemplate,
     { description: 'Get one PTV service channel by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(
-        {
-          tenantId: variables.tenantId as string,
-          environment: variables.environment as 'test' | 'production',
-        },
-        extra,
-      );
+      const ctx = toolContext(extra);
       const channel = await searchTools.getChannel(registry, ctx, variables.channelId as string);
       return {
         contents: [
@@ -667,13 +661,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     organisationTemplate,
     { description: 'Get one PTV organisation by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(
-        {
-          tenantId: variables.tenantId as string,
-          environment: variables.environment as 'test' | 'production',
-        },
-        extra,
-      );
+      const ctx = toolContext(extra);
       const organisation = await searchTools.getOrganisation(
         registry,
         ctx,
@@ -701,13 +689,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     hierarchyTemplate,
     { description: 'Get one PTV organisation hierarchy by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(
-        {
-          tenantId: variables.tenantId as string,
-          environment: variables.environment as 'test' | 'production',
-        },
-        extra,
-      );
+      const ctx = toolContext(extra);
       const hierarchy = await searchTools.getOrganisationHierarchy(
         registry,
         ctx,
@@ -735,13 +717,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     codeListTemplate,
     { description: 'List entries in one PTV code list by name.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(
-        {
-          tenantId: variables.tenantId as string,
-          environment: variables.environment as 'test' | 'production',
-        },
-        extra,
-      );
+      const ctx = toolContext(extra);
       const codes = await searchTools.listCodes(registry, ctx, variables.codeListName as string);
       return {
         contents: [
