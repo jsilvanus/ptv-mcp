@@ -24,7 +24,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     bearer_methods_supported: ['header'],
   }));
 
-  app.get('/.well-known/oauth-authorization-server', async (_req, reply) => reply.send({
+  const authorizationServerMetadata = {
     issuer: options.publicUrl,
     authorization_endpoint: options.publicUrl + '/oauth/authorize',
     token_endpoint: options.publicUrl + '/oauth/token',
@@ -35,7 +35,19 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     token_endpoint_auth_methods_supported: ['none'],
     scopes_supported: ['mcp'],
     client_id_metadata_document_supported: false,
-  }));
+  };
+
+  app.get('/.well-known/oauth-authorization-server', async (_req, reply) =>
+    reply.send(authorizationServerMetadata),
+  );
+
+  // Some OAuth clients probe OIDC discovery even when the server implements
+  // OAuth 2.0 rather than OpenID Connect. Expose the same authorization-server
+  // metadata there for compatibility; this endpoint does not imply OIDC userinfo
+  // or ID-token support.
+  app.get('/.well-known/openid-configuration', async (_req, reply) =>
+    reply.send(authorizationServerMetadata),
+  );
 
   app.post<{ Body: Record<string, unknown> }>('/oauth/register', async (request, reply) => {
     try {
@@ -59,6 +71,9 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     if (q.response_type !== 'code' || !q.client_id || !q.redirect_uri || !q.code_challenge) {
       return reply.badRequest('response_type=code, client_id, redirect_uri and code_challenge are required');
     }
+    if (q.resource && q.resource !== options.publicUrl + '/mcp') {
+      return reply.badRequest('Unsupported resource');
+    }
     if (!(await options.oauthService.validateClient(q.client_id, q.redirect_uri))) {
       return reply.badRequest('Unknown client or redirect_uri');
     }
@@ -70,6 +85,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
       code_challenge: q.code_challenge,
       code_challenge_method: 'S256',
       scope: q.scope ?? 'mcp',
+      ...(q.resource ? { resource: q.resource } : {}),
       ...(q.state ? { state: q.state } : {}),
     });
 
@@ -93,6 +109,9 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     try {
       const session = await options.authService.login(request.body.email, request.body.password);
       const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
+      if (q.resource && q.resource !== options.publicUrl + '/mcp') {
+        return reply.badRequest('Unsupported resource');
+      }
       const code = await options.oauthService.createAuthorizationCode(userId, {
         clientId: q.client_id, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, state: q.state, scope: q.scope ?? 'mcp',
       });
@@ -108,10 +127,16 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
   app.post<{ Body: Record<string, string | undefined> }>('/oauth/token', async (request, reply) => {
     const b = request.body;
     if (b.grant_type === 'authorization_code' && b.code && b.client_id && b.redirect_uri && b.code_verifier) {
+      if (b.resource && b.resource !== options.publicUrl + '/mcp') {
+        return reply.code(400).send({ error: 'invalid_target' });
+      }
       try { return reply.send(await options.oauthService.exchangeCode(b.code, b.client_id, b.redirect_uri, b.code_verifier)); }
       catch { return reply.code(400).send({ error: 'invalid_grant' }); }
     }
     if (b.grant_type === 'refresh_token' && b.refresh_token && b.client_id) {
+      if (b.resource && b.resource !== options.publicUrl + '/mcp') {
+        return reply.code(400).send({ error: 'invalid_target' });
+      }
       try { return reply.send(await options.oauthService.refresh(b.refresh_token, b.client_id)); }
       catch { return reply.code(400).send({ error: 'invalid_grant' }); }
     }
