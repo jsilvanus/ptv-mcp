@@ -282,7 +282,7 @@ export class OAuthService {
       throw new Error('invalid_grant');
     }
     if (!row.tenant_id) throw new Error('invalid_grant');
-    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id);
+    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id, row.environment, row.api_version);
     return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, scope: row.scope };
   }
 
