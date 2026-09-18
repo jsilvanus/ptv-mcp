@@ -58,7 +58,12 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
-    const raw = await this.client.get<unknown>('/api/v12/service/search', { page, pageSize });
+    const raw = await this.client.get<unknown>('/api/v12/service/search', {
+      ...(params.query ? { searchText: params.query } : {}),
+      ...(params.organizationId ? { organizationId: params.organizationId } : {}),
+      page,
+      pageSize,
+    });
     return normalizePage<Service>(raw, page, pageSize, (item) => mapV12Service(item as V12ServiceWire));
   }
 
