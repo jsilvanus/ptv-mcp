@@ -138,6 +138,10 @@ export interface PaginatedResult<T> {
 }
 
 export interface SearchParams {
+  /** User's PTV search text. Separate from tenant/environment context. */
+  query?: string;
+  /** Optional PTV organisation filter; this is not the OAuth tenant. */
+  organizationId?: PtvContentId;
   page?: number;
   pageSize?: number;
 }
