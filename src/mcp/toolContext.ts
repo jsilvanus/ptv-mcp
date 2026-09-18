@@ -7,7 +7,8 @@ import type { PtvEnvironment } from '../ptv/adapter.js';
  * PTV organisation may be queried.
  */
 export interface ToolContext {
-  tenantId?: string;
+  tenantId: string;
   environment: PtvEnvironment;
+  apiVersion: string;
   actingUserId: string;
 }
