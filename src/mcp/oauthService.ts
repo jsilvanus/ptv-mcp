@@ -26,6 +26,7 @@ export interface AuthorizationRequest {
   state?: string;
   scope: string;
   tenantId: string;
+  state?: string;
 }
 
 export class OAuthService {
@@ -195,6 +196,7 @@ export class OAuthService {
       redirect_uri: request.redirectUri,
       code_challenge: request.codeChallenge,
       scope: request.scope,
+      ...(request.state ? { state: request.state } : {}),
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
@@ -227,6 +229,7 @@ export class OAuthService {
       redirectUri: payload.redirect_uri,
       codeChallenge: payload.code_challenge,
       scope: payload.scope,
+      ...(typeof payload.state === 'string' ? { state: payload.state } : {}),
     };
   }
 
