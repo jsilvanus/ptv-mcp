@@ -8,10 +8,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/auth': 'http://localhost:3000',
-      '/tenants': 'http://localhost:3000',
-      '/ptv-connections': 'http://localhost:3000',
-      '/health': 'http://localhost:3000',
+      '/auth': 'http://localhost:5999',
+      '/tenants': 'http://localhost:5999',
+      '/ptv-connections': 'http://localhost:5999',
+      '/health': 'http://localhost:5999',
     },
   },
 });
