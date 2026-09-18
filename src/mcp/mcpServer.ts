@@ -102,7 +102,6 @@ const publicReadSearchParamsSchema = {
   pageSize: z.number().int().min(1).max(1000).optional(),
 };
 const publicReadGetByIdSchema = {
-  environment: environmentSchema,
   id: z.string(),
 };
 
@@ -229,7 +228,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Search published PTV organisations. Query searches organisation names.',
       inputSchema: {
-        environment: environmentSchema,
         query: z.string().optional().describe('Optional text search in PTV organisation names. Omit it to browse organisations.'),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(1).max(1000).optional(),
@@ -259,7 +257,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Find a PTV organisation by name/text and return that organisation together with its published services and service channels. This is a compound convenience operation; use the individual search tools when you need independent searches.',
       inputSchema: {
-        environment: environmentSchema,
         query: z.string().min(1).describe('Organisation name or text, for example "Riihimäen seurakunta".'),
       },
     }),
@@ -375,7 +372,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_codes', withOAuthSecurity({
       description: 'List entries in a PTV code list (e.g. "languages", "service-classes").',
       inputSchema: {
-        environment: environmentSchema,
         codeListName: z.string(),
       },
     }),
@@ -401,7 +397,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Diff a proposed change against the current service. Never writes anything. Returns {serviceId, current, proposed, diff, correlationId} — pass correlationId to ptv_validate_changes/ptv_export_for_manual_publish/ptv_apply_changes to keep them in one audit trail.',
       inputSchema: {
-        environment: environmentSchema,
         serviceId: z.string(),
         changes: changesSchema,
         correlationId: z.string().optional(),
@@ -431,7 +426,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_proposals', withOAuthSecurity({
       description: 'List queued service proposals for a tenant. Requires Editor+ role.',
       inputSchema: {
-        environment: environmentSchema,
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
       },
     }),
@@ -451,7 +445,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
       inputSchema: {
-        environment: environmentSchema,
         proposalId: z.string(),
       },
     }),
@@ -478,7 +471,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
       inputSchema: {
-        environment: environmentSchema,
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
       },
@@ -508,7 +500,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Validate an already-merged proposed service (the "proposed" object ptv_propose_changes returned) against PTV write rules.',
       inputSchema: {
-        environment: environmentSchema,
         proposed: z.record(z.string(), z.unknown()),
         correlationId: z.string().optional(),
       },
@@ -535,7 +526,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish.",
       inputSchema: {
-        environment: environmentSchema,
         serviceId: z.string(),
         changes: changesSchema,
         correlationId: z.string().optional(),
@@ -565,7 +555,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection.',
       inputSchema: {
-        environment: environmentSchema,
         serviceId: z.string(),
         changes: changesSchema,
         correlationId: z.string().optional(),
