@@ -176,6 +176,20 @@ describe('DbPtvAdapterRegistry', () => {
     ).rejects.toMatchObject({ reason: 'credential_missing_or_expired' });
   });
 
+  it('resolves public v11 OUT without a tenant or membership', async () => {
+    const registry = buildRegistry();
+    const adapter = await registry.resolve({
+      environment: 'test',
+      operation: 'read',
+      actingUserId: randomUUID(),
+    });
+    expect(adapter.getCapabilities()).toMatchObject({
+      apiVersion: 'v11',
+      environment: 'test',
+      supportsRead: true,
+    });
+  });
+
   it('resolves a real PtvV11Adapter for a read with no connection stored, and it can make a real live call', async () => {
     const { tenantId, userId } = await setUp('reader');
     await configService.upsert(tenantId, 'test', 'v11', {
