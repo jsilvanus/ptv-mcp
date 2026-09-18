@@ -145,6 +145,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
       redirect.searchParams.set('iss', options.publicUrl);
       return reply.redirect(redirect.toString());
     } catch (err) {
+      request.log.error({ err }, 'OAuth authorization failed');
       return reply.type('text/html').send(html('<h1>Sign-in failed</h1><p class="error">Invalid email or password.</p><p><a href="javascript:history.back()">Try again</a></p>'));
     }
   });
