@@ -41,7 +41,7 @@ export class PtvV12Adapter implements PtvAdapter {
   private readonly client: PtvV12Client;
   private readonly capabilities: PtvAdapterCapabilities;
 
-  constructor(options: { environment: PtvEnvironment; apiKey: string }) {
+  constructor(options: { environment: PtvEnvironment; apiKey: string; fetchImpl?: typeof fetch }) {
     this.client = new PtvV12Client(options);
     this.capabilities = {
       apiVersion: 'v12',
