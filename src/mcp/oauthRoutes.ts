@@ -132,7 +132,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
       }
       const session = await options.authService.login(request.body.email, request.body.password);
       const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
-      if (q.resource && q.resource !== options.publicUrl + '/mcp') {
+      if (!isSupportedResource(q.resource, options.publicUrl)) {
         return reply.badRequest('Unsupported resource');
       }
       const code = await options.oauthService.createAuthorizationCode(userId, {
@@ -159,7 +159,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
       catch { return reply.code(400).send({ error: 'invalid_grant' }); }
     }
     if (b.grant_type === 'refresh_token' && b.refresh_token && b.client_id) {
-      if (b.resource && b.resource !== options.publicUrl + '/mcp') {
+      if (!isSupportedResource(b.resource, options.publicUrl)) {
         return reply.code(400).send({ error: 'invalid_target' });
       }
       try { return reply.send(await options.oauthService.refresh(b.refresh_token, b.client_id)); }
