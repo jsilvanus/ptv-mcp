@@ -20,6 +20,7 @@ import { ptvConnectionRoutes } from './routes/ptvConnections.js';
 import { auditLogRoutes } from './routes/auditLog.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { webUiRoutes } from './routes/webUi.js';
+import { ptvV12Routes } from './routes/ptvV12.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 
 export interface BuildAppOptions {
@@ -97,6 +98,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     auditService,
     validator,
   });
+  await app.register(ptvV12Routes, { tenantEnvironmentService, adapterConfigService, db, jwtSecret: config.jwtSecret });
   await app.register(webUiRoutes, { nodeEnv: config.nodeEnv });
 
   return app;
