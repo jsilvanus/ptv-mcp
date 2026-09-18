@@ -126,12 +126,23 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12ServiceChannel(item as V12ServiceChannelWire),
     );
     const query = params.query?.trim();
-    let organizationId = params.organizationId;
-    if (query && !organizationId) organizationId = await this.resolveOrganizationId(query);
     const filtered = all.filter((channel) =>
-      (!organizationId || channel.organizationId === organizationId) &&
-      (!query || organizationId !== undefined || matchesChannel(channel, query)),
+      (!params.organizationId || channel.organizationId === params.organizationId) &&
+      (!query || matchesChannel(channel, query)),
     );
+    return paginate(filtered, page, pageSize);
+  }
+
+  async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const all = await this.fetchAll('/api/v12/organization/search', (item) =>
+      mapV12Organization(item as V12OrganizationWire),
+    );
+    const query = params.query?.trim();
+    const filtered = query
+      ? all.filter((org) => matchesOrganisation(org, query))
+      : all;
     return paginate(filtered, page, pageSize);
   }
 
@@ -188,17 +199,6 @@ export class PtvV12Adapter implements PtvAdapter {
     }
   }
 
-  private async resolveOrganizationId(query: string): Promise<string | undefined> {
-    const normalized = normalizeSearchText(query);
-    const organizations = await this.fetchAll('/api/v12/organization/search', (item) =>
-      mapV12Organization(item as V12OrganizationWire),
-    );
-    return organizations.find((org) =>
-      Object.values(org.names).some((name) => normalizeSearchText(name) === normalized),
-    )?.id ?? organizations.find((org) =>
-      Object.values(org.names).some((name) => normalizeSearchText(name).includes(normalized)),
-    )?.id;
-  }
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
     throw new Error('PTV v12 write operations are not enabled yet');
   }
@@ -230,6 +230,11 @@ function matchesService(service: Service, query: string): boolean {
   const needle = normalizeSearchText(query);
   return [...Object.values(service.names), ...Object.values(service.summaries), ...Object.values(service.descriptions)]
     .some((value) => normalizeSearchText(value).includes(needle));
+}
+
+function matchesOrganisation(org: Organization, query: string): boolean {
+  const needle = normalizeSearchText(query);
+  return Object.values(org.names).some((value) => normalizeSearchText(value).includes(needle));
 }
 
 function matchesChannel(channel: ServiceChannel, query: string): boolean {
