@@ -18,7 +18,7 @@ function html(body: string) {
 
 export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRouteOptions): Promise<void> {
   app.get('/.well-known/oauth-protected-resource', async (_req, reply) => reply.send({
-    resource: options.publicUrl + '/mcp',
+    resource: options.publicUrl,
     authorization_servers: [options.publicUrl],
     scopes_supported: ['mcp'],
     bearer_methods_supported: ['header'],
@@ -82,7 +82,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     if (q.response_type !== 'code' || !q.client_id || !q.redirect_uri || !q.code_challenge) {
       return reply.badRequest('response_type=code, client_id, redirect_uri and code_challenge are required');
     }
-    if (q.resource && q.resource !== options.publicUrl + '/mcp') {
+    if (q.resource && q.resource !== options.publicUrl) {
       return reply.badRequest('Unsupported resource');
     }
     if (!(await options.oauthService.validateClient(q.client_id, q.redirect_uri))) {
@@ -146,7 +146,7 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
   app.post<{ Body: Record<string, string | undefined> }>('/oauth/token', async (request, reply) => {
     const b = request.body;
     if (b.grant_type === 'authorization_code' && b.code && b.client_id && b.redirect_uri && b.code_verifier) {
-      if (b.resource && b.resource !== options.publicUrl + '/mcp') {
+      if (b.resource && b.resource !== options.publicUrl) {
         return reply.code(400).send({ error: 'invalid_target' });
       }
       try { return reply.send(await options.oauthService.exchangeCode(b.code, b.client_id, b.redirect_uri, b.code_verifier)); }
