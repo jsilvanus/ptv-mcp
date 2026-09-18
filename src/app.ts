@@ -55,7 +55,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
   const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
-  const oauthService = new OAuthService(db, config.jwtSecret, config.mcpPublicUrl, config.mcpPublicUrl + '/mcp');
+  const oauthService = new OAuthService(db, config.jwtSecret, config.mcpPublicUrl, config.mcpPublicUrl);
   const auditService = new AuditService(db);
   const tenantService = new TenantService(db, auditService);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
