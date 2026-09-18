@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { OAuthService } from './oauthService.js';
 import type { AuthService } from '../auth/authService.js';
+import type { TenantService } from '../tenants/tenantService.js';
 import { verifyAccessToken } from '../auth/jwt.js';
 
 const LEGACY_RESOURCE_SUFFIX = '/mcp';
@@ -14,6 +15,7 @@ export interface McpOAuthRouteOptions {
   authService: AuthService;
   publicUrl: string;
   jwtSecret: string;
+  tenantService: TenantService;
 }
 
 function html(body: string) {
@@ -118,32 +120,84 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     `));
   });
 
-  app.post<{ Body: { oauth?: string; email?: string; password?: string } }>('/oauth/authorize', async (request, reply) => {
+  app.post<{
+    Body: { oauth?: string; email?: string; password?: string; tenant_id?: string; selection_token?: string }
+  }>('/oauth/authorize', async (request, reply) => {
+    // Step 1: authenticate the human, then ask which tenant this OAuth
+    // connection should represent. The tenant choice belongs to the OAuth
+    // grant, not to the user's identity, so one user can authorize multiple
+    // independent ChatGPT/Claude connections for different tenants.
+    if (request.body.selection_token && request.body.tenant_id) {
+      try {
+        const selection = await options.oauthService.verifyTenantSelectionToken(request.body.selection_token);
+        const memberships = await options.tenantService.listTenantsForUser(selection.userId);
+        const membership = memberships.find((item) => item.tenantId === request.body.tenant_id);
+        if (!membership) return reply.badRequest('You are not a member of that organisation');
+
+        const code = await options.oauthService.createAuthorizationCode(selection.userId, {
+          clientId: selection.clientId,
+          redirectUri: selection.redirectUri,
+          codeChallenge: selection.codeChallenge,
+          scope: selection.scope,
+          tenantId: membership.tenantId,
+        });
+        const redirect = new URL(selection.redirectUri);
+        redirect.searchParams.set('code', code);
+        const original = await options.oauthService.verifyTenantSelectionToken(request.body.selection_token);
+        // state is intentionally carried inside the selection token in the
+        // next iteration of this flow; keep it in the OAuth request itself.
+        // For compatibility, state is recovered from the signed token below.
+        if (original.state) redirect.searchParams.set('state', original.state);
+        redirect.searchParams.set('iss', options.publicUrl);
+        return reply.redirect(redirect.toString());
+      } catch (err) {
+        request.log.error({ err }, 'OAuth tenant selection failed');
+        return reply.type('text/html').send(html('<h1>Authorization failed</h1><p class="error">The tenant selection is no longer valid. Please restart the connection.</p>'));
+      }
+    }
+
     if (!request.body.oauth || !request.body.email || !request.body.password) return reply.badRequest('Login required');
     let q: Record<string, string>;
     try { q = Object.fromEntries(new URLSearchParams(Buffer.from(request.body.oauth, 'base64url').toString('utf8'))); }
     catch { return reply.badRequest('Invalid authorization request'); }
+
     try {
       const clientId = q.client_id;
       const redirectUri = q.redirect_uri;
       const codeChallenge = q.code_challenge;
-      if (!clientId || !redirectUri || !codeChallenge) {
-        return reply.badRequest('Invalid authorization request');
-      }
+      if (!clientId || !redirectUri || !codeChallenge) return reply.badRequest('Invalid authorization request');
+      if (!isSupportedResource(q.resource, options.publicUrl)) return reply.badRequest('Unsupported resource');
+
       const session = await options.authService.login(request.body.email, request.body.password);
       const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
-      if (!isSupportedResource(q.resource, options.publicUrl)) {
-        return reply.badRequest('Unsupported resource');
+      const memberships = await options.tenantService.listTenantsForUser(userId);
+      if (memberships.length === 0) {
+        return reply.type('text/html').send(html('<h1>No organisation access</h1><p class="error">Your account is not a member of any PTV organisation.</p>'));
       }
-      const code = await options.oauthService.createAuthorizationCode(userId, {
-        clientId, redirectUri, codeChallenge, ...(q.state ? { state: q.state } : {}), scope: q.scope ?? 'mcp',
+
+      const selectionToken = await options.oauthService.createTenantSelectionToken(userId, {
+        clientId,
+        redirectUri,
+        codeChallenge,
+        ...(q.state ? { state: q.state } : {}),
+        scope: q.scope ?? 'mcp',
+        tenantId: memberships[0].tenantId,
       });
-      const redirect = new URL(redirectUri);
-      redirect.searchParams.set('code', code);
-      if (q.state) redirect.searchParams.set('state', q.state);
-      // RFC 9207 issuer identification: lets ChatGPT use its stable OAuth callback.
-      redirect.searchParams.set('iss', options.publicUrl);
-      return reply.redirect(redirect.toString());
+
+      const optionsHtml = memberships.map((membership) =>
+        `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
+      ).join('');
+
+      return reply.type('text/html').send(html(`
+        <h1>Choose organisation</h1>
+        <p>This MCP connection will act on behalf of the organisation you select. You can create separate connections for your other organisations.</p>
+        <form method="post" action="/oauth/authorize">
+          <input type="hidden" name="selection_token" value="${selectionToken}">
+          <label>Organisation</label>
+          <select name="tenant_id" required>${optionsHtml}</select>
+          <button type="submit">Continue</button>
+        </form>
+      `));
     } catch (err) {
       request.log.error({ err }, 'OAuth authorization failed');
       return reply.type('text/html').send(html('<h1>Sign-in failed</h1><p class="error">Invalid email or password.</p><p><a href="javascript:history.back()">Try again</a></p>'));
