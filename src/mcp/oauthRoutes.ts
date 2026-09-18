@@ -144,8 +144,8 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
           codeChallenge: selection.codeChallenge,
           scope: selection.scope,
           tenantId: membership.tenantId,
-          environment: selection.environment!,
-          apiVersion: selection.apiVersion!,
+          environment,
+          apiVersion,
         });
         const redirect = new URL(selection.redirectUri);
         redirect.searchParams.set('code', code);
