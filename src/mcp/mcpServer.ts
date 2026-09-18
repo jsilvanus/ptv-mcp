@@ -98,7 +98,7 @@ function actingUserId(extra: Extra): string {
 const environmentSchema = z.enum(['test', 'production']);
 const publicReadSearchParamsSchema = {
   environment: environmentSchema,
-  query: z.string().min(1).describe('PTV search text; this is independent of the OAuth tenant.'),
+  query: z.string().optional().describe('Optional PTV text search. Omit it to browse using the other filters.'),
   organizationId: z.string().uuid().optional().describe('Optional PTV organisation filter. This is not the OAuth tenant.'),
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(1000).optional(),
@@ -231,7 +231,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         'Search published PTV organisations. Query searches organisation names.',
       inputSchema: {
         environment: environmentSchema,
-        query: z.string().min(1).describe('Text to search in PTV organisation names.'),
+        query: z.string().optional().describe('Optional text search in PTV organisation names. Omit it to browse organisations.'),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(1).max(1000).optional(),
       },
