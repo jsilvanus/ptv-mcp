@@ -25,6 +25,7 @@ export interface AuthorizationRequest {
   codeChallenge: string;
   state?: string;
   scope: string;
+  tenantId: string;
 }
 
 export class OAuthService {
@@ -194,10 +195,10 @@ export class OAuthService {
     const code = generateOpaqueToken();
     await this.db.execute(sql`
       INSERT INTO oauth_authorization_codes
-        (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, expires_at)
+        (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, tenant_id, expires_at)
       VALUES
         (${hashToken(code)}, ${request.clientId}, ${request.redirectUri}, ${request.codeChallenge},
-         ${userId}, ${request.scope}, now() + interval '60 seconds')
+         ${userId}, ${request.scope}, ${request.tenantId}, now() + interval '60 seconds')
     `);
     return code;
   }
@@ -205,7 +206,7 @@ export class OAuthService {
   async exchangeCode(code: string, clientId: string, redirectUri: string, codeVerifier: string) {
     const rows = await this.db.execute<{
       id: string; client_id: string; redirect_uri: string; code_challenge: string;
-      user_id: string; scope: string; expires_at: Date; consumed_at: Date | null;
+      user_id: string; scope: string; tenant_id: string | null; expires_at: Date; consumed_at: Date | null;
     }>(sql`SELECT * FROM oauth_authorization_codes WHERE code_hash = ${hashToken(code)}`);
     const row = rows[0];
     if (!row || row.consumed_at || new Date(row.expires_at) < new Date() ||
@@ -214,24 +215,26 @@ export class OAuthService {
       throw new Error('invalid_grant');
     }
     await this.db.execute(sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`);
-    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope);
+    if (!row.tenant_id) throw new Error('invalid_grant');
+    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id);
     const refreshToken = generateOpaqueToken();
     await this.db.execute(sql`
-      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, expires_at)
-      VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, now() + interval '30 days')
+      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, expires_at)
+      VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, now() + interval '30 days')
     `);
     return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, refresh_token: refreshToken, scope: row.scope };
   }
 
   async refresh(refreshToken: string, clientId: string) {
-    const rows = await this.db.execute<{ id: string; client_id: string; user_id: string; scope: string; expires_at: Date; revoked_at: Date | null }>(
+    const rows = await this.db.execute<{ id: string; client_id: string; user_id: string; scope: string; tenant_id: string | null; expires_at: Date; revoked_at: Date | null }>(
       sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`,
     );
     const row = rows[0];
     if (!row || row.revoked_at || new Date(row.expires_at) < new Date() || row.client_id !== clientId) {
       throw new Error('invalid_grant');
     }
-    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope);
+    if (!row.tenant_id) throw new Error('invalid_grant');
+    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id);
     return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, scope: row.scope };
   }
 
@@ -243,15 +246,15 @@ export class OAuthService {
         audience: this.resource,
       });
       if (typeof payload.sub !== 'string') throw new Error('missing sub');
-      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '' };
+      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined };
     } catch (err) {
       if (err instanceof errors.JOSEError || err instanceof Error) throw new Error('invalid_token');
       throw err;
     }
   }
 
-  async issueAccessToken(userId: string, clientId: string, scope: string): Promise<string> {
-    return new SignJWT({ client_id: clientId, scope })
+  async issueAccessToken(userId: string, clientId: string, scope: string, tenantId: string): Promise<string> {
+    return new SignJWT({ client_id: clientId, scope, tenant_id: tenantId })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
       .setIssuer(this.issuer)
