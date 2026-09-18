@@ -62,7 +62,7 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
       }
     }
 
-    const server = createMcpServer(options.serverDeps);
+    const server = createMcpServer({ ...options.serverDeps, publicUrl: options.publicUrl });
     // Omitting `sessionIdGenerator` (rather than setting it to `undefined`,
     // which `exactOptionalPropertyTypes` rejects here) already means
     // stateless mode per the SDK's own docs — no session tracking, matching
