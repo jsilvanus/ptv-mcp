@@ -7,6 +7,42 @@ import type {
 } from '../domain.js';
 import { PtvV12Client } from './client.js';
 
+interface V12ServiceChannelWire {
+  contentId?: string;
+  id?: string;
+  sourceId?: string;
+  organizationId?: string;
+  organization?: { contentId?: string; id?: string; organizationId?: string };
+  serviceChannelType?: string;
+  channelType?: string;
+  type?: string;
+  publishingStatus?: string;
+  name?: unknown;
+  names?: unknown;
+  languageVersions?: Record<string, unknown>;
+  description?: unknown;
+  descriptions?: unknown;
+  languages?: string[];
+  modifiedAt?: string;
+  modified?: string;
+  lastModified?: string;
+}
+
+interface V12OrganizationWire {
+  contentId?: string;
+  id?: string;
+  sourceId?: string;
+  parentOrganizationId?: string;
+  parentOrganization?: { contentId?: string; id?: string };
+  businessCode?: string;
+  publishingStatus?: string;
+  name?: unknown;
+  names?: unknown;
+  languageVersions?: Record<string, unknown>;
+  modifiedAt?: string;
+  modified?: string;
+  lastModified?: string;
+}
 interface V12ServiceWire {
   contentId?: string;
   id?: string;
@@ -58,13 +94,19 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
-    const raw = await this.client.get<unknown>('/api/v12/service/search', {
-      ...(params.query ? { searchText: params.query } : {}),
-      ...(params.organizationId ? { organizationId: params.organizationId } : {}),
-      page,
-      pageSize,
-    });
-    return normalizePage<Service>(raw, page, pageSize, (item) => mapV12Service(item as V12ServiceWire));
+    const all = await this.fetchAll('/api/v12/service/search', (item) =>
+      mapV12Service(item as V12ServiceWire),
+    );
+
+    const query = params.query?.trim();
+    let organizationId = params.organizationId;
+    if (query && !organizationId) organizationId = await this.resolveOrganizationId(query);
+
+    const filtered = all.filter((service) =>
+      (!organizationId || service.organizationId === organizationId) &&
+      (!query || organizationId !== undefined || matchesService(service, query)),
+    );
+    return paginate(filtered, page, pageSize);
   }
 
   async getService(id: PtvContentId): Promise<Service | null> {
@@ -77,19 +119,178 @@ export class PtvV12Adapter implements PtvAdapter {
     }
   }
 
-  async searchChannels(_params: SearchParams): Promise<PaginatedResult<ServiceChannel>> { return unsupported('service-channel search'); }
-  async getChannel(_id: PtvContentId): Promise<ServiceChannel | null> { return unsupported('service-channel get'); }
-  async getOrganisation(_id: PtvContentId): Promise<Organization | null> { return unsupported('organization get'); }
-  async getOrganisationHierarchy(_id: PtvContentId): Promise<Organization[]> { return unsupported('organization hierarchy'); }
+  async searchChannels(params: SearchParams): Promise<PaginatedResult<ServiceChannel>> {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const all = await this.fetchAll('/api/v12/service-channel/search', (item) =>
+      mapV12ServiceChannel(item as V12ServiceChannelWire),
+    );
+    const query = params.query?.trim();
+    let organizationId = params.organizationId;
+    if (query && !organizationId) organizationId = await this.resolveOrganizationId(query);
+    const filtered = all.filter((channel) =>
+      (!organizationId || channel.organizationId === organizationId) &&
+      (!query || organizationId !== undefined || matchesChannel(channel, query)),
+    );
+    return paginate(filtered, page, pageSize);
+  }
+
+  async getChannel(id: PtvContentId): Promise<ServiceChannel | null> {
+    try {
+      const raw = await this.client.get<V12ServiceChannelWire>(`/api/v12/service-channel/${id}`);
+      return mapV12ServiceChannel(raw);
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+  }
+
+  async getOrganisation(id: PtvContentId): Promise<Organization | null> {
+    try {
+      const raw = await this.client.get<V12OrganizationWire>(`/api/v12/organization/${id}`);
+      return mapV12Organization(raw);
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+  }
+
+  async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
+    const root = await this.getOrganisation(id);
+    if (!root) return [];
+    const hierarchy: Organization[] = [root];
+    let current = root;
+    while (current.parentOrganizationId) {
+      const parent = await this.getOrganisation(current.parentOrganizationId);
+      if (!parent) break;
+      hierarchy.push(parent);
+      current = parent;
+    }
+    return hierarchy;
+  }
   async searchServiceCollections(_params: SearchParams): Promise<PaginatedResult<ServiceCollection>> { return unsupported('service-collection search'); }
   async searchGeneralDescriptions(_params: SearchParams): Promise<PaginatedResult<GeneralDescription>> { return unsupported('general-description search'); }
-  async getConnectionsFor(_entityId: PtvContentId): Promise<Connection[]> { return unsupported('connection get'); }
+  async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
+    const raw = await this.client.get<unknown>('/api/v12/connection/search');
+    return extractItems(raw)
+      .map(mapV12Connection)
+      .filter((connection) => connection.serviceId === entityId || connection.channelId === entityId);
+  }
   async listCodes(_codeListName: string): Promise<CodeListEntry[]> { return unsupported('code lists'); }
+  private async fetchAll<T>(path: string, map: (item: unknown) => T, pageSize = 100): Promise<T[]> {
+    const result: T[] = [];
+    for (let page = 1; ; page++) {
+      const raw = await this.client.get<unknown>(path, { page, pageSize });
+      const items = extractItems(raw);
+      result.push(...items.map(map));
+      const total = extractTotalCount(raw, result.length);
+      if (items.length === 0 || result.length >= total) return result;
+    }
+  }
+
+  private async resolveOrganizationId(query: string): Promise<string | undefined> {
+    const normalized = normalizeSearchText(query);
+    const organizations = await this.fetchAll('/api/v12/organization/search', (item) =>
+      mapV12Organization(item as V12OrganizationWire),
+    );
+    return organizations.find((org) =>
+      Object.values(org.names).some((name) => normalizeSearchText(name) === normalized),
+    )?.id ?? organizations.find((org) =>
+      Object.values(org.names).some((name) => normalizeSearchText(name).includes(normalized)),
+    )?.id;
+  }
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
     throw new Error('PTV v12 write operations are not enabled yet');
   }
 }
 
+function extractItems(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== 'object') return [];
+  const object = raw as { items?: unknown[]; content?: unknown[]; data?: unknown[]; results?: unknown[] };
+  return object.items ?? object.content ?? object.data ?? object.results ?? [];
+}
+
+function extractTotalCount(raw: unknown, fallback: number): number {
+  if (!raw || typeof raw !== 'object') return fallback;
+  const object = raw as { totalCount?: number; totalElements?: number; total?: number };
+  return object.totalCount ?? object.totalElements ?? object.total ?? fallback;
+}
+
+function paginate<T>(items: T[], page: number, pageSize: number): PaginatedResult<T> {
+  const start = (page - 1) * pageSize;
+  return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase('fi-FI');
+}
+
+function matchesService(service: Service, query: string): boolean {
+  const needle = normalizeSearchText(query);
+  return [...Object.values(service.names), ...Object.values(service.summaries), ...Object.values(service.descriptions)]
+    .some((value) => normalizeSearchText(value).includes(needle));
+}
+
+function matchesChannel(channel: ServiceChannel, query: string): boolean {
+  const needle = normalizeSearchText(query);
+  return [...Object.values(channel.names), ...Object.values(channel.descriptions)]
+    .some((value) => normalizeSearchText(value).includes(needle));
+}
+
+function isNotFound(err: unknown): boolean {
+  return err instanceof Error && 'status' in err && (err as { status?: number }).status === 404;
+}
+
+function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
+  const id = wire.contentId ?? wire.id;
+  if (!id) throw new Error('PTV v12 service channel response has no contentId');
+  return {
+    id,
+    ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
+    organizationId: wire.organizationId ?? wire.organization?.contentId ?? wire.organization?.id ?? wire.organization?.organizationId ?? '',
+    channelType: normalizeChannelType(wire.serviceChannelType ?? wire.channelType ?? wire.type),
+    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
+    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
+    descriptions: localized(wire.descriptions ?? wire.description ?? wire.languageVersions, 'description'),
+    languages: wire.languages ?? (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
+    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
+  };
+}
+
+function mapV12Organization(wire: V12OrganizationWire): Organization {
+  const id = wire.contentId ?? wire.id;
+  if (!id) throw new Error('PTV v12 organization response has no contentId');
+  const parentOrganizationId = wire.parentOrganizationId ?? wire.parentOrganization?.contentId ?? wire.parentOrganization?.id;
+  return {
+    id,
+    ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
+    ...(parentOrganizationId ? { parentOrganizationId } : {}),
+    ...(wire.businessCode ? { businessCode: wire.businessCode } : {}),
+    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
+    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
+    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
+  };
+}
+
+function mapV12Connection(wire: unknown): Connection {
+  const value = (wire && typeof wire === 'object' ? wire : {}) as Record<string, any>;
+  const service = value.service as Record<string, any> | undefined;
+  const channel = value.channel as Record<string, any> | undefined;
+  const serviceId = value.serviceContentId ?? value.serviceId ?? service?.contentId ?? service?.id ?? '';
+  const channelId = value.channelContentId ?? value.channelId ?? value.serviceChannelId ?? channel?.contentId ?? channel?.id ?? '';
+  if (!serviceId || !channelId) throw new Error('PTV v12 connection response has no service/channel id');
+  return {
+    serviceId: String(serviceId),
+    channelId: String(channelId),
+    modifiedAt: typeof value.modifiedAt === 'string' ? value.modifiedAt : new Date(0).toISOString(),
+  };
+}
+
+function normalizeChannelType(value: string | undefined): ServiceChannel['channelType'] {
+  if (value === 'Phone' || value === 'PrintableForm' || value === 'ServiceLocation' || value === 'WebPage') return value;
+  return 'EChannel';
+}
 function normalizePage<T>(
   raw: unknown,
   page: number,
