@@ -139,6 +139,38 @@ export class PtvV11Adapter implements PtvAdapter {
     return wire ? serviceChannelWireToDomain(wire) : null;
   }
 
+  async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const start = (page - 1) * pageSize;
+    const { ids, totalCountEstimate } = await fetchIdWindow(
+      this.client,
+      '/api/v11/Organization',
+      start,
+      pageSize,
+    );
+    const wires =
+      ids.length > 0
+        ? await this.client.get<V11OrganizationWire[]>('/api/v11/Organization/list', {
+            guids: ids.join(','),
+          })
+        : [];
+    const query = params.query?.trim().toLocaleLowerCase('fi-FI');
+    const items = wires
+      .map(organizationWireToDomain)
+      .filter((org) =>
+        !query || Object.values(org.names).some((name) =>
+          name.toLocaleLowerCase('fi-FI').includes(query),
+        ),
+      );
+    return {
+      items,
+      page,
+      pageSize,
+      totalCount: totalCountEstimate,
+    };
+  }
+
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
     const wire = await this.getOrNull<V11OrganizationWire>(`/api/v11/Organization/${id}`);
     return wire ? organizationWireToDomain(wire) : null;
