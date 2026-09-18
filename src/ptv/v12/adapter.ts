@@ -12,11 +12,13 @@ interface V12ServiceWire {
   id?: string;
   sourceId?: string;
   organizationId?: string;
-  organization?: { contentId?: string };
+  organization?: { contentId?: string; id?: string; organizationId?: string };
   serviceType?: string;
+  type?: string;
   publishingStatus?: string;
   name?: unknown;
   names?: unknown;
+  languageVersions?: Record<string, unknown>;
   description?: unknown;
   descriptions?: unknown;
   summary?: unknown;
@@ -28,9 +30,10 @@ interface V12ServiceWire {
   industrialClasses?: unknown[];
   languages?: string[];
   generalDescriptionId?: string;
-  serviceChannelIds?: string[];
-  serviceChannels?: Array<{ contentId?: string; id?: string }>;
+  serviceChannelIds?: Array<string | { contentId?: string; id?: string }>;
+  serviceChannels?: Array<string | { contentId?: string; id?: string }>;
   modifiedAt?: string;
+  modified?: string;
   lastModified?: string;
 }
 
@@ -56,13 +59,13 @@ export class PtvV12Adapter implements PtvAdapter {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
     const raw = await this.client.get<unknown>('/api/v12/service/search', { page, pageSize });
-    return normalizePage<Service>(raw, page, pageSize, (item) => mapService(item as V12ServiceWire));
+    return normalizePage<Service>(raw, page, pageSize, (item) => mapV12Service(item as V12ServiceWire));
   }
 
   async getService(id: PtvContentId): Promise<Service | null> {
     try {
       const raw = await this.client.get<V12ServiceWire>(`/api/v12/service/${id}`);
-      return mapService(raw);
+      return mapV12Service(raw);
     } catch (err) {
       if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404) return null;
       throw err;
@@ -99,59 +102,112 @@ function normalizePage<T>(
   };
 }
 
-function mapService(wire: V12ServiceWire): Service {
+/**
+ * Map the v12 wire representation into the stable PTV domain model.
+ *
+ * v12 deliberately changed localized content from v11's array of
+ * {language,value} records to languageVersions, e.g.
+ * { fi: { name, summary, description }, sv: { ... } }.
+ * The old mapper treated those nested objects as non-string values and
+ * consequently discarded every localized field.
+ */
+export function mapV12Service(wire: V12ServiceWire): Service {
   const id = wire.contentId ?? wire.id;
   if (!id) throw new Error('PTV v12 service response has no contentId');
+
+  const languageVersions = wire.languageVersions;
+  const names = localized(wire.names ?? wire.name ?? languageVersions, 'name');
+  const summaries = localized(wire.summaries ?? wire.summary ?? languageVersions, 'summary');
+  const descriptions = localized(wire.descriptions ?? wire.description ?? languageVersions, 'description');
+  const languages = wire.languages ?? (languageVersions ? Object.keys(languageVersions) : []);
+
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId: wire.organizationId ?? wire.organization?.contentId ?? '',
-    serviceType: normalizeServiceType(wire.serviceType),
+    organizationId:
+      wire.organizationId ??
+      wire.organization?.contentId ??
+      wire.organization?.id ??
+      wire.organization?.organizationId ??
+      '',
+    serviceType: normalizeServiceType(wire.serviceType ?? wire.type),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names: localized(wire.names ?? wire.name),
-    summaries: localized(wire.summaries ?? wire.summary),
-    descriptions: localized(wire.descriptions ?? wire.description),
+    names,
+    summaries,
+    descriptions,
     serviceClasses: codeEntries(wire.serviceClasses),
     ontologyTerms: codeEntries(wire.ontologyTerms),
     targetGroups: codeEntries(wire.targetGroups),
     lifeEvents: codeEntries(wire.lifeEvents),
     industrialClasses: codeEntries(wire.industrialClasses),
-    languages: wire.languages ?? [],
+    languages,
     ...(wire.generalDescriptionId ? { generalDescriptionId: wire.generalDescriptionId } : {}),
-    serviceChannelIds: wire.serviceChannelIds ??
-      (wire.serviceChannels ?? []).map((c) => c.contentId ?? c.id).filter((x): x is string => !!x),
-    modifiedAt: wire.modifiedAt ?? wire.lastModified ?? new Date(0).toISOString(),
+    serviceChannelIds: ids(wire.serviceChannelIds ?? wire.serviceChannels),
+    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
   };
 }
 
-function localized(value: unknown): Record<string, string> {
+function localized(value: unknown, preferredField?: string): Record<string, string> {
   if (!value) return {};
-  if (typeof value === 'string') return { fi: value };
+
   if (Array.isArray(value)) {
     return Object.fromEntries(value.flatMap((entry) => {
       if (!entry || typeof entry !== 'object') return [];
       const e = entry as Record<string, unknown>;
       const language = String(e.languageCode ?? e.language ?? e.lang ?? '');
-      const text = e.value ?? e.text ?? e.description;
+      const text = preferredField ? e[preferredField] : e.value ?? e.text ?? e.description;
       return language && typeof text === 'string' ? [[language, text]] : [];
     }));
   }
+
   if (typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).filter(([, v]) => typeof v === 'string')) as Record<string, string>;
+    const object = value as Record<string, unknown>;
+
+    if (preferredField && typeof object[preferredField] === 'string') {
+      return { fi: object[preferredField] as string };
+    }
+
+    if (preferredField && 'languageVersions' in object) {
+      return localized(object.languageVersions, preferredField);
+    }
+
+    const entries = Object.entries(object).flatMap(([language, entry]) => {
+      if (typeof entry === 'string') return [[language, entry] as [string, string]];
+      if (!entry || typeof entry !== 'object') return [];
+      const e = entry as Record<string, unknown>;
+      const text = preferredField ? e[preferredField] : e.value ?? e.text ?? e.description;
+      return typeof text === 'string' ? [[language, text] as [string, string]] : [];
+    });
+    return Object.fromEntries(entries);
   }
+
+  if (typeof value === 'string') return { fi: value };
   return {};
 }
 
 function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
   if (!values) return [];
+
   return values.map((value) => {
+    if (typeof value === 'string') return { code: value, names: {} };
     if (!value || typeof value !== 'object') return { names: {} };
+
     const v = value as Record<string, unknown>;
     return {
       ...(typeof v.code === 'string' ? { code: v.code } : {}),
+      ...(typeof v.contentId === 'string' ? { code: v.contentId } : {}),
+      ...(typeof v.id === 'string' ? { code: v.id } : {}),
       ...(typeof v.uri === 'string' ? { uri: v.uri } : {}),
-      names: localized(v.names ?? v.name),
+      names: localized(v.names ?? v.name ?? v.languageVersions, 'name'),
     };
+  });
+}
+
+function ids(values: Array<string | { contentId?: string; id?: string }> | undefined): string[] {
+  return (values ?? []).flatMap((value) => {
+    if (typeof value === 'string') return [value];
+    const id = value.contentId ?? value.id;
+    return id ? [id] : [];
   });
 }
 
