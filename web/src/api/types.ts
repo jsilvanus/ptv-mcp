@@ -26,6 +26,15 @@ export interface ConnectionStatus {
   revokedAt: string | null;
 }
 
+export interface PtvV12ConnectionStatus {
+  environment: PtvEnvironment;
+  apiVersion: 'v12';
+  authMode: 'api_key';
+  credentialScope: 'tenant';
+  supportsRead: boolean;
+  supportsWrite: boolean;
+}
+
 export interface AuditEntry {
   id: string;
   correlationId: string;
