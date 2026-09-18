@@ -292,15 +292,15 @@ export class OAuthService {
         audience: this.resource,
       });
       if (typeof payload.sub !== 'string') throw new Error('missing sub');
-      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined };
+      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined, environment: payload.environment === 'test' || payload.environment === 'production' ? payload.environment : undefined, apiVersion: typeof payload.api_version === 'string' ? payload.api_version : undefined };
     } catch (err) {
       if (err instanceof errors.JOSEError || err instanceof Error) throw new Error('invalid_token');
       throw err;
     }
   }
 
-  async issueAccessToken(userId: string, clientId: string, scope: string, tenantId: string): Promise<string> {
-    return new SignJWT({ client_id: clientId, scope, tenant_id: tenantId })
+  async issueAccessToken(userId: string, clientId: string, scope: string, tenantId: string, environment: 'test' | 'production', apiVersion: string): Promise<string> {
+    return new SignJWT({ client_id: clientId, scope, tenant_id: tenantId, environment, api_version: apiVersion })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
       .setIssuer(this.issuer)
