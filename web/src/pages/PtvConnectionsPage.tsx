@@ -52,7 +52,7 @@ export function PtvConnectionsPage() {
 
   useEffect(() => {
     void loadConnections();
-  }, []);
+  }, [currentTenant?.tenantId]);
 
   async function handleConnect(environment: PtvEnvironment): Promise<void> {
     setError(null);
