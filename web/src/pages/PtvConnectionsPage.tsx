@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '../api/client';
-import type { ConnectionStatus, PtvEnvironment } from '../api/types';
+import type { ConnectionStatus, PtvEnvironment, PtvV12ConnectionStatus } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 
 export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
@@ -9,6 +9,7 @@ const ENVIRONMENTS: PtvEnvironment[] = ['test', 'production'];
 
 export function PtvConnectionsPage() {
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);
+  const [v12Connections, setV12Connections] = useState<PtvV12ConnectionStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connectingEnv, setConnectingEnv] = useState<PtvEnvironment | null>(null);
@@ -25,6 +26,23 @@ export function PtvConnectionsPage() {
     try {
       const result = await apiFetch<ConnectionStatus[]>('/ptv-connections');
       setConnections(result);
+      if (currentTenant) {
+        try {
+          const v12 = await apiFetch<PtvV12ConnectionStatus[]>(
+            `/tenants/${currentTenant.tenantId}/ptv/v12`,
+          );
+          setV12Connections(v12);
+        } catch (err) {
+          // v12 configuration is tenant-admin only; don't let it hide
+          // the user's v11 connections when the current tenant is not admin.
+          if (err instanceof ApiError && err.status !== 403) {
+            throw err;
+          }
+          setV12Connections([]);
+        }
+      } else {
+        setV12Connections([]);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load PTV connections.');
     } finally {
@@ -81,6 +99,10 @@ export function PtvConnectionsPage() {
         `/tenants/${currentTenant.tenantId}/ptv/v12/${v12Environment}/test`,
         { method: 'POST' },
       );
+      const v12 = await apiFetch<PtvV12ConnectionStatus[]>(
+        `/tenants/${currentTenant.tenantId}/ptv/v12`,
+      );
+      setV12Connections(v12);
       setV12ApiKey('');
       setV12Status(`Connected to PTV v12 (${v12Environment}).`);
     } catch (err) {
@@ -142,7 +164,18 @@ export function PtvConnectionsPage() {
                 </td>
               </tr>
             ))}
-            {connections.length === 0 && (
+            {v12Connections.map((c) => (
+              <tr key={`v12-${c.environment}`}>
+                <td>{c.apiVersion}</td>
+                <td>{c.environment}</td>
+                <td>Configured</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>Read access</td>
+              </tr>
+            ))}
+            {connections.length === 0 && v12Connections.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
                   No PTV connections yet — connect one below.
