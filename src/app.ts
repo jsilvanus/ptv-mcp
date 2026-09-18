@@ -97,7 +97,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       redirectUri: config.ptvV11OAuthRedirectUri,
     },
   });
-  await app.register(mcpOAuthRoutes, { oauthService, authService, publicUrl: config.mcpPublicUrl, jwtSecret: config.jwtSecret });
+  await app.register(mcpOAuthRoutes, { oauthService, authService, tenantService, publicUrl: config.mcpPublicUrl, jwtSecret: config.jwtSecret });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
     oauthService,
