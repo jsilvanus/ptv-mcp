@@ -134,7 +134,7 @@ export class OAuthService {
     }
   }
 
-  private async signAccessToken(userId: string, clientId: string, scope: string) {
+  async issueAccessToken(userId: string, clientId: string, scope: string): Promise<string> {
     return new SignJWT({ client_id: clientId, scope })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
