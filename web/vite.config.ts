@@ -10,6 +10,7 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    allowedHosts: ['ptv.mcp.italeino.fi'],
     proxy: {
       '/auth': 'http://localhost:5999',
       '/tenants': 'http://localhost:5999',
