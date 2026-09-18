@@ -14,13 +14,13 @@ import type {
 import type { ToolContext } from './toolContext.js';
 
 /**
- * Phase 4 Stream A — search tools. Every one of these is a thin pass-through
- * to a registry-resolved `PtvAdapter`'s own read methods (the Phase 1
- * `PtvAdapter` interface already has a 1:1 method for each tool the phase
- * plan lists), because the actual work — picking the right adapter,
- * checking role authorization, resolving credentials — belongs to
- * `PtvAdapterRegistry`, not duplicated here. Reads never require a
- * write-capable role: `operation: 'read'` only needs Reader.
+ * Search/read tools are thin pass-throughs to a registry-resolved
+ * PtvAdapter. A supplied tenantId selects the tenant's configured PTV
+ * integration; it does not scope the public PTV data being returned.
+ *
+ * When tenantId is omitted, the registry uses v11's credential-free OUT
+ * adapter. This is intentionally a public-data path, while the MCP itself
+ * still requires an authenticated user.
  */
 async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ToolContext) {
   return registry.resolve({
@@ -103,7 +103,7 @@ export async function searchGeneralDescriptions(
   return adapter.searchGeneralDescriptions(params);
 }
 
-/** "ptv_search_connections" in the phase plan — `PtvAdapter` exposes this as `getConnectionsFor` (Phase 1 naming). */
+/** "ptv_search_connections" in the phase plan — PtvAdapter exposes this as getConnectionsFor. */
 export async function searchConnections(
   registry: PtvAdapterRegistry,
   ctx: ToolContext,
