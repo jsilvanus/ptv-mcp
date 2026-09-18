@@ -32,6 +32,7 @@ export interface McpServerDeps {
   auditService: AuditService;
   validator: ChangeValidator;
   proposalService: ProposalService;
+  publicUrl?: string;
 }
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -40,7 +41,19 @@ function textResult(value: unknown): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
 }
 
-function errorResult(message: string): CallToolResult {
+function errorResult(message: string, publicUrl?: string): CallToolResult {
+  const requiresAuthentication = message === 'No authenticated user for this MCP session';
+  if (requiresAuthentication && publicUrl) {
+    return {
+      content: [{ type: 'text', text: 'Authentication required: no access token provided.' }],
+      _meta: {
+        'mcp/www_authenticate': [
+          `Bearer resource_metadata="${publicUrl}/.well-known/oauth-protected-resource", error="insufficient_scope", error_description="You need to login to continue"`,
+        ],
+      },
+      isError: true,
+    };
+  }
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
@@ -142,7 +155,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.searchServices(registry, toolContext(args, extra), searchParams(args)),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -155,7 +168,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.getService(registry, toolContext(args, extra), args.id),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -171,7 +184,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.searchChannels(registry, toolContext(args, extra), searchParams(args)),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -184,7 +197,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.getChannel(registry, toolContext(args, extra), args.id),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -197,7 +210,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.getOrganisation(registry, toolContext(args, extra), args.id),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -213,7 +226,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.getOrganisationHierarchy(registry, toolContext(args, extra), args.id),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -233,7 +246,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -253,7 +266,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -269,7 +282,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.searchConnections(registry, toolContext(args, extra), args.id),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -289,7 +302,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await searchTools.listCodes(registry, toolContext(args, extra), args.codeListName),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -327,7 +340,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -347,7 +360,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           await listProposals(resolveRole, proposalService, toolContext(args, extra), args.status),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -375,7 +388,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -406,7 +419,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -434,7 +447,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -465,7 +478,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
@@ -497,7 +510,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ),
         );
       } catch (err) {
-        return errorResult(describeError(err));
+        return errorResult(describeError(err), deps.publicUrl);
       }
     },
   );
