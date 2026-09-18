@@ -23,9 +23,11 @@ function methodNotAllowed(): {
 }
 
 /**
- * Mounts the MCP tool surface at `POST /mcp`, JWT-authenticated the same
- * way as every other route (Bearer token, verified with `verifyAccessToken`)
- * — tenant/environment for each call is a tool argument instead (see
+ * Mounts the MCP tool surface at `POST /mcp`. Bearer tokens are verified
+ * when present, but authentication is intentionally enforced by the tool
+ * layer so unauthenticated tool calls can return the MCP OAuth challenge
+ * required by ChatGPT — tenant/environment for each call is a tool argument
+ * instead (see
  * toolContext.ts), since this transport is deliberately stateless: a
  * fresh `McpServer` + `StreamableHTTPServerTransport` per request, exactly
  * the pattern the SDK's own stateless example uses
