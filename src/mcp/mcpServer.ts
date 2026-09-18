@@ -91,6 +91,12 @@ const searchParamsSchema = {
 };
 const getByIdSchema = { tenantId: z.string(), environment: environmentSchema, id: z.string() };
 
+const oauthSecuritySchemes = [{ type: 'oauth2' as const, scopes: ['mcp'] }];
+
+function withOAuthSecurity<T extends object>(config: T): T & { securitySchemes: typeof oauthSecuritySchemes } {
+  return { ...config, securitySchemes: oauthSecuritySchemes };
+}
+
 function toolContext(
   args: { tenantId: string; environment: 'test' | 'production' },
   extra: Extra,
@@ -126,11 +132,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
 
   server.registerTool(
-    'ptv_search_services',
-    {
+    'ptv_search_services', withOAuthSecurity({
       description: 'Search PTV services for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -143,8 +148,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_service',
-    { description: 'Fetch one PTV service by id.', inputSchema: getByIdSchema },
+    'ptv_get_service', withOAuthSecurity({ description: 'Fetch one PTV service by id.', inputSchema: getByIdSchema )},
     async (args, extra) => {
       try {
         return textResult(
@@ -157,11 +161,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_channels',
-    {
+    'ptv_search_channels', withOAuthSecurity({
       description: 'Search PTV service channels for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -174,8 +177,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_channel',
-    { description: 'Fetch one PTV service channel by id.', inputSchema: getByIdSchema },
+    'ptv_get_channel', withOAuthSecurity({ description: 'Fetch one PTV service channel by id.', inputSchema: getByIdSchema )},
     async (args, extra) => {
       try {
         return textResult(
@@ -188,8 +190,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation',
-    { description: 'Fetch one PTV organisation by id.', inputSchema: getByIdSchema },
+    'ptv_get_organisation', withOAuthSecurity({ description: 'Fetch one PTV organisation by id.', inputSchema: getByIdSchema )},
     async (args, extra) => {
       try {
         return textResult(
@@ -202,11 +203,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation_hierarchy',
-    {
+    'ptv_get_organisation_hierarchy', withOAuthSecurity({
       description: 'Fetch a PTV organisation and every ancestor up to its root.',
       inputSchema: getByIdSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -219,11 +219,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_service_collections',
-    {
+    'ptv_search_service_collections', withOAuthSecurity({
       description: 'Search PTV service collections for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -240,11 +239,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_general_descriptions',
-    {
+    'ptv_search_general_descriptions', withOAuthSecurity({
       description: 'Search PTV general descriptions for a tenant/environment.',
       inputSchema: searchParamsSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -261,11 +259,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_connections',
-    {
+    'ptv_search_connections', withOAuthSecurity({
       description: 'List service<->channel connections for a service or channel id.',
       inputSchema: getByIdSchema,
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -278,15 +275,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_list_codes',
-    {
+    'ptv_list_codes', withOAuthSecurity({
       description: 'List entries in a PTV code list (e.g. "languages", "service-classes").',
       inputSchema: {
         tenantId: z.string(),
         environment: environmentSchema,
         codeListName: z.string(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -305,8 +301,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     );
 
   server.registerTool(
-    'ptv_propose_changes',
-    {
+    'ptv_propose_changes', withOAuthSecurity({
       description:
         'Diff a proposed change against the current service. Never writes anything. Returns {serviceId, current, proposed, diff, correlationId} — pass correlationId to ptv_validate_changes/ptv_export_for_manual_publish/ptv_apply_changes to keep them in one audit trail.',
       inputSchema: {
@@ -316,7 +311,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -338,15 +333,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_list_proposals',
-    {
+    'ptv_list_proposals', withOAuthSecurity({
       description: 'List queued service proposals for a tenant. Requires Editor+ role.',
       inputSchema: {
         tenantId: z.string(),
         environment: environmentSchema,
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -359,8 +353,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_proposal',
-    {
+    'ptv_get_proposal', withOAuthSecurity({
       description:
         'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
       inputSchema: {
@@ -368,7 +361,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         environment: environmentSchema,
         proposalId: z.string(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -388,8 +381,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_resolve_proposal',
-    {
+    'ptv_resolve_proposal', withOAuthSecurity({
       description:
         'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
       inputSchema: {
@@ -398,7 +390,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -420,8 +412,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_validate_changes',
-    {
+    'ptv_validate_changes', withOAuthSecurity({
       description:
         'Validate an already-merged proposed service (the "proposed" object ptv_propose_changes returned) against PTV write rules.',
       inputSchema: {
@@ -430,7 +421,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         proposed: z.record(z.string(), z.unknown()),
         correlationId: z.string().optional(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -449,8 +440,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_export_for_manual_publish',
-    {
+    'ptv_export_for_manual_publish', withOAuthSecurity({
       description:
         "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish.",
       inputSchema: {
@@ -460,7 +450,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
@@ -481,8 +471,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_apply_changes',
-    {
+    'ptv_apply_changes', withOAuthSecurity({
       description:
         'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection.',
       inputSchema: {
@@ -492,7 +481,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         changes: changesSchema,
         correlationId: z.string().optional(),
       },
-    },
+    )},
     async (args, extra) => {
       try {
         return textResult(
