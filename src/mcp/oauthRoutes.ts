@@ -1,11 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { OAuthService } from './oauthService.js';
 import type { AuthService } from '../auth/authService.js';
+import { verifyAccessToken } from '../auth/jwt.js';
 
 export interface McpOAuthRouteOptions {
   oauthService: OAuthService;
   authService: AuthService;
   publicUrl: string;
+  jwtSecret: string;
 }
 
 function html(body: string) {
@@ -90,7 +92,8 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
     catch { return reply.badRequest('Invalid authorization request'); }
     try {
       const session = await options.authService.login(request.body.email, request.body.password);
-      const code = await options.oauthService.createAuthorizationCode(session.accessToken ? (await options.oauthService.verifyAccessToken(session.accessToken).catch(() => ({sub:''}))).sub : '', {
+      const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
+      const code = await options.oauthService.createAuthorizationCode(userId, {
         clientId: q.client_id, redirectUri: q.redirect_uri, codeChallenge: q.code_challenge, state: q.state, scope: q.scope ?? 'mcp',
       });
       const redirect = new URL(q.redirect_uri);
