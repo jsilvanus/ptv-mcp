@@ -134,3 +134,103 @@ describe('PTV v12 service search parameters', () => {
     expect(new URL(serviceUrl!).searchParams.get('pageSize')).toBe('100');
   });
 });
+
+
+describe('PTV v12 search hydration', () => {
+  it('hydrates an incomplete service search result before filtering', async () => {
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes('/service/search')) {
+        return new Response(JSON.stringify({
+          items: [{
+            contentId: 'service-1',
+            languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+          }],
+          totalCount: 1,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/service/service-1')) {
+        return new Response(JSON.stringify({
+          contentId: 'service-1',
+          organization: { contentId: 'org-1' },
+          languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchServices({ query: 'Kirkkoon liittyminen' });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].organizationId).toBe('org-1');
+    expect(requested.some((url) => url.includes('/service/service-1'))).toBe(true);
+  });
+
+  it('hydrates organisation search results before applying text matching', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('/organization/search')) {
+        return new Response(JSON.stringify({
+          items: [{ contentId: 'org-1' }],
+          totalCount: 1,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/organization/org-1')) {
+        return new Response(JSON.stringify({
+          contentId: 'org-1',
+          languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'org-1',
+      names: { fi: 'Riihimäen seurakunta' },
+    });
+  });
+
+  it('hydrates channel search results before applying text matching', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('/service-channel/search')) {
+        return new Response(JSON.stringify({
+          items: [{ contentId: 'channel-1' }],
+          totalCount: 1,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/service-channel/channel-1')) {
+        return new Response(JSON.stringify({
+          contentId: 'channel-1',
+          organization: { contentId: 'org-1' },
+          languageVersions: { fi: { name: 'Keskuskirkko' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+          serviceChannelType: 'ServiceLocation',
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchChannels({ query: 'Keskuskirkko' });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'channel-1',
+      organizationId: 'org-1',
+      names: { fi: 'Keskuskirkko' },
+    });
+  });
+});
