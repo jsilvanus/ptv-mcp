@@ -97,9 +97,12 @@ export class PtvV12Adapter implements PtvAdapter {
     const all = await this.fetchAll('/api/v12/service/search', (item) =>
       mapV12Service(item as V12ServiceWire),
     );
-
     const query = params.query?.trim();
-    const filtered = all.filter((service) =>
+    const hydrated = query || params.organizationId
+      ? await this.hydrateServices(all)
+      : all;
+
+    const filtered = hydrated.filter((service) =>
       (!params.organizationId || service.organizationId === params.organizationId) &&
       (!query || matchesService(service, query)),
     );
@@ -123,7 +126,10 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12ServiceChannel(item as V12ServiceChannelWire),
     );
     const query = params.query?.trim();
-    const filtered = all.filter((channel) =>
+    const hydrated = query || params.organizationId
+      ? await this.hydrateChannels(all)
+      : all;
+    const filtered = hydrated.filter((channel) =>
       (!params.organizationId || channel.organizationId === params.organizationId) &&
       (!query || matchesChannel(channel, query)),
     );
@@ -137,9 +143,10 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12Organization(item as V12OrganizationWire),
     );
     const query = params.query?.trim();
+    const hydrated = query ? await this.hydrateOrganisations(all) : all;
     const filtered = query
-      ? all.filter((org) => matchesOrganisation(org, query))
-      : all;
+      ? hydrated.filter((org) => matchesOrganisation(org, query))
+      : hydrated;
     return paginate(filtered, page, pageSize);
   }
 
@@ -194,6 +201,33 @@ export class PtvV12Adapter implements PtvAdapter {
       const total = extractTotalCount(raw, result.length);
       if (items.length === 0 || result.length >= total) return result;
     }
+  }
+
+  private async hydrateServices(items: Service[]): Promise<Service[]> {
+    return Promise.all(items.map(async (service) => {
+      if (service.organizationId && service.modifiedAt !== new Date(0).toISOString() && Object.keys(service.names).length > 0) {
+        return service;
+      }
+      return (await this.getService(service.id)) ?? service;
+    }));
+  }
+
+  private async hydrateChannels(items: ServiceChannel[]): Promise<ServiceChannel[]> {
+    return Promise.all(items.map(async (channel) => {
+      if (channel.organizationId && channel.modifiedAt !== new Date(0).toISOString() && Object.keys(channel.names).length > 0) {
+        return channel;
+      }
+      return (await this.getChannel(channel.id)) ?? channel;
+    }));
+  }
+
+  private async hydrateOrganisations(items: Organization[]): Promise<Organization[]> {
+    return Promise.all(items.map(async (organization) => {
+      if (organization.modifiedAt !== new Date(0).toISOString() && Object.keys(organization.names).length > 0) {
+        return organization;
+      }
+      return (await this.getOrganisation(organization.id)) ?? organization;
+    }));
   }
 
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
