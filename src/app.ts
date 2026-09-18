@@ -92,6 +92,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(mcpOAuthRoutes, { oauthService, authService, publicUrl: config.mcpPublicUrl, jwtSecret: config.jwtSecret });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
+    oauthService,
+    publicUrl: config.mcpPublicUrl,
     serverDeps: { db, registry, auditService, validator, proposalService },
   });
   await app.register(auditLogRoutes, { auditService, jwtSecret: config.jwtSecret, db });
