@@ -35,29 +35,31 @@ function methodNotAllowed(): {
 export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions): Promise<void> {
   app.post('/mcp', async (request, reply) => {
     const header = request.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
-      reply.header('WWW-Authenticate', `Bearer resource_metadata="${options.publicUrl}/.well-known/oauth-protected-resource", scope="mcp"`);
-      return reply.code(401).send({ error: 'unauthorized', error_description: 'Bearer token required' });
-    }
+    let authInfo: AuthInfo | undefined;
 
-    let authInfo: AuthInfo;
-    try {
-      const payload = await options.oauthService.verifyAccessToken(header.slice('Bearer '.length));
-      authInfo = {
-        token: header,
-        clientId: payload.clientId ?? 'oauth-client',
-        scopes: payload.scope ? payload.scope.split(' ') : [],
-        extra: { userId: payload.sub },
-      };
-    } catch (err) {
-      if (err instanceof Error && err.message === 'invalid_token') {
-        reply.header('WWW-Authenticate', `Bearer resource_metadata="${options.publicUrl}/.well-known/oauth-protected-resource", error="invalid_token", scope="mcp"`);
-        return reply.code(401).send({ error: 'invalid_token' });
+    // Authentication is deliberately deferred to the tool layer. ChatGPT's
+    // tool-level OAuth flow needs to receive an MCP tool error containing
+    // `_meta["mcp/www_authenticate"]`; rejecting POST /mcp with HTTP 401 here
+    // would prevent the tool handler from ever producing that challenge.
+    if (header?.startsWith('Bearer ')) {
+      try {
+        const payload = await options.oauthService.verifyAccessToken(header.slice('Bearer '.length));
+        authInfo = {
+          token: header,
+          clientId: payload.clientId ?? 'oauth-client',
+          scopes: payload.scope ? payload.scope.split(' ') : [],
+          extra: { userId: payload.sub },
+        };
+      } catch (err) {
+        if (!(err instanceof Error && err.message === 'invalid_token')) {
+          if (err instanceof InvalidAccessTokenError) {
+            return reply.unauthorized(err.message);
+          }
+          throw err;
+        }
+        // Invalid bearer tokens are treated like missing credentials below;
+        // the tool handler will return the OAuth challenge.
       }
-      if (err instanceof InvalidAccessTokenError) {
-        return reply.unauthorized(err.message);
-      }
-      throw err;
     }
 
     const server = createMcpServer(options.serverDeps);
@@ -81,7 +83,9 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
     });
 
     const rawRequest = request.raw as IncomingMessage & { auth?: AuthInfo };
-    rawRequest.auth = authInfo;
+    if (authInfo) {
+      rawRequest.auth = authInfo;
+    }
     await transport.handleRequest(rawRequest, reply.raw, request.body);
   });
 
