@@ -85,6 +85,12 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
     await transport.handleRequest(rawRequest, reply.raw, request.body);
   });
 
+  // ChatGPT's connector probing may issue HEAD before attempting Streamable
+  // HTTP POST. HEAD is not an MCP message and must not require authentication.
+  app.head('/mcp', async (_request, reply) => {
+    return reply.code(200).send();
+  });
+
   app.get('/mcp', async (_request, reply) => {
     reply.code(405).send(methodNotAllowed());
   });
