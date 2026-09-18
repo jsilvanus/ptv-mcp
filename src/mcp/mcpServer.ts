@@ -226,6 +226,60 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
+    'ptv_search_organisations', withOAuthSecurity({
+      description:
+        'Search published PTV organisations. Query searches organisation names.',
+      inputSchema: {
+        environment: environmentSchema,
+        query: z.string().min(1).describe('Text to search in PTV organisation names.'),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(1).max(1000).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await searchTools.searchOrganisations(
+            registry,
+            toolContext(args, extra),
+            {
+              query: args.query,
+              ...(args.page !== undefined ? { page: args.page } : {}),
+              ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
+            },
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_find_organisation_and_children', withOAuthSecurity({
+      description:
+        'Find a PTV organisation by name/text and return that organisation together with its published services and service channels. This is a compound convenience operation; use the individual search tools when you need independent searches.',
+      inputSchema: {
+        environment: environmentSchema,
+        query: z.string().min(1).describe('Organisation name or text, for example "Riihimäen seurakunta".'),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await searchTools.findOrganisationAndChildren(
+            registry,
+            toolContext(args, extra),
+            args.query,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
     'ptv_get_organisation', withOAuthSecurity({
       description:
         'Fetch one published PTV organisation by id. The organisation context is selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
