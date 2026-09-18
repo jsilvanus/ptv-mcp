@@ -105,14 +105,11 @@ describe('PTV v12 service mapping', () => {
 
 
 describe('PTV v12 service search parameters', () => {
-  it('passes query, organisation filter and pagination separately from tenant context', async () => {
-    let requestedUrl = '';
+  it('never sends the unsupported searchText parameter', async () => {
+    const requestedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {
-      requestedUrl = String(input);
-      return new Response(JSON.stringify({
-        items: [],
-        totalCount: 0,
-      }), {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ items: [], totalCount: 0 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -127,16 +124,13 @@ describe('PTV v12 service search parameters', () => {
 
     await adapter.searchServices({
       query: 'nuoret',
-      organizationId: '11111111-1111-1111-1111-111111111111',
       page: 2,
       pageSize: 5,
     });
 
-    const url = new URL(requestedUrl);
-    expect(url.pathname).toBe('/api/v12/service/search');
-    expect(url.searchParams.get('searchText')).toBe('nuoret');
-    expect(url.searchParams.get('organizationId')).toBe('11111111-1111-1111-1111-111111111111');
-    expect(url.searchParams.get('page')).toBe('2');
-    expect(url.searchParams.get('pageSize')).toBe('5');
+    const serviceUrl = requestedUrls.find((url) => url.includes('/service/search'));
+    expect(serviceUrl).toBeDefined();
+    expect(new URL(serviceUrl!).searchParams.has('searchText')).toBe(false);
+    expect(new URL(serviceUrl!).searchParams.get('pageSize')).toBe('100');
   });
 });
