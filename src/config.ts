@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 export interface AppConfig {
   nodeEnv: 'development' | 'test' | 'production';
   host: string;
@@ -31,11 +33,24 @@ function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
 }
 
 /**
+ * Load the local .env file for developer-facing entry points.
+ *
+ * Production can provide environment variables directly and does not need
+ * a .env file. Explicit env objects used by tests are left untouched.
+ */
+function loadDotEnv(env: NodeJS.ProcessEnv): void {
+  if (env !== process.env) return;
+  if (existsSync('.env')) process.loadEnvFile('.env');
+}
+
+/**
  * Loads and validates process.env into a typed config object.
  * Fails fast at startup rather than surfacing missing config as a
  * confusing runtime error deep in a request handler.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  loadDotEnv(env);
+
   const nodeEnv = (env.NODE_ENV ?? 'development') as AppConfig['nodeEnv'];
   if (!['development', 'test', 'production'].includes(nodeEnv)) {
     throw new Error(`Invalid NODE_ENV: ${nodeEnv}`);
