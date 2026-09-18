@@ -64,6 +64,48 @@ export async function getChannel(
   return adapter.getChannel(id);
 }
 
+export async function searchOrganisations(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  params: SearchParams,
+): Promise<PaginatedResult<Organization>> {
+  const adapter = await resolveReadAdapter(registry, ctx);
+  return adapter.searchOrganisations(params);
+}
+
+export async function findOrganisationAndChildren(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  query: string,
+): Promise<{
+  organisation: Organization;
+  services: PaginatedResult<Service>;
+  channels: PaginatedResult<ServiceChannel>;
+}> {
+  const adapter = await resolveReadAdapter(registry, ctx);
+  const organisations = await adapter.searchOrganisations({
+    query,
+    page: 1,
+    pageSize: 10,
+  });
+  if (organisations.items.length === 0) {
+    throw new Error(`No PTV organisation found for query "${query}"`);
+  }
+  if (organisations.items.length > 1) {
+    return {
+      organisation: organisations.items[0],
+      services: await adapter.searchServices({ organizationId: organisations.items[0].id, page: 1, pageSize: 1000 }),
+      channels: await adapter.searchChannels({ organizationId: organisations.items[0].id, page: 1, pageSize: 1000 }),
+    };
+  }
+  const organisation = organisations.items[0];
+  return {
+    organisation,
+    services: await adapter.searchServices({ organizationId: organisation.id, page: 1, pageSize: 1000 }),
+    channels: await adapter.searchChannels({ organizationId: organisation.id, page: 1, pageSize: 1000 }),
+  };
+}
+
 export async function getOrganisation(
   registry: PtvAdapterRegistry,
   ctx: ToolContext,
