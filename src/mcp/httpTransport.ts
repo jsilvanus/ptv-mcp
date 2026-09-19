@@ -50,7 +50,7 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
           token: header,
           clientId: payload.clientId ?? 'oauth-client',
           scopes: payload.scope ? payload.scope.split(' ') : [],
-          extra: { userId: payload.sub, ...(payload.tenantId ? { tenantId: payload.tenantId } : {}), ...(payload.environment ? { environment: payload.environment } : {}), ...(payload.apiVersion ? { apiVersion: payload.apiVersion } : {}) },
+          extra: { userId: payload.sub, ...(payload.tenantId ? { tenantId: payload.tenantId } : {}), ...(payload.environment ? { environment: payload.environment } : {}), ...(payload.readApiVersion ? { readApiVersion: payload.readApiVersion } : {}), ...(payload.writeApiVersion ? { writeApiVersion: payload.writeApiVersion } : {}) },
         };
       } catch (err) {
         if (!(err instanceof Error && err.message === 'invalid_token')) {
