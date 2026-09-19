@@ -137,7 +137,7 @@ export async function applyChanges(
   const writeAdapter = await registry.resolve({
     tenantId: ctx.tenantId,
     environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
+    apiVersion: ctx.writeApiVersion ?? ctx.apiVersion ?? 'v11',
     operation: 'write',
     actingUserId: ctx.actingUserId,
   });
