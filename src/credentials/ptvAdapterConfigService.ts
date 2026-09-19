@@ -51,6 +51,46 @@ export class PtvAdapterConfigService {
     });
   }
 
+  /**
+   * v11 published-content reads are the baseline capability whenever a
+   * tenant is onboarded with a v11 PTV account. Keep this deliberately
+   * separate from write enablement: an existing write setting must not be
+   * changed merely because a read connection was established.
+   *
+   * Both environments are configured because the v11 read adapter does not
+   * require a credential for ordinary published reads, and MCP OAuth lets
+   * the caller choose the environment independently.
+   */
+  async ensureV11ReadDefaults(tenantId: string): Promise<void> {
+    await withContext(this.db, { tenantId }, async (tx) => {
+      for (const environment of ['test', 'production'] as const) {
+        await tx
+          .insert(ptvAdapterConfigs)
+          .values({
+            tenantId,
+            environment,
+            apiVersion: 'v11',
+            authMode: 'oauth2',
+            credentialScope: 'user',
+            supportsRead: true,
+            supportsWrite: false,
+            supportsDraftRead: false,
+          })
+          .onConflictDoUpdate({
+            target: [
+              ptvAdapterConfigs.tenantId,
+              ptvAdapterConfigs.environment,
+              ptvAdapterConfigs.apiVersion,
+            ],
+            set: {
+              supportsRead: true,
+              updatedAt: new Date(),
+            },
+          });
+      }
+    });
+  }
+
   async get(
     tenantId: string,
     environment: PtvEnvironment,
