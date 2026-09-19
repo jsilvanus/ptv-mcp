@@ -6,7 +6,7 @@ import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
+import { auditEntries, memberships, ptvAdapterConfigs, tenants, users } from '../db/schema/index.js';
 import { signAccessToken } from '../auth/jwt.js';
 
 describe('ptv connection routes', () => {
@@ -87,8 +87,30 @@ describe('ptv connection routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('stores a connection after a successful callback + introspection', async () => {
+  it('stores a connection and enables v11 reads in both environments', async () => {
     const user = await createUserWithToken();
+    const createTenantRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${user.token}` },
+      payload: { name: 'Connection Config Tenant', slug: `conn-config-${randomUUID()}` },
+    });
+    const { tenantId } = createTenantRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+
+    await withContext(db, { tenantId }, async (tx) => {
+      await tx.insert(ptvAdapterConfigs).values({
+        tenantId,
+        environment: 'production',
+        apiVersion: 'v11',
+        authMode: 'oauth2',
+        credentialScope: 'user',
+        supportsRead: false,
+        supportsWrite: true,
+        supportsDraftRead: false,
+      });
+    });
+
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ active: true, sub: 'ptv-user' }), { status: 200 }),
     );
@@ -113,6 +135,15 @@ describe('ptv connection routes', () => {
     expect(connections).toContainEqual(
       expect.objectContaining({ apiVersion: 'v11', environment: 'production' }),
     );
+
+    const configs = await withContext(db, { tenantId }, async (tx) =>
+      tx.query.ptvAdapterConfigs.findMany({ where: eq(ptvAdapterConfigs.tenantId, tenantId) }),
+    );
+    expect(configs).toHaveLength(2);
+    expect(configs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ apiVersion: 'v11', environment: 'test', supportsRead: true }),
+      expect.objectContaining({ apiVersion: 'v11', environment: 'production', supportsRead: true, supportsWrite: true }),
+    ]));
   });
 
   it('records a ConnectPtvAccount audit entry in every tenant the user belongs to', async () => {

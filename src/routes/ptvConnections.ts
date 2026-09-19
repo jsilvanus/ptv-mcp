@@ -12,10 +12,12 @@ import type {
 } from '../credentials/userPtvConnectionService.js';
 import type { TenantService } from '../tenants/tenantService.js';
 import type { AuditService } from '../audit/auditService.js';
+import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 
 export interface PtvConnectionRoutesOptions {
   connectionService: UserPtvConnectionService;
   tenantService: TenantService;
+  adapterConfigService: PtvAdapterConfigService;
   auditService: AuditService;
   jwtSecret: string;
   oauth: {
@@ -47,7 +49,7 @@ export async function ptvConnectionRoutes(
   app: FastifyInstance,
   options: PtvConnectionRoutesOptions,
 ): Promise<void> {
-  const { connectionService, tenantService, auditService, oauth } = options;
+  const { connectionService, tenantService, adapterConfigService, auditService, oauth } = options;
   const authenticate = createAuthenticate(options.jwtSecret);
 
   /**
@@ -130,6 +132,17 @@ export async function ptvConnectionRoutes(
         parsed.accessToken,
         expiresAt,
       );
+
+      // Connecting a v11 account establishes the default read capability for
+      // every tenant the user belongs to, in both PTV environments. This is
+      // intentionally independent from v11 write enablement.
+      const tenantMemberships = await tenantService.listTenantsForUser(request.userId!);
+      await Promise.all(
+        tenantMemberships.map((membership) =>
+          adapterConfigService.ensureV11ReadDefaults(membership.tenantId),
+        ),
+      );
+
       await recordConnectionEvent(request.userId!, 'ConnectPtvAccount', environment);
       return reply.code(204).send();
     },
