@@ -98,6 +98,19 @@ describe('ptv connection routes', () => {
     const { tenantId } = createTenantRes.json() as { tenantId: string };
     createdTenantIds.push(tenantId);
 
+    await withContext(db, { tenantId }, async (tx) => {
+      await tx.insert(ptvAdapterConfigs).values({
+        tenantId,
+        environment: 'production',
+        apiVersion: 'v11',
+        authMode: 'oauth2',
+        credentialScope: 'user',
+        supportsRead: false,
+        supportsWrite: true,
+        supportsDraftRead: false,
+      });
+    });
+
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ active: true, sub: 'ptv-user' }), { status: 200 }),
     );
@@ -129,7 +142,7 @@ describe('ptv connection routes', () => {
     expect(configs).toHaveLength(2);
     expect(configs).toEqual(expect.arrayContaining([
       expect.objectContaining({ apiVersion: 'v11', environment: 'test', supportsRead: true }),
-      expect.objectContaining({ apiVersion: 'v11', environment: 'production', supportsRead: true }),
+      expect.objectContaining({ apiVersion: 'v11', environment: 'production', supportsRead: true, supportsWrite: true }),
     ]));
   });
 
