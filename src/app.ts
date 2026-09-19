@@ -89,6 +89,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(ptvConnectionRoutes, {
     connectionService,
     tenantService,
+    adapterConfigService,
     auditService,
     jwtSecret: config.jwtSecret,
     oauth: {
