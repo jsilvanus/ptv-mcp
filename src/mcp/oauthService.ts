@@ -295,7 +295,7 @@ export class OAuthService {
         audience: this.resource,
       });
       if (typeof payload.sub !== 'string') throw new Error('missing sub');
-      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined, environment: payload.environment === 'test' || payload.environment === 'production' ? payload.environment : undefined, apiVersion: typeof payload.read_api_version === 'string' ? payload.read_api_version : undefined };
+      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined, environment: payload.environment === 'test' || payload.environment === 'production' ? payload.environment : undefined, readApiVersion: typeof payload.read_api_version === 'string' ? payload.read_api_version : undefined, writeApiVersion: typeof payload.write_api_version === 'string' ? payload.write_api_version : undefined };
     } catch (err) {
       if (err instanceof errors.JOSEError || err instanceof Error) throw new Error('invalid_token');
       throw err;
