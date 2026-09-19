@@ -123,45 +123,57 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
   });
 
   app.post<{
-    Body: { oauth?: string; email?: string; password?: string; tenant_id?: string; selection_token?: string; connection?: string }
+    Body: { oauth?: string; email?: string; password?: string; tenant_id?: string; environment?: string; read_api_version?: string; write_api_version?: string; selection_token?: string }
   }>('/oauth/authorize', async (request, reply) => {
     // Step 1: authenticate the human, then ask which tenant this OAuth
     // connection should represent. The tenant choice belongs to the OAuth
     // grant, not to the user's identity, so one user can authorize multiple
     // independent ChatGPT/Claude connections for different tenants.
-    if (request.body.selection_token && request.body.connection) {
-      const [tenantId, environment, apiVersion] = request.body.connection.split('|');
-      if (!tenantId || (environment !== 'test' && environment !== 'production') || !apiVersion) return reply.badRequest('Invalid PTV connection selection');
+    if (request.body.selection_token && request.body.tenant_id && request.body.environment && request.body.read_api_version && request.body.write_api_version) {
       try {
         const selection = await options.oauthService.verifyTenantSelectionToken(request.body.selection_token);
+        const tenantId = request.body.tenant_id;
+        const environment = request.body.environment;
+        const readApiVersion = request.body.read_api_version;
+        const writeApiVersion = request.body.write_api_version;
+        if (environment !== 'test' && environment !== 'production') return reply.badRequest('Invalid PTV environment');
+
         const memberships = await options.tenantService.listTenantsForUser(selection.userId);
         const membership = memberships.find((item) => item.tenantId === tenantId);
         if (!membership) return reply.badRequest('You are not a member of that organisation');
+
         const configs = await options.adapterConfigService.list(membership.tenantId);
-        const config = configs.find((item) => item.environment === environment && item.apiVersion === apiVersion && item.supportsRead);
-        if (!config) return reply.badRequest('That PTV connection is not configured for this organisation');
+        const readConfig = configs.find((item) =>
+          item.environment === environment &&
+          item.apiVersion === readApiVersion &&
+          item.supportsRead,
+        );
+        const writeConfig = configs.find((item) =>
+          item.environment === environment &&
+          item.apiVersion === writeApiVersion &&
+          item.supportsWrite,
+        );
+        if (!readConfig) return reply.badRequest('That read PTV connection is not configured for this organisation');
+        if (!writeConfig) return reply.badRequest('That write PTV connection is not configured for this organisation');
 
         const code = await options.oauthService.createAuthorizationCode(selection.userId, {
           clientId: selection.clientId,
           redirectUri: selection.redirectUri,
           codeChallenge: selection.codeChallenge,
           scope: selection.scope,
-          tenantId: membership.tenantId,
+          tenantId,
           environment,
-          apiVersion,
+          readApiVersion,
+          writeApiVersion,
         });
         const redirect = new URL(selection.redirectUri);
         redirect.searchParams.set('code', code);
-        const original = await options.oauthService.verifyTenantSelectionToken(request.body.selection_token);
-        // state is intentionally carried inside the selection token in the
-        // next iteration of this flow; keep it in the OAuth request itself.
-        // For compatibility, state is recovered from the signed token below.
-        if (original.state) redirect.searchParams.set('state', original.state);
+        if (selection.state) redirect.searchParams.set('state', selection.state);
         redirect.searchParams.set('iss', options.publicUrl);
         return reply.redirect(redirect.toString());
       } catch (err) {
-        request.log.error({ err }, 'OAuth tenant selection failed');
-        return reply.type('text/html').send(html('<h1>Authorization failed</h1><p class="error">The tenant selection is no longer valid. Please restart the connection.</p>'));
+        request.log.error({ err }, 'OAuth PTV connection selection failed');
+        return reply.type('text/html').send(html('<h1>Authorization failed</h1><p class="error">The PTV connection selection is no longer valid. Please restart the connection.</p>'));
       }
     }
 
@@ -190,20 +202,58 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
         codeChallenge,
         ...(q.state ? { state: q.state } : {}),
         scope: q.scope ?? 'mcp',
-        tenantId: memberships[0].tenantId,
       });
 
-      const optionsHtml = memberships.map((membership) =>
+      const tenantOptions = memberships.map((membership) =>
         `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
       ).join('');
 
+      const connectionOptions = memberships.map((membership) => {
+        const configs = [];
+        // The actual combinations are validated on POST. Keep the UI compact:
+        // it presents independently selectable dimensions, while the server
+        // verifies that the selected read/write pair exists and is enabled.
+        return configs;
+      }).flat();
+
+      const configRows = memberships.map((membership) => {
+        return `<div data-tenant="${membership.tenantId}" class="tenant-config" hidden>
+          <p><strong>${membership.tenantName}</strong></p>
+          <label>Read API version</label>
+          <select name="read_api_version" class="read-version">
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
+          <label>Write API version</label>
+          <select name="write_api_version" class="write-version">
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
+        </div>`;
+      }).join('');
+
       return reply.type('text/html').send(html(`
-        <h1>Choose organisation</h1>
-        <p>This MCP connection will act on behalf of the organisation you select. You can create separate connections for your other organisations.</p>
+        <h1>Choose PTV connection</h1>
+        <p>Select the organisation, environment, and independently which API version handles reads and writes.</p>
         <form method="post" action="/oauth/authorize">
           <input type="hidden" name="selection_token" value="${selectionToken}">
           <label>Organisation</label>
-          <select name="tenant_id" required>${optionsHtml}</select>
+          <select name="tenant_id" id="tenant_id" required>${tenantOptions}</select>
+          <label>Environment</label>
+          <select name="environment" required>
+            <option value="test">Test</option>
+            <option value="production" selected>Production</option>
+          </select>
+          <label>Read API version</label>
+          <select name="read_api_version" required>
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
+          <label>Write API version</label>
+          <select name="write_api_version" required>
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
           <button type="submit">Continue</button>
         </form>
       `));
