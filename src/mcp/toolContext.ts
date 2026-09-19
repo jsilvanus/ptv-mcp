@@ -9,7 +9,9 @@ import type { PtvEnvironment } from '../ptv/adapter.js';
 export interface ToolContext {
   tenantId: string;
   environment: PtvEnvironment;
-  readApiVersion: string;
-  writeApiVersion: string;
+  readApiVersion?: string;
+  writeApiVersion?: string;
+  /** @deprecated Use readApiVersion/writeApiVersion. Kept for existing test/tool contexts during migration. */
+  apiVersion?: string;
   actingUserId: string;
 }
