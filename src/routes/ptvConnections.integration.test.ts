@@ -87,8 +87,17 @@ describe('ptv connection routes', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('stores a connection after a successful callback + introspection', async () => {
+  it('stores a connection and enables v11 reads in both environments', async () => {
     const user = await createUserWithToken();
+    const createTenantRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${user.token}` },
+      payload: { name: 'Connection Config Tenant', slug: `conn-config-${randomUUID()}` },
+    });
+    const { tenantId } = createTenantRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ active: true, sub: 'ptv-user' }), { status: 200 }),
     );
@@ -114,13 +123,9 @@ describe('ptv connection routes', () => {
       expect.objectContaining({ apiVersion: 'v11', environment: 'production' }),
     );
 
-    const configs = await db.query.ptvAdapterConfigs.findMany({
-      where: eq(ptvAdapterConfigs.tenantId, (await app.inject({
-        method: 'GET',
-        url: '/tenants',
-        headers: { authorization: `Bearer ${user.token}` },
-      })).json()[0].id),
-    });
+    const configs = await withContext(db, { tenantId }, async (tx) =>
+      tx.query.ptvAdapterConfigs.findMany({ where: eq(ptvAdapterConfigs.tenantId, tenantId) }),
+    );
     expect(configs).toHaveLength(2);
     expect(configs).toEqual(expect.arrayContaining([
       expect.objectContaining({ apiVersion: 'v11', environment: 'test', supportsRead: true }),
