@@ -115,17 +115,21 @@ function toolContext(extra: Extra): ToolContext {
   const userId = actingUserId(extra);
   const activeTenantId = extra.authInfo?.extra?.tenantId;
   const environment = extra.authInfo?.extra?.environment;
-  const apiVersion = extra.authInfo?.extra?.apiVersion;
+  const readApiVersion = extra.authInfo?.extra?.readApiVersion;
+  const writeApiVersion = extra.authInfo?.extra?.writeApiVersion;
   if (typeof activeTenantId !== 'string' || activeTenantId === '') {
     throw new Error('No active tenant for this MCP connection; reconnect and select an organisation');
   }
   if (environment !== 'test' && environment !== 'production') {
     throw new Error('No active PTV environment for this MCP connection; reconnect and select a connection');
   }
-  if (typeof apiVersion !== 'string' || apiVersion === '') {
-    throw new Error('No active PTV API version for this MCP connection; reconnect and select a connection');
+  if (typeof readApiVersion !== 'string' || readApiVersion === '') {
+    throw new Error('No active PTV read API version for this MCP connection; reconnect and select a connection');
   }
-  return { tenantId: activeTenantId, environment, apiVersion, actingUserId: userId };
+  if (typeof writeApiVersion !== 'string' || writeApiVersion === '') {
+    throw new Error('No active PTV write API version for this MCP connection; reconnect and select a connection');
+  }
+  return { tenantId: activeTenantId, environment, readApiVersion, writeApiVersion, actingUserId: userId };
 }
 
 /** `exactOptionalPropertyTypes` means an explicit `page: undefined` doesn't satisfy `page?: number` — omit the key entirely instead. */
@@ -158,7 +162,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_search_services', withOAuthSecurity({
       description:
-        'Search published PTV services. The OAuth-selected PTV connection determines tenant, environment and API version; `query` and `organizationId` determine what PTV data is searched.',
+        'Search published PTV services. The OAuth-selected PTV connection determines tenant, environment, read API version and write API version; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
     }),
     async (args, extra) => {
@@ -175,7 +179,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_get_service', withOAuthSecurity({
       description:
-        'Fetch one published PTV service by id. The PTV tenant, environment and API version are selected during OAuth authorization.',
+        'Fetch one published PTV service by id. The PTV tenant, environment, read API version and write API version are selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
@@ -278,7 +282,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     'ptv_get_organisation', withOAuthSecurity({
       description:
-        'Fetch one published PTV organisation by id. The PTV tenant, environment and API version are selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
+        'Fetch one published PTV organisation by id. The PTV tenant, environment, read API version and write API version are selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
