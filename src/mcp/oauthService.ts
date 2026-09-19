@@ -244,10 +244,10 @@ export class OAuthService {
     const code = generateOpaqueToken();
     await this.db.execute(sql`
       INSERT INTO oauth_authorization_codes
-        (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, tenant_id, environment, read_api_version, write_api_version, expires_at)
+        (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
       VALUES
         (${hashToken(code)}, ${request.clientId}, ${request.redirectUri}, ${request.codeChallenge},
-         ${userId}, ${request.scope}, ${request.tenantId}, ${request.environment}, ${request.readApiVersion}, ${request.writeApiVersion}, now() + interval '60 seconds')
+         ${userId}, ${request.scope}, ${request.tenantId}, ${request.environment}, ${request.readApiVersion}, ${request.readApiVersion}, ${request.writeApiVersion}, now() + interval '60 seconds')
     `);
     return code;
   }
@@ -268,8 +268,8 @@ export class OAuthService {
     const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id, row.environment, row.read_api_version, row.write_api_version);
     const refreshToken = generateOpaqueToken();
     await this.db.execute(sql`
-      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, read_api_version, write_api_version, expires_at)
-      VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, ${row.environment}, ${row.read_api_version}, ${row.write_api_version}, now() + interval '30 days')
+      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
+      VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, ${row.environment}, ${row.read_api_version}, ${row.read_api_version}, ${row.write_api_version}, now() + interval '30 days')
     `);
     return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, refresh_token: refreshToken, scope: row.scope };
   }
