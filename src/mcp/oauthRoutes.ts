@@ -208,30 +208,6 @@ export async function mcpOAuthRoutes(app: FastifyInstance, options: McpOAuthRout
         `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
       ).join('');
 
-      const connectionOptions = memberships.map((membership) => {
-        const configs = [];
-        // The actual combinations are validated on POST. Keep the UI compact:
-        // it presents independently selectable dimensions, while the server
-        // verifies that the selected read/write pair exists and is enabled.
-        return configs;
-      }).flat();
-
-      const configRows = memberships.map((membership) => {
-        return `<div data-tenant="${membership.tenantId}" class="tenant-config" hidden>
-          <p><strong>${membership.tenantName}</strong></p>
-          <label>Read API version</label>
-          <select name="read_api_version" class="read-version">
-            <option value="v11">v11</option>
-            <option value="v12">v12</option>
-          </select>
-          <label>Write API version</label>
-          <select name="write_api_version" class="write-version">
-            <option value="v11">v11</option>
-            <option value="v12">v12</option>
-          </select>
-        </div>`;
-      }).join('');
-
       return reply.type('text/html').send(html(`
         <h1>Choose PTV connection</h1>
         <p>Select the organisation, environment, and independently which API version handles reads and writes.</p>
