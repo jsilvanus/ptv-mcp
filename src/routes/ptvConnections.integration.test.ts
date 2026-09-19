@@ -6,7 +6,7 @@ import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
+import { auditEntries, memberships, ptvAdapterConfigs, tenants, users } from '../db/schema/index.js';
 import { signAccessToken } from '../auth/jwt.js';
 
 describe('ptv connection routes', () => {
@@ -113,6 +113,19 @@ describe('ptv connection routes', () => {
     expect(connections).toContainEqual(
       expect.objectContaining({ apiVersion: 'v11', environment: 'production' }),
     );
+
+    const configs = await db.query.ptvAdapterConfigs.findMany({
+      where: eq(ptvAdapterConfigs.tenantId, (await app.inject({
+        method: 'GET',
+        url: '/tenants',
+        headers: { authorization: `Bearer ${user.token}` },
+      })).json()[0].id),
+    });
+    expect(configs).toHaveLength(2);
+    expect(configs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ apiVersion: 'v11', environment: 'test', supportsRead: true }),
+      expect.objectContaining({ apiVersion: 'v11', environment: 'production', supportsRead: true }),
+    ]));
   });
 
   it('records a ConnectPtvAccount audit entry in every tenant the user belongs to', async () => {
