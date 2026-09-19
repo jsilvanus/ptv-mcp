@@ -23,6 +23,7 @@ async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ToolContext
   return registry.resolve({
     tenantId: ctx.tenantId,
     environment: ctx.environment,
+    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
     operation: 'read',
     actingUserId: ctx.actingUserId,
   });
