@@ -9,6 +9,7 @@ import type { PtvEnvironment } from '../ptv/adapter.js';
 export interface ToolContext {
   tenantId: string;
   environment: PtvEnvironment;
-  apiVersion: string;
+  readApiVersion: string;
+  writeApiVersion: string;
   actingUserId: string;
 }
