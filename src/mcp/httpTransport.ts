@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { InvalidAccessTokenError, verifyAccessToken } from '../auth/jwt.js';
+import { InvalidAccessTokenError } from '../auth/jwt.js';
 import { createMcpServer, type McpServerDeps } from './mcpServer.js';
 import type { OAuthService } from './oauthService.js';
 
@@ -45,12 +45,20 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
     // would prevent the tool handler from ever producing that challenge.
     if (header?.startsWith('Bearer ')) {
       try {
-        const payload = await options.oauthService.verifyAccessToken(header.slice('Bearer '.length));
+        const payload = await options.oauthService.verifyAccessToken(
+          header.slice('Bearer '.length),
+        );
         authInfo = {
           token: header,
           clientId: payload.clientId ?? 'oauth-client',
           scopes: payload.scope ? payload.scope.split(' ') : [],
-          extra: { userId: payload.sub, ...(payload.tenantId ? { tenantId: payload.tenantId } : {}), ...(payload.environment ? { environment: payload.environment } : {}), ...(payload.readApiVersion ? { readApiVersion: payload.readApiVersion } : {}), ...(payload.writeApiVersion ? { writeApiVersion: payload.writeApiVersion } : {}) },
+          extra: {
+            userId: payload.sub,
+            ...(payload.tenantId ? { tenantId: payload.tenantId } : {}),
+            ...(payload.environment ? { environment: payload.environment } : {}),
+            ...(payload.readApiVersion ? { readApiVersion: payload.readApiVersion } : {}),
+            ...(payload.writeApiVersion ? { writeApiVersion: payload.writeApiVersion } : {}),
+          },
         };
       } catch (err) {
         if (!(err instanceof Error && err.message === 'invalid_token')) {

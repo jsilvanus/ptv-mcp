@@ -108,7 +108,7 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
     '/auth/logout',
     { preHandler: authenticate },
     async (request, reply) => {
-      await authService.logout(request.body.refreshToken);
+      await authService.logout(request.userId!, request.body.refreshToken);
       return reply.code(204).send();
     },
   );

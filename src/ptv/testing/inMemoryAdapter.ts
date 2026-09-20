@@ -73,6 +73,10 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return this.channels.find((c) => c.id === id) ?? null;
   }
 
+  async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
+    return paginate(this.organizations, params);
+  }
+
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
     return this.organizations.find((o) => o.id === id) ?? null;
   }

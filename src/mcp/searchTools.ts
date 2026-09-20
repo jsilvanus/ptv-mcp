@@ -89,21 +89,22 @@ export async function findOrganisationAndChildren(
     page: 1,
     pageSize: 10,
   });
-  if (organisations.items.length === 0) {
+  const organisation = organisations.items[0];
+  if (!organisation) {
     throw new Error(`No PTV organisation found for query "${query}"`);
   }
-  if (organisations.items.length > 1) {
-    return {
-      organisation: organisations.items[0],
-      services: await adapter.searchServices({ organizationId: organisations.items[0].id, page: 1, pageSize: 1000 }),
-      channels: await adapter.searchChannels({ organizationId: organisations.items[0].id, page: 1, pageSize: 1000 }),
-    };
-  }
-  const organisation = organisations.items[0];
   return {
     organisation,
-    services: await adapter.searchServices({ organizationId: organisation.id, page: 1, pageSize: 1000 }),
-    channels: await adapter.searchChannels({ organizationId: organisation.id, page: 1, pageSize: 1000 }),
+    services: await adapter.searchServices({
+      organizationId: organisation.id,
+      page: 1,
+      pageSize: 1000,
+    }),
+    channels: await adapter.searchChannels({
+      organizationId: organisation.id,
+      page: 1,
+      pageSize: 1000,
+    }),
   };
 }
 

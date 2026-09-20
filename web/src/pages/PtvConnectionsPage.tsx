@@ -188,13 +188,16 @@ export function PtvConnectionsPage() {
 
       <h2 style={{ marginTop: 32 }}>Connect a PTV v12 API key</h2>
       <p className="muted">
-        The v12 API key is stored encrypted and belongs to the selected tenant.
-        It is used for read access to PTV.
+        The v12 API key is stored encrypted and belongs to the selected tenant. It is used for read
+        access to PTV.
       </p>
       {currentTenant ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>{currentTenant.tenantName}</strong>
-          <select value={v12Environment} onChange={(e) => setV12Environment(e.target.value as PtvEnvironment)}>
+          <select
+            value={v12Environment}
+            onChange={(e) => setV12Environment(e.target.value as PtvEnvironment)}
+          >
             <option value="production">production</option>
             <option value="test">test</option>
           </select>
@@ -206,14 +209,20 @@ export function PtvConnectionsPage() {
             autoComplete="off"
             style={{ minWidth: 320 }}
           />
-          <button className="primary" onClick={() => void saveAndTestV12()} disabled={v12Busy || !v12ApiKey.trim()}>
+          <button
+            className="primary"
+            onClick={() => void saveAndTestV12()}
+            disabled={v12Busy || !v12ApiKey.trim()}
+          >
             {v12Busy ? 'Testing…' : 'Save & test'}
           </button>
         </div>
       ) : (
         <p className="muted">Select a tenant first.</p>
       )}
-      {v12Status && <p className={v12Status.startsWith('Connected') ? 'muted' : 'error'}>{v12Status}</p>}
+      {v12Status && (
+        <p className={v12Status.startsWith('Connected') ? 'muted' : 'error'}>{v12Status}</p>
+      )}
 
       <h2 style={{ marginTop: 24 }}>Connect a PTV v11 account</h2>
       <div style={{ display: 'flex', gap: 8 }}>

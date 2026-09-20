@@ -43,7 +43,26 @@ export class ApiError extends Error {
   }
 }
 
-async function refreshAccessToken(): Promise<void> {
+let inFlightRefresh: Promise<void> | null = null;
+
+/**
+ * Concurrent 401s (e.g. two components' load effects firing at once) must
+ * share one refresh call, not each POST the same raw refresh token to
+ * `/auth/refresh`. The backend rotates + revokes on each use and treats a
+ * second use of an already-rotated token as theft, revoking every session
+ * for the user (`src/auth/authService.ts`'s reuse-detection) — without
+ * this dedup, an ordinary page load with an expired access token could
+ * force-logout the user everywhere.
+ */
+function refreshAccessToken(): Promise<void> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = doRefreshAccessToken().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+async function doRefreshAccessToken(): Promise<void> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) {
     throw new ApiError(401, 'Not logged in');

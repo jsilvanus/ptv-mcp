@@ -10,7 +10,7 @@ import type {
   PtvEnvironment,
   UserPtvConnectionService,
 } from '../credentials/userPtvConnectionService.js';
-import type { TenantService } from '../tenants/tenantService.js';
+import type { TenantMembership, TenantService } from '../tenants/tenantService.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 
@@ -58,14 +58,15 @@ export async function ptvConnectionRoutes(
    * to — see userPtvConnectionService.ts), but `audit_entries` requires a
    * tenantId. Record the event once per tenant the user is currently a
    * member of, so every tenant relying on this credential can see it in
-   * its own audit log.
+   * its own audit log. Callers already have `tenantMemberships` on hand
+   * (fetched once per request), so it's passed in rather than re-fetched.
    */
   async function recordConnectionEvent(
     userId: string,
     action: 'ConnectPtvAccount' | 'DisconnectPtvAccount',
     environment: PtvEnvironment,
+    tenantMemberships: TenantMembership[],
   ): Promise<void> {
-    const tenantMemberships = await tenantService.listTenantsForUser(userId);
     await Promise.all(
       tenantMemberships.map((membership) =>
         auditService.record({
@@ -137,13 +138,31 @@ export async function ptvConnectionRoutes(
       // every tenant the user belongs to, in both PTV environments. This is
       // intentionally independent from v11 write enablement.
       const tenantMemberships = await tenantService.listTenantsForUser(request.userId!);
-      await Promise.all(
+      const readDefaultResults = await Promise.allSettled(
         tenantMemberships.map((membership) =>
           adapterConfigService.ensureV11ReadDefaults(membership.tenantId),
         ),
       );
+      // Each tenant's read-default update runs in its own transaction, so a
+      // failure for one tenant must not roll back the others already
+      // committed, nor prevent the (already-successful) connection itself
+      // from being recorded below — log and continue rather than aborting
+      // the request with the token already durably stored.
+      for (const result of readDefaultResults) {
+        if (result.status === 'rejected') {
+          request.log.error(
+            { err: result.reason },
+            'Failed to enable v11 read defaults for a tenant membership',
+          );
+        }
+      }
 
-      await recordConnectionEvent(request.userId!, 'ConnectPtvAccount', environment);
+      await recordConnectionEvent(
+        request.userId!,
+        'ConnectPtvAccount',
+        environment,
+        tenantMemberships,
+      );
       return reply.code(204).send();
     },
   );
@@ -168,7 +187,13 @@ export async function ptvConnectionRoutes(
         // own record is the source of truth for whether we'll use this token again.
       }
       await connectionService.revokeConnection(request.userId!, 'v11', environment);
-      await recordConnectionEvent(request.userId!, 'DisconnectPtvAccount', environment);
+      const tenantMemberships = await tenantService.listTenantsForUser(request.userId!);
+      await recordConnectionEvent(
+        request.userId!,
+        'DisconnectPtvAccount',
+        environment,
+        tenantMemberships,
+      );
       return reply.code(204).send();
     },
   );

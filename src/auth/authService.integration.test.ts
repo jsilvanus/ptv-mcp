@@ -163,11 +163,28 @@ describe('AuthService', () => {
 
   it('revokes the refresh token on logout so it can no longer be used', async () => {
     const email = uniqueEmail();
-    await service.register(email, 'Test User', 'correct-password');
+    const { userId } = await service.register(email, 'Test User', 'correct-password');
     const session = await service.login(email, 'correct-password');
 
-    await service.logout(session.refreshToken);
+    await service.logout(userId, session.refreshToken);
     await expect(service.refresh(session.refreshToken)).rejects.toThrow(InvalidOrExpiredTokenError);
+  });
+
+  it("does not revoke another user's refresh token even if the caller supplies its raw value", async () => {
+    const victimEmail = uniqueEmail();
+    await service.register(victimEmail, 'Victim', 'correct-password');
+    const victimSession = await service.login(victimEmail, 'correct-password');
+
+    const attackerEmail = uniqueEmail();
+    const { userId: attackerId } = await service.register(
+      attackerEmail,
+      'Attacker',
+      'correct-password',
+    );
+
+    await service.logout(attackerId, victimSession.refreshToken);
+    // Still valid: logout only revokes tokens owned by the calling user.
+    await expect(service.refresh(victimSession.refreshToken)).resolves.toBeDefined();
   });
 
   it('resets the password with a valid token and revokes all sessions', async () => {

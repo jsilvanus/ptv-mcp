@@ -10,6 +10,7 @@ import { auditEntries, memberships, proposals, tenants, users } from '../db/sche
 import { signAccessToken } from '../auth/jwt.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
+import { OAuthService } from '../mcp/oauthService.js';
 import type { Service } from '../ptv/domain.js';
 
 const BASE_SERVICE: Service = {
@@ -34,6 +35,16 @@ describe('proposal routes', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
   const configService = new PtvAdapterConfigService(db);
+  // Must match src/app.ts's OAuthService construction (same issuer/resource)
+  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
+  // them, unlike signAccessToken's web-session JWT (no iss/aud/tenant
+  // claims), which is what /tenants/:id/proposals's own auth expects.
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
   let app: FastifyInstance;
   const createdTenantIds: string[] = [];
   const createdUserIds: string[] = [];
@@ -133,12 +144,25 @@ describe('proposal routes', () => {
         role: 'reader',
       });
     });
+    // The /mcp call below needs a real MCP OAuth token (tenant/environment/
+    // api-version claims), not the plain web-session JWT `readerToken` is
+    // — that one is still correct for the REST /tenants/:id/proposals
+    // check further down, which goes through a different auth path.
+    const readerMcpToken = await oauthService.issueAccessToken(
+      readerId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      editor.tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
 
     const queuedByReader = await app.inject({
       method: 'POST',
       url: '/mcp',
       headers: {
-        authorization: 'Bearer ' + readerToken,
+        authorization: 'Bearer ' + readerMcpToken,
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
       },

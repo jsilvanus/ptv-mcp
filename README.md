@@ -4,13 +4,16 @@ Palvelutietovarannon käyttöön tarkoitettu MCP
 
 A multi-tenant MCP server bridging Suomi.fi Palvelutietovaranto (PTV) and
 AI agents. See [`docs/plan.md`](./docs/plan.md) for the architecture,
-[`docs/phase-plan.md`](./docs/phase-plan.md) for the build sequence, and
-[`docs/ptv-v11-notes.md`](./docs/ptv-v11-notes.md) for the PTV v11 API
+[`docs/phase-plan.md`](./docs/phase-plan.md) for the build sequence,
+[`docs/ptv-v11-notes.md`](./docs/ptv-v11-notes.md) and
+[`docs/ptv-v12-notes.md`](./docs/ptv-v12-notes.md) for the PTV v11/v12 API
 findings, [`docs/deployment-guide.md`](./docs/deployment-guide.md) for
 deployment, and
 [`docs/adapter-onboarding-runbook.md`](./docs/adapter-onboarding-runbook.md)
 for new adapter bring-up. `PLAN.md` and `EXECUTION_LOG.md` track live
-implementation progress against the phase plan.
+implementation progress against the phase plan — both adapters
+(`PtvV11Adapter`, `PtvV12Adapter`) are live side by side today; see
+`PLAN.md`'s Phase 9 entry for the current state and known gaps.
 
 ## Local development
 

@@ -84,6 +84,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v11',
         operation: 'write',
         actingUserId: userId,
       }),
@@ -115,6 +116,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v11',
         operation: 'read',
         actingUserId: outsiderId,
       }),
@@ -128,6 +130,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v11',
         operation: 'read',
         actingUserId: userId,
       }),
@@ -149,6 +152,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v11',
         operation: 'write',
         actingUserId: userId,
       }),
@@ -170,6 +174,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v11',
         operation: 'write',
         actingUserId: userId,
       }),
@@ -180,6 +185,7 @@ describe('DbPtvAdapterRegistry', () => {
     const registry = buildRegistry();
     const adapter = await registry.resolve({
       environment: 'test',
+      apiVersion: 'v11',
       operation: 'read',
       actingUserId: randomUUID(),
     });
@@ -204,6 +210,7 @@ describe('DbPtvAdapterRegistry', () => {
     const adapter = await registry.resolve({
       tenantId,
       environment: 'test',
+      apiVersion: 'v11',
       operation: 'read',
       actingUserId: userId,
     });
@@ -255,6 +262,7 @@ describe('DbPtvAdapterRegistry', () => {
     await registry.resolve({
       tenantId,
       environment: 'production',
+      apiVersion: 'v11',
       operation: 'write',
       actingUserId: userId,
     });
@@ -305,6 +313,7 @@ describe('DbPtvAdapterRegistry', () => {
     const adapter = await registry.resolve({
       tenantId,
       environment: 'production',
+      apiVersion: 'v12-fake-tenant-scoped',
       operation: 'write',
       actingUserId: userId,
     });
@@ -340,6 +349,7 @@ describe('DbPtvAdapterRegistry', () => {
       registry.resolve({
         tenantId,
         environment: 'production',
+        apiVersion: 'v12-fake-tenant-scoped',
         operation: 'write',
         actingUserId: userId,
       }),

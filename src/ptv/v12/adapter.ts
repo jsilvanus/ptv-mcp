@@ -1,9 +1,21 @@
 import type {
-  ApplyServiceChangeResult, PtvAdapter, PtvAdapterCapabilities, PtvEnvironment, ServiceChangeProposal,
+  ApplyServiceChangeResult,
+  PtvAdapter,
+  PtvAdapterCapabilities,
+  PtvEnvironment,
+  ServiceChangeProposal,
 } from '../adapter.js';
 import type {
-  CodeListEntry, Connection, GeneralDescription, Organization, PaginatedResult,
-  PtvContentId, SearchParams, Service, ServiceChannel, ServiceCollection,
+  CodeListEntry,
+  Connection,
+  GeneralDescription,
+  Organization,
+  PaginatedResult,
+  PtvContentId,
+  SearchParams,
+  Service,
+  ServiceChannel,
+  ServiceCollection,
 } from '../domain.js';
 import { PtvV12Client } from './client.js';
 
@@ -89,7 +101,9 @@ export class PtvV12Adapter implements PtvAdapter {
     };
   }
 
-  getCapabilities(): PtvAdapterCapabilities { return this.capabilities; }
+  getCapabilities(): PtvAdapterCapabilities {
+    return this.capabilities;
+  }
 
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
     const page = params.page ?? 1;
@@ -98,13 +112,12 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12Service(item as V12ServiceWire),
     );
     const query = params.query?.trim();
-    const hydrated = query || params.organizationId
-      ? await this.hydrateServices(all)
-      : all;
+    const hydrated = query || params.organizationId ? await this.hydrateServices(all) : all;
 
-    const filtered = hydrated.filter((service) =>
-      (!params.organizationId || service.organizationId === params.organizationId) &&
-      (!query || matchesService(service, query)),
+    const filtered = hydrated.filter(
+      (service) =>
+        (!params.organizationId || service.organizationId === params.organizationId) &&
+        (!query || matchesService(service, query)),
     );
     return paginate(filtered, page, pageSize);
   }
@@ -114,7 +127,8 @@ export class PtvV12Adapter implements PtvAdapter {
       const raw = await this.client.get<V12ServiceWire>(`/api/v12/service/${id}`);
       return mapV12Service(raw);
     } catch (err) {
-      if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404) return null;
+      if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404)
+        return null;
       throw err;
     }
   }
@@ -126,12 +140,11 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12ServiceChannel(item as V12ServiceChannelWire),
     );
     const query = params.query?.trim();
-    const hydrated = query || params.organizationId
-      ? await this.hydrateChannels(all)
-      : all;
-    const filtered = hydrated.filter((channel) =>
-      (!params.organizationId || channel.organizationId === params.organizationId) &&
-      (!query || matchesChannel(channel, query)),
+    const hydrated = query || params.organizationId ? await this.hydrateChannels(all) : all;
+    const filtered = hydrated.filter(
+      (channel) =>
+        (!params.organizationId || channel.organizationId === params.organizationId) &&
+        (!query || matchesChannel(channel, query)),
     );
     return paginate(filtered, page, pageSize);
   }
@@ -144,9 +157,7 @@ export class PtvV12Adapter implements PtvAdapter {
     );
     const query = params.query?.trim();
     const hydrated = query ? await this.hydrateOrganisations(all) : all;
-    const filtered = query
-      ? hydrated.filter((org) => matchesOrganisation(org, query))
-      : hydrated;
+    const filtered = query ? hydrated.filter((org) => matchesOrganisation(org, query)) : hydrated;
     return paginate(filtered, page, pageSize);
   }
 
@@ -183,15 +194,27 @@ export class PtvV12Adapter implements PtvAdapter {
     }
     return hierarchy;
   }
-  async searchServiceCollections(_params: SearchParams): Promise<PaginatedResult<ServiceCollection>> { return unsupported('service-collection search'); }
-  async searchGeneralDescriptions(_params: SearchParams): Promise<PaginatedResult<GeneralDescription>> { return unsupported('general-description search'); }
+  async searchServiceCollections(
+    _params: SearchParams,
+  ): Promise<PaginatedResult<ServiceCollection>> {
+    return unsupported('service-collection search');
+  }
+  async searchGeneralDescriptions(
+    _params: SearchParams,
+  ): Promise<PaginatedResult<GeneralDescription>> {
+    return unsupported('general-description search');
+  }
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
     const raw = await this.client.get<unknown>('/api/v12/connection/search');
     return extractItems(raw)
       .map(mapV12Connection)
-      .filter((connection) => connection.serviceId === entityId || connection.channelId === entityId);
+      .filter(
+        (connection) => connection.serviceId === entityId || connection.channelId === entityId,
+      );
   }
-  async listCodes(_codeListName: string): Promise<CodeListEntry[]> { return unsupported('code lists'); }
+  async listCodes(_codeListName: string): Promise<CodeListEntry[]> {
+    return unsupported('code lists');
+  }
   private async fetchAll<T>(path: string, map: (item: unknown) => T, pageSize = 100): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
@@ -204,30 +227,47 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   private async hydrateServices(items: Service[]): Promise<Service[]> {
-    return Promise.all(items.map(async (service) => {
-      if (service.organizationId && service.modifiedAt !== new Date(0).toISOString() && Object.keys(service.names).length > 0) {
-        return service;
-      }
-      return (await this.getService(service.id)) ?? service;
-    }));
+    return Promise.all(
+      items.map(async (service) => {
+        if (
+          service.organizationId &&
+          service.modifiedAt !== new Date(0).toISOString() &&
+          Object.keys(service.names).length > 0
+        ) {
+          return service;
+        }
+        return (await this.getService(service.id)) ?? service;
+      }),
+    );
   }
 
   private async hydrateChannels(items: ServiceChannel[]): Promise<ServiceChannel[]> {
-    return Promise.all(items.map(async (channel) => {
-      if (channel.organizationId && channel.modifiedAt !== new Date(0).toISOString() && Object.keys(channel.names).length > 0) {
-        return channel;
-      }
-      return (await this.getChannel(channel.id)) ?? channel;
-    }));
+    return Promise.all(
+      items.map(async (channel) => {
+        if (
+          channel.organizationId &&
+          channel.modifiedAt !== new Date(0).toISOString() &&
+          Object.keys(channel.names).length > 0
+        ) {
+          return channel;
+        }
+        return (await this.getChannel(channel.id)) ?? channel;
+      }),
+    );
   }
 
   private async hydrateOrganisations(items: Organization[]): Promise<Organization[]> {
-    return Promise.all(items.map(async (organization) => {
-      if (organization.modifiedAt !== new Date(0).toISOString() && Object.keys(organization.names).length > 0) {
-        return organization;
-      }
-      return (await this.getOrganisation(organization.id)) ?? organization;
-    }));
+    return Promise.all(
+      items.map(async (organization) => {
+        if (
+          organization.modifiedAt !== new Date(0).toISOString() &&
+          Object.keys(organization.names).length > 0
+        ) {
+          return organization;
+        }
+        return (await this.getOrganisation(organization.id)) ?? organization;
+      }),
+    );
   }
 
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
@@ -238,7 +278,12 @@ export class PtvV12Adapter implements PtvAdapter {
 function extractItems(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw;
   if (!raw || typeof raw !== 'object') return [];
-  const object = raw as { items?: unknown[]; content?: unknown[]; data?: unknown[]; results?: unknown[] };
+  const object = raw as {
+    items?: unknown[];
+    content?: unknown[];
+    data?: unknown[];
+    results?: unknown[];
+  };
   return object.items ?? object.content ?? object.data ?? object.results ?? [];
 }
 
@@ -259,19 +304,25 @@ function normalizeSearchText(value: string): string {
 
 function matchesService(service: Service, query: string): boolean {
   const needle = normalizeSearchText(query);
-  return [...Object.values(service.names), ...Object.values(service.summaries), ...Object.values(service.descriptions)]
-    .some((value) => normalizeSearchText(value).includes(needle));
+  return [
+    ...Object.values(service.names),
+    ...Object.values(service.summaries),
+    ...Object.values(service.descriptions),
+  ].some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
 }
 
 function matchesOrganisation(org: Organization, query: string): boolean {
   const needle = normalizeSearchText(query);
-  return Object.values(org.names).some((value) => normalizeSearchText(value).includes(needle));
+  return Object.values(org.names).some(
+    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
+  );
 }
 
 function matchesChannel(channel: ServiceChannel, query: string): boolean {
   const needle = normalizeSearchText(query);
-  return [...Object.values(channel.names), ...Object.values(channel.descriptions)]
-    .some((value) => normalizeSearchText(value).includes(needle));
+  return [...Object.values(channel.names), ...Object.values(channel.descriptions)].some(
+    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
+  );
 }
 
 function isNotFound(err: unknown): boolean {
@@ -284,11 +335,19 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId: wire.organizationId ?? wire.organization?.contentId ?? wire.organization?.id ?? wire.organization?.organizationId ?? '',
+    organizationId:
+      wire.organizationId ??
+      wire.organization?.contentId ??
+      wire.organization?.id ??
+      wire.organization?.organizationId ??
+      '',
     channelType: normalizeChannelType(wire.serviceChannelType ?? wire.channelType ?? wire.type),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    descriptions: localized(wire.descriptions ?? wire.description ?? wire.languageVersions, 'description'),
+    descriptions: localized(
+      wire.descriptions ?? wire.description ?? wire.languageVersions,
+      'description',
+    ),
     languages: wire.languages ?? (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
     modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
   };
@@ -297,7 +356,8 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
 function mapV12Organization(wire: V12OrganizationWire): Organization {
   const id = wire.contentId ?? wire.id;
   if (!id) throw new Error('PTV v12 organization response has no contentId');
-  const parentOrganizationId = wire.parentOrganizationId ?? wire.parentOrganization?.contentId ?? wire.parentOrganization?.id;
+  const parentOrganizationId =
+    wire.parentOrganizationId ?? wire.parentOrganization?.contentId ?? wire.parentOrganization?.id;
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
@@ -310,12 +370,20 @@ function mapV12Organization(wire: V12OrganizationWire): Organization {
 }
 
 function mapV12Connection(wire: unknown): Connection {
-  const value = (wire && typeof wire === 'object' ? wire : {}) as Record<string, any>;
-  const service = value.service as Record<string, any> | undefined;
-  const channel = value.channel as Record<string, any> | undefined;
-  const serviceId = value.serviceContentId ?? value.serviceId ?? service?.contentId ?? service?.id ?? '';
-  const channelId = value.channelContentId ?? value.channelId ?? value.serviceChannelId ?? channel?.contentId ?? channel?.id ?? '';
-  if (!serviceId || !channelId) throw new Error('PTV v12 connection response has no service/channel id');
+  const value = (wire && typeof wire === 'object' ? wire : {}) as Record<string, unknown>;
+  const service = value.service as Record<string, unknown> | undefined;
+  const channel = value.channel as Record<string, unknown> | undefined;
+  const serviceId =
+    value.serviceContentId ?? value.serviceId ?? service?.contentId ?? service?.id ?? '';
+  const channelId =
+    value.channelContentId ??
+    value.channelId ??
+    value.serviceChannelId ??
+    channel?.contentId ??
+    channel?.id ??
+    '';
+  if (!serviceId || !channelId)
+    throw new Error('PTV v12 connection response has no service/channel id');
   return {
     serviceId: String(serviceId),
     channelId: String(channelId),
@@ -324,26 +392,15 @@ function mapV12Connection(wire: unknown): Connection {
 }
 
 function normalizeChannelType(value: string | undefined): ServiceChannel['channelType'] {
-  if (value === 'Phone' || value === 'PrintableForm' || value === 'ServiceLocation' || value === 'WebPage') return value;
+  if (
+    value === 'Phone' ||
+    value === 'PrintableForm' ||
+    value === 'ServiceLocation' ||
+    value === 'WebPage'
+  )
+    return value;
   return 'EChannel';
 }
-function normalizePage<T>(
-  raw: unknown,
-  page: number,
-  pageSize: number,
-  map: (item: unknown) => T,
-): PaginatedResult<T> {
-  if (Array.isArray(raw)) return { items: raw.map(map), page, pageSize, totalCount: raw.length };
-  const object = raw as { items?: unknown[]; content?: unknown[]; totalCount?: number; totalElements?: number };
-  const values = object.items ?? object.content ?? [];
-  return {
-    items: values.map(map),
-    page,
-    pageSize,
-    totalCount: object.totalCount ?? object.totalElements ?? values.length,
-  };
-}
-
 /**
  * Map the v12 wire representation into the stable PTV domain model.
  *
@@ -360,7 +417,10 @@ export function mapV12Service(wire: V12ServiceWire): Service {
   const languageVersions = wire.languageVersions;
   const names = localized(wire.names ?? wire.name ?? languageVersions, 'name');
   const summaries = localized(wire.summaries ?? wire.summary ?? languageVersions, 'summary');
-  const descriptions = localized(wire.descriptions ?? wire.description ?? languageVersions, 'description');
+  const descriptions = localized(
+    wire.descriptions ?? wire.description ?? languageVersions,
+    'description',
+  );
   const languages = wire.languages ?? (languageVersions ? Object.keys(languageVersions) : []);
 
   return {
@@ -393,13 +453,15 @@ function localized(value: unknown, preferredField?: string): Record<string, stri
   if (!value) return {};
 
   if (Array.isArray(value)) {
-    return Object.fromEntries(value.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object') return [];
-      const e = entry as Record<string, unknown>;
-      const language = String(e.languageCode ?? e.language ?? e.lang ?? '');
-      const text = preferredField ? e[preferredField] : e.value ?? e.text ?? e.description;
-      return language && typeof text === 'string' ? [[language, text]] : [];
-    }));
+    return Object.fromEntries(
+      value.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object') return [];
+        const e = entry as Record<string, unknown>;
+        const language = String(e.languageCode ?? e.language ?? e.lang ?? '');
+        const text = preferredField ? e[preferredField] : (e.value ?? e.text ?? e.description);
+        return language && typeof text === 'string' ? [[language, text]] : [];
+      }),
+    );
   }
 
   if (typeof value === 'object') {
@@ -417,7 +479,7 @@ function localized(value: unknown, preferredField?: string): Record<string, stri
       if (typeof entry === 'string') return [[language, entry] as [string, string]];
       if (!entry || typeof entry !== 'object') return [];
       const e = entry as Record<string, unknown>;
-      const text = preferredField ? e[preferredField] : e.value ?? e.text ?? e.description;
+      const text = preferredField ? e[preferredField] : (e.value ?? e.text ?? e.description);
       return typeof text === 'string' ? [[language, text] as [string, string]] : [];
     });
     return Object.fromEntries(entries);

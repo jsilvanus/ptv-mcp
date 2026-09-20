@@ -15,6 +15,7 @@ import { LoggingMailer } from '../auth/mailer.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { AuditService } from '../audit/auditService.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
+import { OAuthService } from '../mcp/oauthService.js';
 import type { Service } from '../ptv/domain.js';
 
 const BASE_SERVICE: Service = {
@@ -45,6 +46,15 @@ describe('Phase 8 sync point', () => {
   });
   const configService = new PtvAdapterConfigService(db);
   const auditService = new AuditService(db);
+  // Must match src/app.ts's OAuthService construction (same issuer/resource)
+  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
+  // them, unlike AuthService's web-session JWT (no iss/aud/tenant claims).
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
 
   let app: FastifyInstance;
   let baseUrl: string;
@@ -100,12 +110,30 @@ describe('Phase 8 sync point', () => {
     await app.close();
   });
 
-  async function registerUser(name: string): Promise<{ userId: string; token: string }> {
+  async function registerUser(name: string): Promise<{ userId: string }> {
     const email = `phase8-${randomUUID()}@example.test`;
     const { userId } = await authService.register(email, name, 'correct-password');
     createdUserIds.push(userId);
-    const session = await authService.login(email, 'correct-password');
-    return { userId, token: session.accessToken };
+    await authService.login(email, 'correct-password');
+    return { userId };
+  }
+
+  /**
+   * MCP tools have no per-call tenant/environment argument — see
+   * toolContext() in mcpServer.ts — so exercising a user against a
+   * particular tenant means minting a token bound to that tenant, not
+   * passing one in `arguments`.
+   */
+  async function mintToken(userId: string, tenantId: string): Promise<string> {
+    return oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
   }
 
   async function createTenant(name: string): Promise<string> {
@@ -152,10 +180,17 @@ describe('Phase 8 sync point', () => {
 
   it('queues, reviews, and resolves proposals with reader/editor split and one correlationId', async () => {
     const tenantId = await createTenant('Phase 8 queue tenant');
-    const [reader, editor] = await Promise.all([registerUser('Reader'), registerUser('Editor')]);
+    const [readerUser, editorUser] = await Promise.all([
+      registerUser('Reader'),
+      registerUser('Editor'),
+    ]);
     await Promise.all([
-      addMembership(tenantId, reader.userId, 'reader'),
-      addMembership(tenantId, editor.userId, 'editor'),
+      addMembership(tenantId, readerUser.userId, 'reader'),
+      addMembership(tenantId, editorUser.userId, 'editor'),
+    ]);
+    const [reader, editor] = await Promise.all([
+      mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
+      mintToken(editorUser.userId, tenantId).then((token) => ({ ...editorUser, token })),
     ]);
 
     const readerClient = await connectedClient(reader.token);
@@ -238,10 +273,17 @@ describe('Phase 8 sync point', () => {
 
   it('returns not_authorized for approve_and_apply from editor-only resolver and keeps proposal pending', async () => {
     const tenantId = await createTenant('Phase 8 apply gate tenant');
-    const [reader, editor] = await Promise.all([registerUser('Reader'), registerUser('Editor')]);
+    const [readerUser, editorUser] = await Promise.all([
+      registerUser('Reader'),
+      registerUser('Editor'),
+    ]);
     await Promise.all([
-      addMembership(tenantId, reader.userId, 'reader'),
-      addMembership(tenantId, editor.userId, 'editor'),
+      addMembership(tenantId, readerUser.userId, 'reader'),
+      addMembership(tenantId, editorUser.userId, 'editor'),
+    ]);
+    const [reader, editor] = await Promise.all([
+      mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
+      mintToken(editorUser.userId, tenantId).then((token) => ({ ...editorUser, token })),
     ]);
 
     const readerClient = await connectedClient(reader.token);

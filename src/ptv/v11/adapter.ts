@@ -158,10 +158,12 @@ export class PtvV11Adapter implements PtvAdapter {
     const query = params.query?.trim().toLocaleLowerCase('fi-FI');
     const items = wires
       .map(organizationWireToDomain)
-      .filter((org) =>
-        !query || Object.values(org.names).some((name) =>
-          name.toLocaleLowerCase('fi-FI').includes(query),
-        ),
+      .filter(
+        (org) =>
+          !query ||
+          Object.values(org.names).some(
+            (name) => name !== undefined && name.toLocaleLowerCase('fi-FI').includes(query),
+          ),
       );
     return {
       items,

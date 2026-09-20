@@ -15,6 +15,7 @@ import { LoggingMailer } from '../auth/mailer.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { UserPtvConnectionService } from '../credentials/userPtvConnectionService.js';
 import { AuditService } from '../audit/auditService.js';
+import { OAuthService } from '../mcp/oauthService.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import type { Service } from '../ptv/domain.js';
 
@@ -47,6 +48,15 @@ describe('Phase 6 sync point', () => {
   const adapterConfigService = new PtvAdapterConfigService(db);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
   const auditService = new AuditService(db);
+  // Must match src/app.ts's OAuthService construction (same issuer/resource)
+  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
+  // them, unlike AuthService's web-session JWT (no iss/aud/tenant claims).
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
 
   let app: FastifyInstance;
   let baseUrl: string;
@@ -110,12 +120,30 @@ describe('Phase 6 sync point', () => {
     await app.close();
   });
 
-  async function registerUser(name: string): Promise<{ userId: string; token: string }> {
+  async function registerUser(name: string): Promise<{ userId: string }> {
     const email = `phase6-${randomUUID()}@example.test`;
     const { userId } = await authService.register(email, name, 'correct-password');
     createdUserIds.push(userId);
-    const session = await authService.login(email, 'correct-password');
-    return { userId, token: session.accessToken };
+    await authService.login(email, 'correct-password');
+    return { userId };
+  }
+
+  /**
+   * MCP tools have no per-call tenant/environment argument — see
+   * toolContext() in mcpServer.ts — so exercising a user against a
+   * particular tenant means minting a token bound to that tenant, not
+   * passing one in `arguments`.
+   */
+  async function mintToken(userId: string, tenantId: string): Promise<string> {
+    return oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
   }
 
   async function createTenant(name: string): Promise<string> {
@@ -165,17 +193,23 @@ describe('Phase 6 sync point', () => {
 
   it('runs propose/validate/export/apply flows with role-specific authorization behavior', async () => {
     const tenantId = await createTenant('Phase 6 role flow tenant');
-    const [reader, editor, publisher, tenantAdmin] = await Promise.all([
+    const [readerUser, editorUser, publisherUser, tenantAdminUser] = await Promise.all([
       registerUser('Reader'),
       registerUser('Editor'),
       registerUser('Publisher'),
       registerUser('Tenant Admin'),
     ]);
     await Promise.all([
-      addMembership(tenantId, reader.userId, 'reader'),
-      addMembership(tenantId, editor.userId, 'editor'),
-      addMembership(tenantId, publisher.userId, 'publisher'),
-      addMembership(tenantId, tenantAdmin.userId, 'tenant_admin'),
+      addMembership(tenantId, readerUser.userId, 'reader'),
+      addMembership(tenantId, editorUser.userId, 'editor'),
+      addMembership(tenantId, publisherUser.userId, 'publisher'),
+      addMembership(tenantId, tenantAdminUser.userId, 'tenant_admin'),
+    ]);
+    const [reader, editor, publisher, tenantAdmin] = await Promise.all([
+      mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
+      mintToken(editorUser.userId, tenantId).then((token) => ({ ...editorUser, token })),
+      mintToken(publisherUser.userId, tenantId).then((token) => ({ ...publisherUser, token })),
+      mintToken(tenantAdminUser.userId, tenantId).then((token) => ({ ...tenantAdminUser, token })),
     ]);
     await configureV11(tenantId, true);
     await connectionService.storeConnection(
@@ -341,37 +375,36 @@ describe('Phase 6 sync point', () => {
       new Date('2030-01-01T00:00:00.000Z'),
     );
 
-    const sharedClient = await connectedClient(sharedPublisher.token);
-    const applyInTenantA = await sharedClient.callTool({
+    // One MCP token binds to exactly one tenant (see mintToken's doc
+    // comment above), so exercising the same user against tenants A, B,
+    // and C means minting a token per tenant — the underlying v11
+    // connection ('shared-token', keyed by userId, not tenantId) is what's
+    // actually reused across all three, which is what this test's final
+    // assertion confirms.
+    const clientA = await connectedClient(await mintToken(sharedPublisher.userId, tenantA));
+    const applyInTenantA = await clientA.callTool({
       name: 'ptv_apply_changes',
-      arguments: {
-        tenantId: tenantA,
-        environment: 'test',
-        serviceId: BASE_SERVICE.id,
-        changes: { names: { fi: 'Tenant A apply' } },
-      },
+      arguments: { serviceId: BASE_SERVICE.id, changes: { names: { fi: 'Tenant A apply' } } },
     });
     expect(applyInTenantA.isError).not.toBe(true);
+    await clientA.close();
 
-    const applyInTenantB = await sharedClient.callTool({
+    const clientB = await connectedClient(await mintToken(sharedPublisher.userId, tenantB));
+    const applyInTenantB = await clientB.callTool({
       name: 'ptv_apply_changes',
-      arguments: {
-        tenantId: tenantB,
-        environment: 'test',
-        serviceId: BASE_SERVICE.id,
-        changes: { names: { fi: 'Tenant B apply' } },
-      },
+      arguments: { serviceId: BASE_SERVICE.id, changes: { names: { fi: 'Tenant B apply' } } },
     });
     expect(applyInTenantB.isError).not.toBe(true);
+    await clientB.close();
 
-    const forbiddenWrite = await sharedClient.callTool({
+    // sharedPublisher has no membership in tenantC at all — a token bound
+    // to it (however it was obtained) must still be rejected by the
+    // registry's own membership check, not merely by the OAuth consent
+    // screen not offering tenantC as a choice.
+    const clientC = await connectedClient(await mintToken(sharedPublisher.userId, tenantC));
+    const forbiddenWrite = await clientC.callTool({
       name: 'ptv_apply_changes',
-      arguments: {
-        tenantId: tenantC,
-        environment: 'test',
-        serviceId: BASE_SERVICE.id,
-        changes: { names: { fi: 'Tenant C should fail' } },
-      },
+      arguments: { serviceId: BASE_SERVICE.id, changes: { names: { fi: 'Tenant C should fail' } } },
     });
     expect(forbiddenWrite.isError).toBe(true);
     // A total non-member has no role at all, so `ptv_apply_changes` fails the
@@ -383,13 +416,13 @@ describe('Phase 6 sync point', () => {
       "requires at least 'editor' role",
     );
 
-    const forbiddenRead = await sharedClient.callTool({
+    const forbiddenRead = await clientC.callTool({
       name: 'ptv_search_services',
-      arguments: { tenantId: tenantC, environment: 'test', pageSize: 1 },
+      arguments: { pageSize: 1 },
     });
     expect(forbiddenRead.isError).toBe(true);
     expect((forbiddenRead.content as Array<{ text: string }>)[0]?.text).toContain('not_authorized');
-    await sharedClient.close();
+    await clientC.close();
 
     const capturedSharedTokens = capturedUserTokens.filter((token) => token === 'shared-token');
     expect(capturedSharedTokens.length).toBeGreaterThanOrEqual(2);
