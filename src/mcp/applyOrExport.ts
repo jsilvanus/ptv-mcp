@@ -111,6 +111,10 @@ export async function applyChanges(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<ApplyChangesResult> {
+  if (!ctx.writeApiVersion) {
+    throw new WriteApiNotSelectedError();
+  }
+
   const {
     current,
     proposed,
@@ -139,10 +143,6 @@ export async function applyChanges(
   });
   if (!validation.valid) {
     throw new ValidationFailedError(validation.errors);
-  }
-
-  if (!ctx.writeApiVersion) {
-    throw new WriteApiNotSelectedError();
   }
 
   const writeAdapter = await registry.resolve({
