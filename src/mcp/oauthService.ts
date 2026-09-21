@@ -257,8 +257,6 @@ export class OAuthService {
     if (
       !request.tenantId ||
       !request.environment ||
-      !request.tenantId ||
-      !request.environment ||
       !request.readApiVersion
     )
       throw new Error('Invalid authorization selection');
