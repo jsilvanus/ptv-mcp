@@ -94,14 +94,43 @@
 - [x] Proposal queue UI (Editor+), reusing Phase 5's `DiffView`
 - [x] Every step (queue/review/resolve) audited under one `correlationId`; sync point verified in `src/syncPoints/phase8.integration.test.ts`
 
-## Phase 9: `PtvV12Adapter` implementation (post-MVP-0) ⏸
-- [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators
-- [ ] Read methods against domain model
-- [ ] `x-api-key` auth (tenant-scoped), retry/backoff+jitter
-- [ ] Write methods implemented against beta schemas, gated off (`supports_write: false`)
-- [ ] Tenant-admin API-key management UI (`TenantEnvironment`), deferred from Phase 5
-- [ ] Contract test suite run against `PtvV12Adapter`
-- [ ] Pilot tenant confirms real v12 search via the existing MCP tools, unchanged
+## Phase 9: `PtvV12Adapter` implementation (post-MVP-0) — in progress, most steps done 🟡
+- [~] Read methods against domain model (`src/ptv/v12/adapter.ts`) — services,
+      channels, organisations (+hierarchy), connections implemented; **`searchServiceCollections`,
+      `searchGeneralDescriptions`, `listCodes` are unimplemented stubs that throw**
+      (see `docs/ptv-v12-notes.md`). Implemented searches also fetch PTV's entire
+      catalogue per content type and filter/paginate client-side rather than using
+      server-side query params — a real scalability gap, not just a style issue.
+- [x] `x-api-key` auth (tenant-scoped, via `TenantEnvironment`), retry/backoff with
+      `Retry-After` support (`src/ptv/v12/client.ts`)
+- [x] Write methods gated off: `applyServiceChange` throws
+      `'PTV v12 write operations are not enabled yet'` — no beta-schema write
+      mapping implemented yet (narrower than originally planned: the beta
+      `Post*/Put*` request bodies are not yet modeled, only the gate is in place)
+- [x] Tenant-admin API-key management UI (`web/src/pages/PtvConnectionsPage.tsx`'s
+      v12 section + `src/routes/ptvV12.ts`), not deferred — already live
+- [x] `PtvV12Adapter` wired into `DbPtvAdapterRegistry`'s default factories
+      alongside `PtvV11Adapter` — both adapters coexist in the running system now,
+      not sequenced as "v11 first, v12 later"
+- [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators — not done;
+      wire types are hand-written in `src/ptv/v12/adapter.ts`/`client.ts`, not
+      generated from the spec
+- [ ] Contract test suite (`src/ptv/testing/contractTests.ts`) run against
+      `PtvV12Adapter` — **not done**; same gap also still open for `PtvV11Adapter`.
+      `src/ptv/v12/adapter.test.ts` only unit-tests wire mapping/hydration, not
+      the full adapter contract
+- [ ] Pilot tenant confirmation — UI and routes are live but no recorded
+      confirmation of a real pilot tenant's v12 search traffic
+
+**Also landed, not originally planned as part of Phase 9**: independent
+per-connection **read vs. write PTV API version selection** — a user's MCP
+OAuth connection now selects `readApiVersion` and `writeApiVersion`
+independently (e.g. read via v12, write via v11), rather than one
+`api_version` governing both. See `drizzle/0011_oauth_independent_api_versions.sql`,
+`src/mcp/oauthService.ts`, `src/mcp/toolContext.ts`, `src/mcp/searchTools.ts`'s
+`resolveReadAdapter`, `src/mcp/applyOrExport.ts`'s write resolution. This
+was not in the original phase-plan and has no dedicated design doc — see
+`docs/phase-plan.md`'s Phase 9 section for a fuller writeup.
 
 ## Phase 10: MVP-1 — `PtvV12Adapter` write, test env — NOT STARTED (external gate)
 ## Phase 11: MVP-2 — `PtvV12Adapter` write, production; retire `PtvV11Adapter` — NOT STARTED (external gate)

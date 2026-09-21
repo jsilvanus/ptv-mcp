@@ -74,6 +74,7 @@ describe('search tools', () => {
     expect(registry.resolve).toHaveBeenCalledWith({
       tenantId: ctx.tenantId,
       environment: ctx.environment,
+      apiVersion: 'v11',
       operation: 'read',
       actingUserId: ctx.actingUserId,
     });

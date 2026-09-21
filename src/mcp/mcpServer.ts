@@ -96,8 +96,15 @@ function actingUserId(extra: Extra): string {
 }
 
 const publicReadSearchParamsSchema = {
-  query: z.string().optional().describe('Optional PTV text search. Omit it to browse using the other filters.'),
-  organizationId: z.string().uuid().optional().describe('Optional PTV organisation filter. This is not the OAuth tenant.'),
+  query: z
+    .string()
+    .optional()
+    .describe('Optional PTV text search. Omit it to browse using the other filters.'),
+  organizationId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Optional PTV organisation filter. This is not the OAuth tenant.'),
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(1000).optional(),
 };
@@ -107,7 +114,9 @@ const publicReadGetByIdSchema = {
 
 const oauthSecuritySchemes = [{ type: 'oauth2' as const, scopes: ['mcp'] }];
 
-function withOAuthSecurity<T extends object>(config: T): T & { securitySchemes: typeof oauthSecuritySchemes } {
+function withOAuthSecurity<T extends object>(
+  config: T,
+): T & { securitySchemes: typeof oauthSecuritySchemes } {
   return { ...config, securitySchemes: oauthSecuritySchemes };
 }
 
@@ -118,18 +127,72 @@ function toolContext(extra: Extra): ToolContext {
   const readApiVersion = extra.authInfo?.extra?.readApiVersion;
   const writeApiVersion = extra.authInfo?.extra?.writeApiVersion;
   if (typeof activeTenantId !== 'string' || activeTenantId === '') {
-    throw new Error('No active tenant for this MCP connection; reconnect and select an organisation');
+    throw new Error(
+      'No active tenant for this MCP connection; reconnect and select an organisation',
+    );
   }
   if (environment !== 'test' && environment !== 'production') {
-    throw new Error('No active PTV environment for this MCP connection; reconnect and select a connection');
+    throw new Error(
+      'No active PTV environment for this MCP connection; reconnect and select a connection',
+    );
   }
   if (typeof readApiVersion !== 'string' || readApiVersion === '') {
-    throw new Error('No active PTV read API version for this MCP connection; reconnect and select a connection');
+    throw new Error(
+      'No active PTV read API version for this MCP connection; reconnect and select a connection',
+    );
   }
   if (typeof writeApiVersion !== 'string' || writeApiVersion === '') {
-    throw new Error('No active PTV write API version for this MCP connection; reconnect and select a connection');
+    throw new Error(
+      'No active PTV write API version for this MCP connection; reconnect and select a connection',
+    );
   }
-  return { tenantId: activeTenantId, environment, readApiVersion, writeApiVersion, actingUserId: userId };
+  return {
+    tenantId: activeTenantId,
+    environment,
+    readApiVersion,
+    writeApiVersion,
+    actingUserId: userId,
+  };
+}
+
+/**
+ * Resource reads carry tenant/environment in the URI itself (the
+ * `ptv://{tenantId}/{environment}/...` templates below), unlike tools,
+ * which have no per-call channel for either and take both from the OAuth
+ * token (see `toolContext()` above). Read/write API version and the
+ * acting user still come from the token. Accepting whatever tenantId the
+ * URI names doesn't bypass anything: `PtvAdapterRegistry.resolve()`
+ * re-checks that `actingUserId` actually belongs to that tenant before
+ * ever touching a credential, exactly as it does for a tool call.
+ */
+function resourceToolContext(
+  extra: Extra,
+  uriTenantId: string,
+  uriEnvironment: string,
+): ToolContext {
+  const userId = actingUserId(extra);
+  const readApiVersion = extra.authInfo?.extra?.readApiVersion;
+  const writeApiVersion = extra.authInfo?.extra?.writeApiVersion;
+  if (uriEnvironment !== 'test' && uriEnvironment !== 'production') {
+    throw new Error(`Invalid PTV environment in resource URI: ${uriEnvironment}`);
+  }
+  if (typeof readApiVersion !== 'string' || readApiVersion === '') {
+    throw new Error(
+      'No active PTV read API version for this MCP connection; reconnect and select a connection',
+    );
+  }
+  if (typeof writeApiVersion !== 'string' || writeApiVersion === '') {
+    throw new Error(
+      'No active PTV write API version for this MCP connection; reconnect and select a connection',
+    );
+  }
+  return {
+    tenantId: uriTenantId,
+    environment: uriEnvironment,
+    readApiVersion,
+    writeApiVersion,
+    actingUserId: userId,
+  };
 }
 
 /** `exactOptionalPropertyTypes` means an explicit `page: undefined` doesn't satisfy `page?: number` — omit the key entirely instead. */
@@ -160,7 +223,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
 
   server.registerTool(
-    'ptv_search_services', withOAuthSecurity({
+    'ptv_search_services',
+    withOAuthSecurity({
       description:
         'Search published PTV services. The OAuth-selected PTV connection determines tenant, environment, read API version and write API version; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
@@ -177,16 +241,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_service', withOAuthSecurity({
+    'ptv_get_service',
+    withOAuthSecurity({
       description:
         'Fetch one published PTV service by id. The PTV tenant, environment, read API version and write API version are selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await searchTools.getService(registry, toolContext(extra), args.id),
-        );
+        return textResult(await searchTools.getService(registry, toolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -194,7 +257,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_channels', withOAuthSecurity({
+    'ptv_search_channels',
+    withOAuthSecurity({
       description:
         'Search published PTV service channels. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
@@ -211,16 +275,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_channel', withOAuthSecurity({
+    'ptv_get_channel',
+    withOAuthSecurity({
       description:
         'Fetch one published PTV service channel by id. The organisation context is selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await searchTools.getChannel(registry, toolContext(extra), args.id),
-        );
+        return textResult(await searchTools.getChannel(registry, toolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -228,11 +291,16 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_organisations', withOAuthSecurity({
-      description:
-        'Search published PTV organisations. Query searches organisation names.',
+    'ptv_search_organisations',
+    withOAuthSecurity({
+      description: 'Search published PTV organisations. Query searches organisation names.',
       inputSchema: {
-        query: z.string().optional().describe('Optional text search in PTV organisation names. Omit it to browse organisations.'),
+        query: z
+          .string()
+          .optional()
+          .describe(
+            'Optional text search in PTV organisation names. Omit it to browse organisations.',
+          ),
         page: z.number().int().min(1).optional(),
         pageSize: z.number().int().min(1).max(1000).optional(),
       },
@@ -240,15 +308,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchOrganisations(
-            registry,
-            toolContext(extra),
-            {
-              query: args.query,
-              ...(args.page !== undefined ? { page: args.page } : {}),
-              ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
-            },
-          ),
+          await searchTools.searchOrganisations(registry, toolContext(extra), {
+            ...(args.query !== undefined ? { query: args.query } : {}),
+            ...(args.page !== undefined ? { page: args.page } : {}),
+            ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
+          }),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -257,21 +321,21 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_find_organisation_and_children', withOAuthSecurity({
+    'ptv_find_organisation_and_children',
+    withOAuthSecurity({
       description:
         'Find a PTV organisation by name/text and return that organisation together with its published services and service channels. This is a compound convenience operation; use the individual search tools when you need independent searches.',
       inputSchema: {
-        query: z.string().min(1).describe('Organisation name or text, for example "Riihimäen seurakunta".'),
+        query: z
+          .string()
+          .min(1)
+          .describe('Organisation name or text, for example "Riihimäen seurakunta".'),
       },
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.findOrganisationAndChildren(
-            registry,
-            toolContext(extra),
-            args.query,
-          ),
+          await searchTools.findOrganisationAndChildren(registry, toolContext(extra), args.query),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -280,16 +344,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation', withOAuthSecurity({
+    'ptv_get_organisation',
+    withOAuthSecurity({
       description:
         'Fetch one published PTV organisation by id. The PTV tenant, environment, read API version and write API version are selected during OAuth authorization. The tenant does not limit which PTV organisation may be queried.',
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await searchTools.getOrganisation(registry, toolContext(extra), args.id),
-        );
+        return textResult(await searchTools.getOrganisation(registry, toolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -297,7 +360,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_organisation_hierarchy', withOAuthSecurity({
+    'ptv_get_organisation_hierarchy',
+    withOAuthSecurity({
       description:
         'Fetch a published PTV organisation and every ancestor up to its root. The organisation context is selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
@@ -314,7 +378,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_service_collections', withOAuthSecurity({
+    'ptv_search_service_collections',
+    withOAuthSecurity({
       description:
         'Search published PTV service collections. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
@@ -335,7 +400,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_general_descriptions', withOAuthSecurity({
+    'ptv_search_general_descriptions',
+    withOAuthSecurity({
       description:
         'Search published PTV general descriptions. The OAuth-selected tenant determines which PTV integration/API key is used; `query` and `organizationId` determine what PTV data is searched.',
       inputSchema: publicReadSearchParamsSchema,
@@ -356,7 +422,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_search_connections', withOAuthSecurity({
+    'ptv_search_connections',
+    withOAuthSecurity({
       description:
         'List published PTV service/channel connections. The organisation context is selected during OAuth authorization.',
       inputSchema: publicReadGetByIdSchema,
@@ -373,7 +440,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_list_codes', withOAuthSecurity({
+    'ptv_list_codes',
+    withOAuthSecurity({
       description: 'List entries in a PTV code list (e.g. "languages", "service-classes").',
       inputSchema: {
         codeListName: z.string(),
@@ -397,7 +465,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     );
 
   server.registerTool(
-    'ptv_propose_changes', withOAuthSecurity({
+    'ptv_propose_changes',
+    withOAuthSecurity({
       description:
         'Diff a proposed change against the current service. Never writes anything. Returns {serviceId, current, proposed, diff, correlationId} — pass correlationId to ptv_validate_changes/ptv_export_for_manual_publish/ptv_apply_changes to keep them in one audit trail.',
       inputSchema: {
@@ -427,7 +496,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_list_proposals', withOAuthSecurity({
+    'ptv_list_proposals',
+    withOAuthSecurity({
       description: 'List queued service proposals for a tenant. Requires Editor+ role.',
       inputSchema: {
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
@@ -445,7 +515,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_get_proposal', withOAuthSecurity({
+    'ptv_get_proposal',
+    withOAuthSecurity({
       description:
         'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
       inputSchema: {
@@ -471,7 +542,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_resolve_proposal', withOAuthSecurity({
+    'ptv_resolve_proposal',
+    withOAuthSecurity({
       description:
         'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
       inputSchema: {
@@ -500,7 +572,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_validate_changes', withOAuthSecurity({
+    'ptv_validate_changes',
+    withOAuthSecurity({
       description:
         'Validate an already-merged proposed service (the "proposed" object ptv_propose_changes returned) against PTV write rules.',
       inputSchema: {
@@ -526,7 +599,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_export_for_manual_publish', withOAuthSecurity({
+    'ptv_export_for_manual_publish',
+    withOAuthSecurity({
       description:
         "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish.",
       inputSchema: {
@@ -555,7 +629,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
-    'ptv_apply_changes', withOAuthSecurity({
+    'ptv_apply_changes',
+    withOAuthSecurity({
       description:
         'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection.',
       inputSchema: {
@@ -606,7 +681,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     serviceTemplate,
     { description: 'Get one PTV service by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(extra);
+      const ctx = resourceToolContext(
+        extra,
+        variables.tenantId as string,
+        variables.environment as string,
+      );
       const service = await searchTools.getService(registry, ctx, variables.serviceId as string);
       return {
         contents: [
@@ -630,7 +709,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     channelTemplate,
     { description: 'Get one PTV service channel by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(extra);
+      const ctx = resourceToolContext(
+        extra,
+        variables.tenantId as string,
+        variables.environment as string,
+      );
       const channel = await searchTools.getChannel(registry, ctx, variables.channelId as string);
       return {
         contents: [
@@ -654,7 +737,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     organisationTemplate,
     { description: 'Get one PTV organisation by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(extra);
+      const ctx = resourceToolContext(
+        extra,
+        variables.tenantId as string,
+        variables.environment as string,
+      );
       const organisation = await searchTools.getOrganisation(
         registry,
         ctx,
@@ -682,7 +769,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     hierarchyTemplate,
     { description: 'Get one PTV organisation hierarchy by id.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(extra);
+      const ctx = resourceToolContext(
+        extra,
+        variables.tenantId as string,
+        variables.environment as string,
+      );
       const hierarchy = await searchTools.getOrganisationHierarchy(
         registry,
         ctx,
@@ -710,7 +801,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     codeListTemplate,
     { description: 'List entries in one PTV code list by name.', mimeType: 'application/json' },
     async (_uri, variables, extra) => {
-      const ctx = toolContext(extra);
+      const ctx = resourceToolContext(
+        extra,
+        variables.tenantId as string,
+        variables.environment as string,
+      );
       const codes = await searchTools.listCodes(registry, ctx, variables.codeListName as string);
       return {
         contents: [

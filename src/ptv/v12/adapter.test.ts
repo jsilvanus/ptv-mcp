@@ -35,12 +35,8 @@ describe('PTV v12 service mapping', () => {
           languageVersions: { fi: { name: 'esimerkki' } },
         },
       ],
-      targetGroups: [
-        { contentId: 'target-1', languageVersions: { fi: { name: 'Lapset' } } },
-      ],
-      lifeEvents: [
-        { contentId: 'life-1', languageVersions: { fi: { name: 'Lapsen syntymä' } } },
-      ],
+      targetGroups: [{ contentId: 'target-1', languageVersions: { fi: { name: 'Lapset' } } }],
+      lifeEvents: [{ contentId: 'life-1', languageVersions: { fi: { name: 'Lapsen syntymä' } } }],
       industrialClasses: ['class-code-1'],
       languages: ['fi', 'sv'],
       serviceChannels: ['channel-1', { contentId: 'channel-2' }],
@@ -73,18 +69,10 @@ describe('PTV v12 service mapping', () => {
         names: { fi: 'Koulutus', sv: 'Utbildning' },
       },
     ]);
-    expect(result.ontologyTerms).toEqual([
-      { code: 'term-1', names: { fi: 'esimerkki' } },
-    ]);
-    expect(result.targetGroups).toEqual([
-      { code: 'target-1', names: { fi: 'Lapset' } },
-    ]);
-    expect(result.lifeEvents).toEqual([
-      { code: 'life-1', names: { fi: 'Lapsen syntymä' } },
-    ]);
-    expect(result.industrialClasses).toEqual([
-      { code: 'class-code-1', names: {} },
-    ]);
+    expect(result.ontologyTerms).toEqual([{ code: 'term-1', names: { fi: 'esimerkki' } }]);
+    expect(result.targetGroups).toEqual([{ code: 'target-1', names: { fi: 'Lapset' } }]);
+    expect(result.lifeEvents).toEqual([{ code: 'life-1', names: { fi: 'Lapsen syntymä' } }]);
+    expect(result.industrialClasses).toEqual([{ code: 'class-code-1', names: {} }]);
   });
 
   it('derives languages from languageVersions when the API omits languages', () => {
@@ -102,7 +90,6 @@ describe('PTV v12 service mapping', () => {
     expect(result.names).toEqual({ fi: 'Palvelu', en: 'Service' });
   });
 });
-
 
 describe('PTV v12 service search parameters', () => {
   it('never sends the unsupported searchText parameter', async () => {
@@ -135,7 +122,6 @@ describe('PTV v12 service search parameters', () => {
   });
 });
 
-
 describe('PTV v12 search hydration', () => {
   it('hydrates an incomplete service search result before filtering', async () => {
     const requested: string[] = [];
@@ -143,21 +129,29 @@ describe('PTV v12 search hydration', () => {
       const url = String(input);
       requested.push(url);
       if (url.includes('/service/search')) {
-        return new Response(JSON.stringify({
-          items: [{
-            contentId: 'service-1',
-            languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
-          }],
-          totalCount: 1,
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                contentId: 'service-1',
+                languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+              },
+            ],
+            totalCount: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       if (url.includes('/service/service-1')) {
-        return new Response(JSON.stringify({
-          contentId: 'service-1',
-          organization: { contentId: 'org-1' },
-          languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
-          modifiedAt: '2026-09-19T00:00:00Z',
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            contentId: 'service-1',
+            organization: { contentId: 'org-1' },
+            languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+            modifiedAt: '2026-09-19T00:00:00Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
@@ -167,7 +161,7 @@ describe('PTV v12 search hydration', () => {
     const result = await adapter.searchServices({ query: 'Kirkkoon liittyminen' });
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0].organizationId).toBe('org-1');
+    expect(result.items[0]?.organizationId).toBe('org-1');
     expect(requested.some((url) => url.includes('/service/service-1'))).toBe(true);
   });
 
@@ -175,17 +169,23 @@ describe('PTV v12 search hydration', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/organization/search')) {
-        return new Response(JSON.stringify({
-          items: [{ contentId: 'org-1' }],
-          totalCount: 1,
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            items: [{ contentId: 'org-1' }],
+            totalCount: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       if (url.includes('/organization/org-1')) {
-        return new Response(JSON.stringify({
-          contentId: 'org-1',
-          languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
-          modifiedAt: '2026-09-19T00:00:00Z',
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            contentId: 'org-1',
+            languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+            modifiedAt: '2026-09-19T00:00:00Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
@@ -205,19 +205,25 @@ describe('PTV v12 search hydration', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service-channel/search')) {
-        return new Response(JSON.stringify({
-          items: [{ contentId: 'channel-1' }],
-          totalCount: 1,
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            items: [{ contentId: 'channel-1' }],
+            totalCount: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       if (url.includes('/service-channel/channel-1')) {
-        return new Response(JSON.stringify({
-          contentId: 'channel-1',
-          organization: { contentId: 'org-1' },
-          languageVersions: { fi: { name: 'Keskuskirkko' } },
-          modifiedAt: '2026-09-19T00:00:00Z',
-          serviceChannelType: 'ServiceLocation',
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(
+          JSON.stringify({
+            contentId: 'channel-1',
+            organization: { contentId: 'org-1' },
+            languageVersions: { fi: { name: 'Keskuskirkko' } },
+            modifiedAt: '2026-09-19T00:00:00Z',
+            serviceChannelType: 'ServiceLocation',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
       }
       throw new Error(`Unexpected URL: ${url}`);
     };

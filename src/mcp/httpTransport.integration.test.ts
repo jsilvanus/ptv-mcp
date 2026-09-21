@@ -13,6 +13,7 @@ import { memberships, tenants, users } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
+import { OAuthService } from './oauthService.js';
 
 /**
  * Proves the real MCP protocol wire-up — a genuine `@modelcontextprotocol/sdk`
@@ -30,6 +31,18 @@ describe('MCP HTTP transport', () => {
     mailer: new LoggingMailer(() => {}),
   });
   const configService = new PtvAdapterConfigService(db);
+  // Must match src/app.ts's own OAuthService construction exactly (same
+  // issuer/resource) — this mints real MCP OAuth access tokens the same
+  // way the running server's httpTransport.ts verifies them, rather than
+  // reusing AuthService's web-session JWT (a different token type: no
+  // iss/aud claims, and none of the tenant/environment/api-version claims
+  // toolContext() requires).
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
 
   let app: FastifyInstance;
   let baseUrl: string;
@@ -70,7 +83,7 @@ describe('MCP HTTP transport', () => {
     const email = `mcp-${randomUUID()}@example.test`;
     const { userId } = await authService.register(email, 'MCP Test User', 'correct-password');
     createdUserIds.push(userId);
-    const session = await authService.login(email, 'correct-password');
+    await authService.login(email, 'correct-password');
 
     const tenantId = randomUUID();
     await db
@@ -81,7 +94,16 @@ describe('MCP HTTP transport', () => {
       await tx.insert(memberships).values({ tenantId, userId, role: 'reader' });
     });
 
-    return { token: session.accessToken, tenantId };
+    const token = await oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
+    return { token, tenantId };
   }
 
   async function connectedClient(token: string): Promise<Client> {
@@ -126,16 +148,38 @@ describe('MCP HTTP transport', () => {
     await client.close();
   });
 
-  it('rejects a request with no bearer token at the HTTP layer, before any MCP handshake', async () => {
+  it('returns a tool-level OAuth challenge for a tool call with no bearer token, not an HTTP 401', async () => {
+    // httpTransport.ts is explicit about this by design (see its own doc
+    // comment): rejecting POST /mcp with a blanket 401 before the MCP
+    // handshake would prevent a tool handler from ever producing the
+    // `_meta["mcp/www_authenticate"]` challenge ChatGPT's tool-level OAuth
+    // flow needs, so an unauthenticated call still gets a 200 HTTP
+    // response carrying a structured tool error instead.
     const res = await fetch(new URL('/mcp', baseUrl), {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
       },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'ptv_search_services', arguments: {} },
+      }),
     });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    // The Streamable HTTP transport replies as an SSE stream (the request's
+    // `accept` header includes text/event-stream), not a bare JSON body —
+    // pull the JSON-RPC payload out of its `data:` line.
+    const text = await res.text();
+    const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+    if (!dataLine) throw new Error(`Expected an SSE data line, got: ${text}`);
+    const body = JSON.parse(dataLine.slice('data: '.length)) as {
+      result?: { isError?: boolean; _meta?: Record<string, unknown> };
+    };
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?._meta).toHaveProperty('mcp/www_authenticate');
   });
 
   it('calls ptv_search_services against PTV live test environment and gets real results back', async () => {
@@ -162,7 +206,18 @@ describe('MCP HTTP transport', () => {
   });
 
   it('surfaces a not_authorized tool error for a tenant the user does not belong to', async () => {
-    const { token } = await registeredUserWithTenant();
+    // Which tenant a call operates against comes from the OAuth token's own
+    // `tenant_id` claim (see toolContext() in mcpServer.ts), not from a tool
+    // argument — a call's `arguments` has no tenantId/environment fields to
+    // override it. So exercising "a tenant the user isn't a member of" means
+    // minting a token bound to a tenant the user was never added to, not
+    // passing one in the tool call.
+    const { userId } = await (async () => {
+      const email = `mcp-${randomUUID()}@example.test`;
+      const registered = await authService.register(email, 'MCP Test User', 'correct-password');
+      createdUserIds.push(registered.userId);
+      return registered;
+    })();
     const otherTenantId = randomUUID();
     await db
       .insert(tenants)
@@ -175,11 +230,20 @@ describe('MCP HTTP transport', () => {
       supportsWrite: false,
       supportsDraftRead: false,
     });
+    const token = await oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      otherTenantId,
+      'test',
+      'v11',
+      'v11',
+    );
 
     const client = await connectedClient(token);
     const result = await client.callTool({
       name: 'ptv_search_services',
-      arguments: { tenantId: otherTenantId, environment: 'test' },
+      arguments: {},
     });
 
     expect(result.isError).toBe(true);

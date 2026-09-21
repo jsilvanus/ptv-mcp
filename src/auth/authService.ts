@@ -73,12 +73,19 @@ export class AuthService {
   private readonly jwtSecret: string;
   private readonly mailer: Mailer;
   private readonly now: () => Date;
+  private dummyPasswordHash: Promise<string> | undefined;
 
   constructor(deps: AuthServiceDeps) {
     this.db = deps.db;
     this.jwtSecret = deps.jwtSecret;
     this.mailer = deps.mailer;
     this.now = deps.now ?? (() => new Date());
+  }
+
+  /** Computed once and cached — a fixed hash whose only purpose is to make `login()`'s unknown-email path spend the same Argon2id cost as its wrong-password path. */
+  private getDummyPasswordHash(): Promise<string> {
+    this.dummyPasswordHash ??= hashPassword('not-a-real-account-timing-normalization');
+    return this.dummyPasswordHash;
   }
 
   async register(email: string, name: string, password: string): Promise<{ userId: string }> {
@@ -88,7 +95,19 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(password);
-    const [user] = await this.db.insert(users).values({ email, name, passwordHash }).returning();
+    let user: typeof users.$inferSelect | undefined;
+    try {
+      [user] = await this.db.insert(users).values({ email, name, passwordHash }).returning();
+    } catch (err) {
+      // Two concurrent registrations for the same email can both pass the
+      // existence check above (TOCTOU); the unique constraint on
+      // users.email is the real guard — map its violation to the same
+      // typed error the pre-check throws, rather than a raw 500.
+      if (err && typeof err === 'object' && 'code' in err && err.code === '23505') {
+        throw new EmailAlreadyRegisteredError();
+      }
+      throw err;
+    }
     if (!user) {
       throw new Error('User insert did not return a row');
     }
@@ -131,7 +150,12 @@ export class AuthService {
   async login(email: string, password: string): Promise<Session> {
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
-      // Same error as a wrong password — don't reveal whether the email is registered.
+      // Same error as a wrong password — don't reveal whether the email is
+      // registered. Also run a real (deliberately slow) Argon2id verify
+      // against a fixed dummy hash so this path takes about as long as the
+      // wrong-password path below; otherwise the two cases are
+      // distinguishable by response time alone.
+      await verifyPassword(await this.getDummyPasswordHash(), password);
       throw new InvalidCredentialsError();
     }
 
@@ -218,12 +242,24 @@ export class AuthService {
     return this.issueSession(record.userId, record.id);
   }
 
-  async logout(rawRefreshToken: string): Promise<void> {
+  /**
+   * `userId` comes from the caller's own verified access token, never from
+   * the request body — logout only revokes a refresh token that actually
+   * belongs to the authenticated caller, so one user can't revoke another
+   * user's session by supplying their refresh-token string.
+   */
+  async logout(userId: string, rawRefreshToken: string): Promise<void> {
     const tokenHash = hashToken(rawRefreshToken);
     await this.db
       .update(refreshTokens)
       .set({ revokedAt: this.now() })
-      .where(and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.revokedAt)));
+      .where(
+        and(
+          eq(refreshTokens.tokenHash, tokenHash),
+          eq(refreshTokens.userId, userId),
+          isNull(refreshTokens.revokedAt),
+        ),
+      );
   }
 
   private async revokeAllRefreshTokens(userId: string): Promise<void> {

@@ -14,6 +14,7 @@ import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { AuditService } from '../audit/auditService.js';
+import { OAuthService } from '../mcp/oauthService.js';
 
 /**
  * Phase 4's stated sync point (docs/phase-plan.md): "end-to-end script —
@@ -43,6 +44,15 @@ describe('Phase 4 sync point', () => {
   });
   const configService = new PtvAdapterConfigService(db);
   const auditService = new AuditService(db);
+  // Must match src/app.ts's OAuthService construction (same issuer/resource)
+  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
+  // them, unlike AuthService's web-session JWT (no iss/aud/tenant claims).
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
 
   // Real, published record in PTV's test environment (confirmed live during
   // Phase 2 — see src/ptv/v11/adapter.integration.test.ts).
@@ -82,7 +92,7 @@ describe('Phase 4 sync point', () => {
     const email = `phase4-sync-${randomUUID()}@example.test`;
     const { userId } = await authService.register(email, 'Phase 4 Sync Point', 'correct-password');
     createdUserIds.push(userId);
-    const session = await authService.login(email, 'correct-password');
+    await authService.login(email, 'correct-password');
 
     // 2. Create a tenant, make this user an Editor (propose/export need Editor+, not just Reader).
     const tenantId = randomUUID();
@@ -101,9 +111,21 @@ describe('Phase 4 sync point', () => {
       supportsDraftRead: false,
     });
 
-    // 3. Connect a real MCP client over the real HTTP transport.
+    // 3. Connect a real MCP client over the real HTTP transport. MCP tools
+    // take tenant/environment/api-version from the OAuth token's own
+    // claims (toolContext() in mcpServer.ts), not from AuthService's
+    // web-session JWT (session.accessToken has none of those claims).
+    const mcpToken = await oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
     const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseUrl), {
-      requestInit: { headers: { Authorization: `Bearer ${session.accessToken}` } },
+      requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } },
     });
     const client = new Client({ name: 'phase4-sync-point', version: '1.0.0' });
     await client.connect(transport as unknown as Transport);

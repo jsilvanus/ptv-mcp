@@ -30,8 +30,11 @@ workable against the live discovery document — see
 wraps the existing get-by-id tools as MCP resources, and **Phase 8** adds
 a persisted propose → review → resolve queue (a Reader can queue a
 proposal; an Editor+ reviews and resolves it), decoupling who may suggest
-a change from who may approve one. **Phase 9** then adds `PtvV12Adapter`
-as its own phase. Phases 10–11 (**MVP-1**, **MVP-2**) extend
+a change from who may approve one. **Phase 9** adds `PtvV12Adapter` as
+its own phase — **in progress**: reads, `x-api-key` auth, and the
+tenant-admin API-key UI are live alongside `PtvV11Adapter`; the
+OpenAPI-generated types and a contract-suite run against the real adapter
+are still outstanding (see Phase 9's section below). Phases 10–11 (**MVP-1**, **MVP-2**) extend
 `PtvV12Adapter` with write support and remain blocked on PTV's own roadmap
 (write endpoints in test ~10/2026, production ~04/2027).
 
@@ -364,6 +367,31 @@ no test yet confirming what an unauthorized or not-found resource read
 actually returns to a client, which would be worth adding before this is
 relied on for anything user-facing.
 
+**Regression found and fixed (2026-09-20)**: the "no test yet confirming
+what an unauthorized... resource read actually returns" gap above turned
+out to be hiding a real bug, not just a coverage gap. All five resource
+handlers in `src/mcp/mcpServer.ts` were calling `toolContext(extra)` —
+the exact same helper tools use, which derives `tenantId`/`environment`
+**only from the OAuth token's claims** — instead of from the URI
+variables this section's own "URI shape" bullet describes
+(`ptv://{tenantId}/{environment}/...`). `variables.tenantId` and
+`variables.environment`, parsed by the SDK's `ResourceTemplate` from the
+requested URI, were silently discarded; only `ctx.tenantId`/
+`ctx.environment` (the caller's own token-bound tenant/environment) were
+ever used. A resource URI naming a different tenant had no effect
+whatsoever — it wasn't a privilege escalation (`PtvAdapterRegistry.resolve()`
+still authorizes whatever `tenantId` a call actually uses), but it meant
+the documented "tenant/environment embedded in the URI" design was never
+actually implemented for resources; a client could not use a resource URI
+to select a tenant/environment the way the URI template implies. Fixed by
+adding a `resourceToolContext(extra, uriTenantId, uriEnvironment)` helper
+that takes tenant/environment from the URI (read/write API version and
+the acting user still come from the token) and switching all five
+handlers to it. `src/mcp/httpTransport.integration.test.ts`'s
+unauthorized-resource-read test now genuinely exercises a URI naming a
+tenant the caller isn't authorized for, rather than one that was silently
+ignored in favor of the caller's own tenant.
+
 ---
 
 ## Phase 8: Proposal queue — Reader proposes, Editor+ reviews and resolves (post-MVP-0) ✅
@@ -435,7 +463,7 @@ lands in the audit log under one `correlationId`.
 
 ---
 
-## Phase 9: `PtvV12Adapter` implementation (post-MVP-0)
+## Phase 9: `PtvV12Adapter` implementation (post-MVP-0) — in progress
 **Mode:** Sequential internally
 **Depends on:** Phase 6 (MVP-0 must be live — this phase adds a second
 adapter to a running product, not a redesign of it)
@@ -447,26 +475,92 @@ This is the first real run of the **adapter onboarding runbook** written
 in Phase 6 — worth treating as a validation of that runbook, not just as
 "build the second adapter."
 
-1. Vendor PTV v12 `openapi.json`, generate wire types + Ajv validators
+1. Vendor PTV v12 `openapi.json`, generate wire types + Ajv validators —
+   **not done.** `src/ptv/v12/adapter.ts` and `src/ptv/v12/client.ts` use
+   hand-written wire types and manual field-fallback mapping (`wire.contentId
+   ?? wire.id`, etc.), not generated from the OpenAPI spec. This is a real
+   gap versus the original plan: no automatic drift detection if PTV changes
+   the v12 schema.
 2. Implement read methods (search/get for all content types, code lists)
-   against the domain model
+   against the domain model — **partially done, with two real gaps:**
+   - `searchServices`/`getService`, `searchChannels`/`getChannel`,
+     `searchOrganisations`/`getOrganisation`/`getOrganisationHierarchy`,
+     `getConnectionsFor` are implemented.
+   - `searchServiceCollections`, `searchGeneralDescriptions`, and
+     `listCodes` are **unimplemented stubs** — each unconditionally
+     throws `'PTV v12 adapter operation not implemented yet: ...'`
+     (`src/ptv/v12/adapter.ts`'s `unsupported()`). Any tenant reading via
+     v12 gets a hard tool error from `ptv_search_service_collections`,
+     `ptv_search_general_descriptions`, and `ptv_list_codes` — 3 of the 12
+     read-side `PtvAdapter` methods. `PtvV12Adapter` still satisfies the
+     `PtvAdapter` TypeScript interface (the methods exist and type-check),
+     which is why this wasn't caught by `npm run typecheck` — only a
+     contract-test run (still not done, see step 6) or manual testing
+     would surface it.
+   - The implemented search methods (`searchServices`/`searchChannels`/
+     `searchOrganisations`) do not use PTV's server-side query/filter
+     parameters at all: `fetchAll()` pages through v12's `/search`
+     endpoint requesting **every** result (`page`/`pageSize` sent to PTV
+     are just the *upstream* pagination cursor, looped until exhausted),
+     then `query`/`organizationId` filtering and this call's own
+     `page`/`pageSize` are applied **in memory** in TypeScript. `
+     getConnectionsFor` doesn't even loop — it fetches `/connection/search`
+     once with no pagination at all, so results are silently truncated to
+     whatever PTV's default page size returns for a large connection set.
+     For Finland's national service catalogue this is a real scalability
+     problem, not just a style nit: every search call — regardless of how
+     narrow the query is — downloads the entire catalogue for that content
+     type from PTV first. Worth fixing before this sees production load,
+     ideally against the real v12 OpenAPI spec's documented filter
+     params (step 1's gap) rather than guessed param names.
 3. `x-api-key` auth (tenant-scoped, via `TenantEnvironment`), retry/backoff+jitter
+   — **done.** `src/ptv/v12/client.ts` sends `x-api-key`, retries with
+   `Retry-After` support.
 4. Write methods **implemented against the beta `Post*/Put*` schemas**
    already reviewed, but gated off (`supports_write: false` in
-   `PtvAdapterConfig`) — the endpoints don't exist yet, so this is written
-   and unit-tested against the beta schema shapes, not integration-tested
-   against a live endpoint
+   `PtvAdapterConfig`) — **narrower than planned.** `applyServiceChange`
+   is a one-line throw (`'PTV v12 write operations are not enabled yet'`);
+   no beta-schema request-body mapping exists yet to implement-but-gate.
+   When v12 write work actually starts (Phase 10), this step still needs
+   doing from scratch, not just un-gating.
 5. Build the **tenant-admin API-key management UI** (`TenantEnvironment`)
-   deferred from Phase 5 — this is the first thing that actually needs it
-6. Run the Phase 1 contract test suite against `PtvV12Adapter`
+   deferred from Phase 5 — **done.** `web/src/pages/PtvConnectionsPage.tsx`
+   has a v12 API-key section (environment select, key input, "save & test"),
+   backed by `src/routes/ptvV12.ts` (`GET`/`PUT
+   /tenants/:tenantId/ptv/v12`, `POST .../:environment/test`), tenant-admin
+   gated.
+6. Run the Phase 1 contract test suite against `PtvV12Adapter` — **not
+   done.** `src/ptv/contract.test.ts` still only exercises
+   `InMemoryPtvAdapter`; its own comment notes both real adapters
+   (`PtvV11Adapter` too) still need their own contract-suite run. This is
+   the most consequential open item: nothing currently proves `PtvV12Adapter`
+   satisfies the same read-path guarantees the fake adapter is verified
+   against.
 7. Pilot: let one tenant configure a v12 key and confirm real v12 search
    results flow through the same MCP tools Phase 4 already built,
-   unchanged — this is the payoff of the adapter-agnostic tool layer
+   unchanged — **UI/routes are live, but no recorded pilot confirmation**
+   exists in `EXECUTION_LOG.md`.
 
-**Sync point:** the Phase 1 contract test suite passes against
-`PtvV12Adapter` for all read operations; a tenant admin can enter a v12
-API key through the UI and see it used for real searches; `PtvV11Adapter`
-continues operating unaffected throughout.
+**Not part of the original plan for this phase, but landed alongside it**:
+independent **read vs. write PTV API version selection** per MCP OAuth
+connection (`drizzle/0011_oauth_independent_api_versions.sql` through
+`src/mcp/oauthService.ts`/`toolContext.ts`/`searchTools.ts`/
+`applyOrExport.ts`) — a connection can read via one API version (e.g. v12)
+and write via another (e.g. v11) independently, rather than one
+`api_version` selection governing both. This is a materially different
+shape than the "one adapter per tenant/environment" model the rest of
+this document describes, and currently has no dedicated design writeup —
+grep `readApiVersion`/`writeApiVersion` across `src/mcp/` and
+`src/credentials/` before assuming a connection has a single API version.
+`ToolContext.apiVersion` still exists as a `@deprecated` fallback for code
+not yet migrated to the split fields.
+
+**Sync point:** not yet reached — the contract test suite has not been run
+against `PtvV12Adapter`, so the phase's own stated goal ("passes the Phase 1
+contract test suite for reads") is unconfirmed even though the adapter,
+UI, and registry wiring are functionally in place. `PtvV11Adapter` continues
+operating unaffected throughout — confirmed, both adapters are registered
+in `DbPtvAdapterRegistry`'s `DEFAULT_ADAPTER_FACTORIES` side by side.
 
 ---
 

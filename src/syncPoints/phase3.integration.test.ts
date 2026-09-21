@@ -109,6 +109,7 @@ describe('Phase 3 sync point', () => {
     const readAdapter = await registry.resolve({
       tenantId,
       environment: 'test',
+      apiVersion: 'v11',
       operation: 'read',
       actingUserId: userId,
     });
@@ -151,6 +152,7 @@ describe('Phase 3 sync point', () => {
     await registryForWrite.resolve({
       tenantId,
       environment: 'test',
+      apiVersion: 'v11',
       operation: 'write',
       actingUserId: userId,
     });

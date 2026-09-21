@@ -56,7 +56,9 @@ function v11Factory(options: AdapterConstructionOptions): PtvAdapter {
 
 function v12Factory(options: AdapterConstructionOptions): PtvAdapter {
   if (options.credential.scope !== 'tenant') {
-    throw new Error(`v12 adapter requires a tenant-scoped credential, got '${options.credential.scope}'`);
+    throw new Error(
+      `v12 adapter requires a tenant-scoped credential, got '${options.credential.scope}'`,
+    );
   }
   const apiKey = options.credential.credentials?.apiKey;
   if (typeof apiKey !== 'string' || !apiKey) {
@@ -107,7 +109,20 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     // mandatory for writes and for v12 reads because v12 requires an
     // integration-specific API key.
     if (tenantId === undefined) {
-      throw new PtvAdapterResolutionError('A tenant is required for this PTV connection', 'not_authorized');
+      if (operation !== 'read' || apiVersion !== 'v11') {
+        throw new PtvAdapterResolutionError(
+          'A tenant is required for this PTV connection',
+          'not_authorized',
+        );
+      }
+      const factory = this.adapterFactories.v11;
+      if (!factory) {
+        throw new PtvAdapterResolutionError(
+          "No adapter factory registered for api_version 'v11'",
+          'no_adapter_configured',
+        );
+      }
+      return factory({ environment, canWrite: false, credential: { scope: 'user' } });
     }
 
     const minRole: MembershipRole = operation === 'write' ? 'publisher' : 'reader';
@@ -124,7 +139,9 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     }
 
     const configs = await this.configService.list(tenantId);
-    const inEnvironment = configs.filter((c) => c.environment === environment && c.apiVersion === apiVersion);
+    const inEnvironment = configs.filter(
+      (c) => c.environment === environment && c.apiVersion === apiVersion,
+    );
     if (inEnvironment.length === 0) {
       throw new PtvAdapterResolutionError(
         `No PTV adapter configured for tenant ${tenantId} in ${environment}/${apiVersion}`,

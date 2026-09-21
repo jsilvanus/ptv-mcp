@@ -13,7 +13,11 @@ export interface PtvV12ClientOptions {
 }
 
 export class PtvV12ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly path: string) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly path: string,
+  ) {
     super(message);
     this.name = 'PtvV12ApiError';
   }

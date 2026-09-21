@@ -1,11 +1,17 @@
 import type { FastifyInstance } from 'fastify';
-import type { TenantEnvironmentService, PtvEnvironment } from '../credentials/tenantEnvironmentService.js';
+import type {
+  TenantEnvironmentService,
+  PtvEnvironment,
+} from '../credentials/tenantEnvironmentService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import type { Database } from '../db/client.js';
 import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
 import { PtvV12Client } from '../ptv/v12/client.js';
 
-interface ConfigBody { environment: PtvEnvironment; apiKey: string; }
+interface ConfigBody {
+  environment: PtvEnvironment;
+  apiKey: string;
+}
 
 export interface PtvV12RoutesOptions {
   tenantEnvironmentService: TenantEnvironmentService;
@@ -14,24 +20,31 @@ export interface PtvV12RoutesOptions {
   jwtSecret: string;
 }
 
-export async function ptvV12Routes(app: FastifyInstance, options: PtvV12RoutesOptions): Promise<void> {
+export async function ptvV12Routes(
+  app: FastifyInstance,
+  options: PtvV12RoutesOptions,
+): Promise<void> {
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireTenantAdmin = createRequireRole(options.db, 'tenant_admin');
 
-  app.get('/tenants/:tenantId/ptv/v12', { preHandler: [authenticate, requireTenantAdmin] }, async (request) => {
-    const { tenantId } = request.params as { tenantId: string };
-    const configs = await options.adapterConfigService.list(tenantId);
-    return configs
-      .filter((config) => config.apiVersion === 'v12')
-      .map((config) => ({
-        environment: config.environment,
-        apiVersion: config.apiVersion,
-        authMode: config.authMode,
-        credentialScope: config.credentialScope,
-        supportsRead: config.supportsRead,
-        supportsWrite: config.supportsWrite,
-      }));
-  });
+  app.get(
+    '/tenants/:tenantId/ptv/v12',
+    { preHandler: [authenticate, requireTenantAdmin] },
+    async (request) => {
+      const { tenantId } = request.params as { tenantId: string };
+      const configs = await options.adapterConfigService.list(tenantId);
+      return configs
+        .filter((config) => config.apiVersion === 'v12')
+        .map((config) => ({
+          environment: config.environment,
+          apiVersion: config.apiVersion,
+          authMode: config.authMode,
+          credentialScope: config.credentialScope,
+          supportsRead: config.supportsRead,
+          supportsWrite: config.supportsWrite,
+        }));
+    },
+  );
 
   app.put<{ Params: { tenantId: string }; Body: ConfigBody }>(
     '/tenants/:tenantId/ptv/v12',
@@ -46,12 +59,9 @@ export async function ptvV12Routes(app: FastifyInstance, options: PtvV12RoutesOp
         return reply.badRequest('apiKey is required');
       }
 
-      await options.tenantEnvironmentService.storeCredentials(
-        tenantId,
-        environment,
-        'v12',
-        { apiKey: apiKey.trim() },
-      );
+      await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v12', {
+        apiKey: apiKey.trim(),
+      });
       await options.adapterConfigService.upsert(tenantId, environment, 'v12', {
         authMode: 'api_key',
         credentialScope: 'tenant',
@@ -74,7 +84,9 @@ export async function ptvV12Routes(app: FastifyInstance, options: PtvV12RoutesOp
       }
 
       const credentials = await options.tenantEnvironmentService.getDecryptedCredentials(
-        tenantId, environment, 'v12',
+        tenantId,
+        environment,
+        'v12',
       );
       const apiKey = typeof credentials.apiKey === 'string' ? credentials.apiKey : '';
       if (!apiKey) return reply.badRequest('No v12 API key configured');

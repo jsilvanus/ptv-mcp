@@ -1153,3 +1153,183 @@ See `docs/phase-plan.md`'s Phase 7 and Phase 8 sections for full
 as-built detail (schema, role model, URI shapes, audit actions) — written
 to describe the merged code exactly, confirmed file-by-file rather than
 assumed from the original design draft.
+
+---
+
+## 2026-09-20 — Repo-wide documentation audit and correctness review
+
+Session scope: create `CLAUDE.md`, bring `PLAN.md`/`docs/*.md` up to date
+with actual code state, and review the codebase for correctness, altitude,
+and reusability. No new feature work was requested or done — everything
+below is either a documentation correction or a bug fix in existing code.
+
+### Documentation found stale, now corrected
+
+`PLAN.md` and `docs/phase-plan.md` still marked **Phase 9
+(`PtvV12Adapter`) as not-started** (`⏸`, every checklist item `[ ]`).
+Actual code state: `PtvV12Adapter` (`src/ptv/v12/adapter.ts`) is fully
+wired into `DbPtvAdapterRegistry` alongside `PtvV11Adapter` and reachable
+in production today; the tenant-admin v12 API-key UI
+(`web/src/pages/PtvConnectionsPage.tsx`, `src/routes/ptvV12.ts`) is live,
+not deferred. Both docs' Phase 9 sections were rewritten to describe what
+is actually built, with two real gaps called out (not just marked "done"):
+`searchServiceCollections`/`searchGeneralDescriptions`/`listCodes` are
+unimplemented stubs that throw for any v12-reading connection, and the
+implemented search methods (`searchServices`/`searchChannels`/
+`searchOrganisations`) fetch PTV's **entire** catalogue per content type
+and filter/paginate **in memory** rather than using server-side query
+params — `getConnectionsFor` doesn't even paginate at all, silently
+truncating large result sets. Neither is a hypothetical concern for
+Finland's national service catalogue; both are recorded in the new
+`docs/ptv-v12-notes.md` (mirroring `docs/ptv-v11-notes.md`, but written
+from the adapter implementation itself since no v12 OpenAPI spec is
+vendored in this repo, and this session had no live network path to fetch
+one from inside the review — a follow-up worth doing before trusting the
+wire-shape fallback chains documented there).
+
+Also entirely undocumented until now: **independent read/write PTV API
+version selection per OAuth connection** (`drizzle/0011_oauth_independent
+_api_versions.sql` through `src/mcp/oauthService.ts`/`toolContext.ts`/
+`searchTools.ts`/`applyOrExport.ts`) — a connection can read via one API
+version and write via another. This shipped across ~11 commits with no
+phase-plan entry or design note. Documented now in `docs/phase-plan.md`'s
+Phase 9 section and `CLAUDE.md`.
+
+`README.md` updated to link the new `docs/ptv-v12-notes.md` and note both
+adapters are live side by side.
+
+### Correctness bugs found and fixed
+
+**The branch's `HEAD` did not pass `npm run typecheck`, `npm run lint`, or
+`npm run format`** before this session (confirmed via `git stash` against
+the original commit) — the OAuth read/write API-version split (`apiVersion`
+made a required field on `PtvAdapterResolutionRequest`) broke several
+call sites that were never updated, and separate pre-existing issues had
+accumulated (see below). All fixed; full pipeline (`format`, `lint`,
+`typecheck`, `npm test` — 199 tests, `npm run test:integration` — 123
+tests against a real local Postgres, `npm run build`, `web`'s build+lint)
+is green as of this entry.
+
+Fixed, by area:
+
+- **`src/ptv/dbAdapterRegistry.ts`'s `resolve()` unconditionally threw
+  when `tenantId` was undefined**, even though `PtvAdapterRegistry`'s own
+  doc comments (and an existing test,
+  `dbAdapterRegistry.integration.test.ts`'s "resolves public v11 OUT
+  without a tenant or membership") describe unauthenticated public v11
+  reads without a tenant as an intentional, documented capability. The
+  branch for it was simply never implemented. Added it back: an
+  undefined `tenantId` is only accepted for `operation: 'read'` with
+  `apiVersion: 'v11'`, constructing the v11 factory directly — safe
+  because every other read/write path still goes through the normal
+  membership check, this is strictly additive.
+- **Five MCP resource read handlers in `src/mcp/mcpServer.ts` silently
+  ignored the resource URI's own `{tenantId}`/`{environment}` segments**,
+  using `toolContext(extra)` (token-derived tenant/environment, same as
+  tools) instead. Not a privilege escalation (`PtvAdapterRegistry.resolve()`
+  still authorizes whatever tenant is actually used), but it meant the
+  documented "tenant/environment embedded in the URI" resource design
+  (Phase 7) was never actually implemented — a resource URI naming a
+  different tenant had no effect. Added `resourceToolContext(extra,
+  uriTenantId, uriEnvironment)` and switched all five handlers to it. See
+  `docs/phase-plan.md`'s Phase 7 section for the full writeup.
+- **`ptvAdapterConfigService.ensureV11ReadDefaults` per-tenant failures
+  could abort the whole v11-connect request and skip the audit entry**,
+  even though the OAuth token itself was already durably stored
+  (`src/routes/ptvConnections.ts`): `Promise.all` over independent
+  per-tenant transactions meant one tenant's failure rejected before the
+  audit call ran, while other tenants' updates stayed committed. Changed
+  to `Promise.allSettled` with per-failure logging; the connection's
+  success is recorded regardless. Also stopped fetching
+  `listTenantsForUser` twice per request (once for the read-defaults
+  loop, once inside `recordConnectionEvent`) — now fetched once and
+  passed through.
+- **`AuthService.logout()` didn't check that the refresh token being
+  revoked belonged to the authenticated caller** (`src/routes/auth.ts`) —
+  any authenticated user who obtained another user's raw refresh-token
+  string could revoke that user's session. Added an `and(eq(tokenHash,
+  ...), eq(userId, callerId))` check; added a test proving a non-owner's
+  logout call no longer revokes someone else's token.
+- **`web/src/api/client.ts`'s `apiFetch` had no de-duplication for
+  concurrent 401-triggered refreshes.** The backend rotates refresh
+  tokens and treats reuse of an already-rotated one as theft, revoking
+  *every* session for the user
+  (`src/auth/authService.ts`'s reuse-detection). Two components firing
+  `apiFetch` near-simultaneously with an expired access token could both
+  race to refresh with the same stale token, the second collision
+  triggering an unintended full logout. Fixed with a shared in-flight
+  promise.
+- **Login timing side-channel**: `AuthService.login()` returned
+  immediately for an unregistered email but ran a real Argon2id verify
+  for a registered email with a wrong password, making "is this email
+  registered" distinguishable by response time despite an identical error
+  message. Added a fixed dummy-hash verify on the not-found path so both
+  cases pay the same Argon2id cost.
+- **Registration TOCTOU**: two concurrent registrations for the same
+  email could both pass the existence pre-check, and the DB's unique
+  constraint on `users.email` then surfaced as a raw 500 instead of the
+  intended `EmailAlreadyRegisteredError`/409. Now caught and mapped
+  (Postgres error code `23505`).
+- **`npm run mcp:token` (`src/mcp/token.ts`) was fully broken**: it still
+  called `oauthService.issueAccessToken(...)` with its old 3-argument
+  signature after the OAuth split made it a 7-argument function
+  (`userId, clientId, scope, tenantId, environment, readApiVersion,
+  writeApiVersion`), and separately constructed its `OAuthService` with a
+  `resource` (`config.mcpPublicUrl + '/mcp'`) that doesn't match
+  `src/app.ts`'s own construction (`config.mcpPublicUrl`, no suffix) — a
+  mismatched audience claim means a token minted by the old code would
+  have failed verification against the real running server even before
+  the argument-count bug. Fixed both: the script now prompts for a
+  tenant/environment/API versions and its `OAuthService` matches `app.ts`
+  exactly.
+- **A cluster of integration tests minted the wrong kind of token for MCP
+  calls** — `AuthService.login()`'s plain web-session JWT (no
+  `iss`/`aud`/tenant claims) was being sent as the `/mcp` bearer token in
+  `src/syncPoints/phase4.integration.test.ts`, `phase6.integration.test.ts`
+  (both tests), `phase8.integration.test.ts` (both tests),
+  `src/mcp/httpTransport.integration.test.ts` (multiple tests), and
+  `src/routes/proposals.integration.test.ts`. `OAuthService.verifyAccessToken()`
+  requires a matching issuer/audience the login JWT never carries, so
+  every one of these calls silently failed authentication
+  (`"No authenticated user for this MCP session"`) and every downstream
+  assertion about tool behavior was untested — this was true on the
+  original, unmodified `HEAD`, confirmed via `git stash`, not something
+  introduced this session. All six files switched to minting real MCP
+  OAuth tokens via `OAuthService.issueAccessToken(...)` (matching
+  `app.ts`'s issuer/resource). This also exposed that MCP **tools** have
+  no per-call tenant argument at all (tenant comes solely from the
+  token) — `phase6.integration.test.ts`'s "reuses one user-scoped
+  connection across multiple allowed tenants" test used to pass one
+  token across three different `tenantId` tool arguments, which were
+  always silently ignored; rewritten to mint one token per tenant instead
+  (still proving the underlying point: the *same* v11 connection,
+  keyed by `user_id` not `tenant_id`, is reused across all three).
+  `httpTransport.integration.test.ts`'s "rejects a request with no bearer
+  token... expects 401" test was itself wrong against the code's own
+  documented design (`httpTransport.ts`'s explicit comment: auth is
+  deliberately deferred to the tool layer so an unauthenticated
+  `tools/call` can return a structured OAuth-challenge tool error rather
+  than a blanket HTTP 401, which ChatGPT's connector flow needs) —
+  rewritten to assert the actual, intended behavior.
+- Minor: removed dead code (`src/ptv/v12/adapter.ts`'s unused
+  `normalizePage`, duplicating `extractItems`/`extractTotalCount`/
+  `paginate`; two unused TTL constants in `src/mcp/oauthService.ts`; an
+  unused import in `src/mcp/httpTransport.ts`), a duplicate `state?:
+  string` field in `OAuthService`'s `AuthorizationRequest` interface, an
+  `any`-typed connection mapper in `src/ptv/v12/adapter.ts` tightened to
+  `unknown`, and a pointless `organisations.items.length > 1` branch in
+  `src/mcp/searchTools.ts`'s `findOrganisationAndChildren` that did the
+  exact same thing as the `=== 1` case below it (both just used
+  `items[0]`).
+
+### Known gaps documented, not fixed this session
+
+- `PtvV12Adapter`'s full-catalogue-fetch search pattern and its three
+  unimplemented methods (see `docs/ptv-v12-notes.md`) — real scalability
+  and functional gaps, left as findings rather than attempting a fix
+  without a vendored v12 OpenAPI spec to verify against.
+- The Phase 1 contract test suite has still never been run against either
+  real adapter (`PtvV11Adapter` or `PtvV12Adapter`) — only against
+  `InMemoryPtvAdapter`. This is the single gap that would have caught the
+  v12 unimplemented-methods issue immediately; recorded as the top
+  priority in `docs/ptv-v12-notes.md`'s "open items" list.

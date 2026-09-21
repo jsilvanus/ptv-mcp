@@ -55,7 +55,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
   const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
-  const oauthService = new OAuthService(db, config.jwtSecret, config.mcpPublicUrl, config.mcpPublicUrl);
+  const oauthService = new OAuthService(
+    db,
+    config.jwtSecret,
+    config.mcpPublicUrl,
+    config.mcpPublicUrl,
+  );
   const auditService = new AuditService(db);
   const tenantService = new TenantService(db, auditService);
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
@@ -98,7 +103,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       redirectUri: config.ptvV11OAuthRedirectUri,
     },
   });
-  await app.register(mcpOAuthRoutes, { oauthService, authService, tenantService, adapterConfigService, publicUrl: config.mcpPublicUrl, jwtSecret: config.jwtSecret });
+  await app.register(mcpOAuthRoutes, {
+    oauthService,
+    authService,
+    tenantService,
+    adapterConfigService,
+    publicUrl: config.mcpPublicUrl,
+    jwtSecret: config.jwtSecret,
+  });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
     oauthService,
@@ -114,7 +126,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     auditService,
     validator,
   });
-  await app.register(ptvV12Routes, { tenantEnvironmentService, adapterConfigService, db, jwtSecret: config.jwtSecret });
+  await app.register(ptvV12Routes, {
+    tenantEnvironmentService,
+    adapterConfigService,
+    db,
+    jwtSecret: config.jwtSecret,
+  });
   await app.register(webUiRoutes, { nodeEnv: config.nodeEnv });
 
   return app;

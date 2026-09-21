@@ -5,9 +5,7 @@ import type { Database } from '../db/client.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
 import { SignJWT, jwtVerify, errors } from 'jose';
 
-const CODE_TTL_MS = 60_000;
 const ACCESS_TTL_SECONDS = 3600;
-const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface OAuthClientMetadata {
   client_id?: string;
@@ -29,7 +27,6 @@ export interface AuthorizationRequest {
   environment?: 'test' | 'production';
   readApiVersion?: string;
   writeApiVersion?: string;
-  state?: string;
 }
 
 export class OAuthService {
@@ -85,12 +82,14 @@ export class OAuthService {
   private isCimdClientId(clientId: string): boolean {
     try {
       const url = new URL(clientId);
-      return url.protocol === 'https:' &&
+      return (
+        url.protocol === 'https:' &&
         url.pathname !== '/' &&
         url.username === '' &&
         url.password === '' &&
         url.search === '' &&
-        url.hash === '';
+        url.hash === ''
+      );
     } catch {
       return false;
     }
@@ -119,7 +118,10 @@ export class OAuthService {
         const next = new URL(location, current);
         if (!this.isCimdClientId(next.toString())) throw new Error('Invalid CIMD redirect');
         const nextAddresses = await lookup(next.hostname, { all: true });
-        if (nextAddresses.length === 0 || nextAddresses.some(({ address }) => this.isPrivateIp(address))) {
+        if (
+          nextAddresses.length === 0 ||
+          nextAddresses.some(({ address }) => this.isPrivateIp(address))
+        ) {
           throw new Error('CIMD redirect resolves to a private address');
         }
         current = next;
@@ -128,7 +130,8 @@ export class OAuthService {
 
       if (!response.ok) throw new Error('Unable to fetch CIMD document');
       const contentLength = response.headers.get('content-length');
-      if (contentLength && Number(contentLength) > 64 * 1024) throw new Error('CIMD document is too large');
+      if (contentLength && Number(contentLength) > 64 * 1024)
+        throw new Error('CIMD document is too large');
 
       let metadata: unknown;
       try {
@@ -139,10 +142,12 @@ export class OAuthService {
 
       if (!metadata || typeof metadata !== 'object') throw new Error('Invalid CIMD document');
       const value = metadata as Record<string, unknown>;
-      if (value.client_id !== clientId ||
-          typeof value.client_name !== 'string' ||
-          !Array.isArray(value.redirect_uris) ||
-          value.redirect_uris.some((uri) => typeof uri !== 'string')) {
+      if (
+        value.client_id !== clientId ||
+        typeof value.client_name !== 'string' ||
+        !Array.isArray(value.redirect_uris) ||
+        value.redirect_uris.some((uri) => typeof uri !== 'string')
+      ) {
         throw new Error('Invalid CIMD document');
       }
 
@@ -154,7 +159,11 @@ export class OAuthService {
           ? { grant_types: value.grant_types.filter((v): v is string => typeof v === 'string') }
           : {}),
         ...(Array.isArray(value.response_types)
-          ? { response_types: value.response_types.filter((v): v is string => typeof v === 'string') }
+          ? {
+              response_types: value.response_types.filter(
+                (v): v is string => typeof v === 'string',
+              ),
+            }
           : {}),
         ...(typeof value.token_endpoint_auth_method === 'string'
           ? { token_endpoint_auth_method: value.token_endpoint_auth_method }
@@ -171,25 +180,33 @@ export class OAuthService {
   private isPrivateIp(address: string): boolean {
     if (address.includes(':')) {
       const normalized = address.toLowerCase();
-      return normalized === '::1' ||
+      return (
+        normalized === '::1' ||
         normalized.startsWith('fc') ||
         normalized.startsWith('fd') ||
         normalized.startsWith('fe8') ||
         normalized.startsWith('fe9') ||
         normalized.startsWith('fea') ||
-        normalized.startsWith('feb');
+        normalized.startsWith('feb')
+      );
     }
 
     const octets = address.split('.').map(Number);
-    if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return true;
+    if (
+      octets.length !== 4 ||
+      octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
+    )
+      return true;
     const [a, b] = octets;
     if (a === undefined || b === undefined) return true;
-    return a === 10 ||
+    return (
+      a === 10 ||
       a === 127 ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||
-      a === 0;
+      a === 0
+    );
   }
 
   async createTenantSelectionToken(userId: string, request: AuthorizationRequest): Promise<string> {
@@ -237,7 +254,13 @@ export class OAuthService {
   }
 
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
-    if (!request.tenantId || !request.environment || !request.readApiVersion || !request.writeApiVersion) throw new Error('Invalid authorization selection');
+    if (
+      !request.tenantId ||
+      !request.environment ||
+      !request.readApiVersion ||
+      !request.writeApiVersion
+    )
+      throw new Error('Invalid authorization selection');
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
       throw new Error('Invalid client or redirect_uri');
     }
@@ -254,37 +277,95 @@ export class OAuthService {
 
   async exchangeCode(code: string, clientId: string, redirectUri: string, codeVerifier: string) {
     const rows = await this.db.execute<{
-      id: string; client_id: string; redirect_uri: string; code_challenge: string;
-      user_id: string; scope: string; tenant_id: string | null; environment: 'test' | 'production'; read_api_version: string; write_api_version: string; expires_at: Date; consumed_at: Date | null;
+      id: string;
+      client_id: string;
+      redirect_uri: string;
+      code_challenge: string;
+      user_id: string;
+      scope: string;
+      tenant_id: string | null;
+      environment: 'test' | 'production';
+      read_api_version: string;
+      write_api_version: string;
+      expires_at: Date;
+      consumed_at: Date | null;
     }>(sql`SELECT * FROM oauth_authorization_codes WHERE code_hash = ${hashToken(code)}`);
     const row = rows[0];
-    if (!row || row.consumed_at || new Date(row.expires_at) < new Date() ||
-        row.client_id !== clientId || row.redirect_uri !== redirectUri ||
-        !await this.verifyPkce(codeVerifier, row.code_challenge)) {
+    if (
+      !row ||
+      row.consumed_at ||
+      new Date(row.expires_at) < new Date() ||
+      row.client_id !== clientId ||
+      row.redirect_uri !== redirectUri ||
+      !(await this.verifyPkce(codeVerifier, row.code_challenge))
+    ) {
       throw new Error('invalid_grant');
     }
-    await this.db.execute(sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`);
+    await this.db.execute(
+      sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`,
+    );
     if (!row.tenant_id) throw new Error('invalid_grant');
-    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id, row.environment, row.read_api_version, row.write_api_version);
+    const accessToken = await this.issueAccessToken(
+      row.user_id,
+      clientId,
+      row.scope,
+      row.tenant_id,
+      row.environment,
+      row.read_api_version,
+      row.write_api_version,
+    );
     const refreshToken = generateOpaqueToken();
     await this.db.execute(sql`
       INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
       VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, ${row.environment}, ${row.read_api_version}, ${row.read_api_version}, ${row.write_api_version}, now() + interval '30 days')
     `);
-    return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, refresh_token: refreshToken, scope: row.scope };
+    return {
+      access_token: accessToken,
+      token_type: 'Bearer',
+      expires_in: ACCESS_TTL_SECONDS,
+      refresh_token: refreshToken,
+      scope: row.scope,
+    };
   }
 
   async refresh(refreshToken: string, clientId: string) {
-    const rows = await this.db.execute<{ id: string; client_id: string; user_id: string; scope: string; tenant_id: string | null; environment: 'test' | 'production'; read_api_version: string; write_api_version: string; expires_at: Date; revoked_at: Date | null }>(
-      sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`,
-    );
+    const rows = await this.db.execute<{
+      id: string;
+      client_id: string;
+      user_id: string;
+      scope: string;
+      tenant_id: string | null;
+      environment: 'test' | 'production';
+      read_api_version: string;
+      write_api_version: string;
+      expires_at: Date;
+      revoked_at: Date | null;
+    }>(sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`);
     const row = rows[0];
-    if (!row || row.revoked_at || new Date(row.expires_at) < new Date() || row.client_id !== clientId) {
+    if (
+      !row ||
+      row.revoked_at ||
+      new Date(row.expires_at) < new Date() ||
+      row.client_id !== clientId
+    ) {
       throw new Error('invalid_grant');
     }
     if (!row.tenant_id) throw new Error('invalid_grant');
-    const accessToken = await this.issueAccessToken(row.user_id, clientId, row.scope, row.tenant_id, row.environment, row.read_api_version, row.write_api_version);
-    return { access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, scope: row.scope };
+    const accessToken = await this.issueAccessToken(
+      row.user_id,
+      clientId,
+      row.scope,
+      row.tenant_id,
+      row.environment,
+      row.read_api_version,
+      row.write_api_version,
+    );
+    return {
+      access_token: accessToken,
+      token_type: 'Bearer',
+      expires_in: ACCESS_TTL_SECONDS,
+      scope: row.scope,
+    };
   }
 
   async verifyAccessToken(token: string) {
@@ -295,15 +376,43 @@ export class OAuthService {
         audience: this.resource,
       });
       if (typeof payload.sub !== 'string') throw new Error('missing sub');
-      return { sub: payload.sub, clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined, scope: typeof payload.scope === 'string' ? payload.scope : '', tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined, environment: payload.environment === 'test' || payload.environment === 'production' ? payload.environment : undefined, readApiVersion: typeof payload.read_api_version === 'string' ? payload.read_api_version : undefined, writeApiVersion: typeof payload.write_api_version === 'string' ? payload.write_api_version : undefined };
+      return {
+        sub: payload.sub,
+        clientId: typeof payload.client_id === 'string' ? payload.client_id : undefined,
+        scope: typeof payload.scope === 'string' ? payload.scope : '',
+        tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined,
+        environment:
+          payload.environment === 'test' || payload.environment === 'production'
+            ? payload.environment
+            : undefined,
+        readApiVersion:
+          typeof payload.read_api_version === 'string' ? payload.read_api_version : undefined,
+        writeApiVersion:
+          typeof payload.write_api_version === 'string' ? payload.write_api_version : undefined,
+      };
     } catch (err) {
       if (err instanceof errors.JOSEError || err instanceof Error) throw new Error('invalid_token');
       throw err;
     }
   }
 
-  async issueAccessToken(userId: string, clientId: string, scope: string, tenantId: string, environment: 'test' | 'production', readApiVersion: string, writeApiVersion: string): Promise<string> {
-    return new SignJWT({ client_id: clientId, scope, tenant_id: tenantId, environment, read_api_version: readApiVersion, write_api_version: writeApiVersion })
+  async issueAccessToken(
+    userId: string,
+    clientId: string,
+    scope: string,
+    tenantId: string,
+    environment: 'test' | 'production',
+    readApiVersion: string,
+    writeApiVersion: string,
+  ): Promise<string> {
+    return new SignJWT({
+      client_id: clientId,
+      scope,
+      tenant_id: tenantId,
+      environment,
+      read_api_version: readApiVersion,
+      write_api_version: writeApiVersion,
+    })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)
       .setIssuer(this.issuer)
