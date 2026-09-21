@@ -171,8 +171,7 @@ export async function mcpOAuthRoutes(
       request.body.selection_token &&
       request.body.tenant_id &&
       request.body.environment &&
-      request.body.read_api_version &&
-      request.body.write_api_version
+      request.body.read_api_version
     ) {
       try {
         const selection = await options.oauthService.verifyTenantSelectionToken(
@@ -181,7 +180,7 @@ export async function mcpOAuthRoutes(
         const tenantId = request.body.tenant_id;
         const environment = request.body.environment;
         const readApiVersion = request.body.read_api_version;
-        const writeApiVersion = request.body.write_api_version;
+        const writeApiVersion = request.body.write_api_version || null;
         if (environment !== 'test' && environment !== 'production')
           return reply.badRequest('Invalid PTV environment');
 
@@ -196,17 +195,19 @@ export async function mcpOAuthRoutes(
             item.apiVersion === readApiVersion &&
             item.supportsRead,
         );
-        const writeConfig = configs.find(
-          (item) =>
-            item.environment === environment &&
-            item.apiVersion === writeApiVersion &&
-            item.supportsWrite,
-        );
+        const writeConfig = writeApiVersion
+          ? configs.find(
+              (item) =>
+                item.environment === environment &&
+                item.apiVersion === writeApiVersion &&
+                item.supportsWrite,
+            )
+          : undefined;
         if (!readConfig)
           return reply.badRequest(
             'That read PTV connection is not configured for this organisation',
           );
-        if (!writeConfig)
+        if (writeApiVersion && !writeConfig)
           return reply.badRequest(
             'That write PTV connection is not configured for this organisation',
           );
@@ -289,7 +290,7 @@ export async function mcpOAuthRoutes(
       return reply.type('text/html').send(
         html(`
         <h1>Choose PTV connection</h1>
-        <p>Select the organisation, environment, and independently which API version handles reads and writes.</p>
+        <p>Select the organisation, environment, and independently which API version handles reads and writes. You can select NONE for writes.</p>
         <form method="post" action="/oauth/authorize">
           <input type="hidden" name="selection_token" value="${selectionToken}">
           <label>Organisation</label>
@@ -305,7 +306,8 @@ export async function mcpOAuthRoutes(
             <option value="v12">v12</option>
           </select>
           <label>Write API version</label>
-          <select name="write_api_version" required>
+          <select name="write_api_version">
+            <option value="">NONE — read-only</option>
             <option value="v11">v11</option>
             <option value="v12">v12</option>
           </select>

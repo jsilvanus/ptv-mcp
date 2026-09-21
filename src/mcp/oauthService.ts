@@ -26,7 +26,7 @@ export interface AuthorizationRequest {
   tenantId?: string;
   environment?: 'test' | 'production';
   readApiVersion?: string;
-  writeApiVersion?: string;
+  writeApiVersion?: string | null;
 }
 
 export class OAuthService {
@@ -257,8 +257,7 @@ export class OAuthService {
     if (
       !request.tenantId ||
       !request.environment ||
-      !request.readApiVersion ||
-      !request.writeApiVersion
+      !request.readApiVersion
     )
       throw new Error('Invalid authorization selection');
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
@@ -270,7 +269,7 @@ export class OAuthService {
         (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
       VALUES
         (${hashToken(code)}, ${request.clientId}, ${request.redirectUri}, ${request.codeChallenge},
-         ${userId}, ${request.scope}, ${request.tenantId}, ${request.environment}, ${request.readApiVersion}, ${request.readApiVersion}, ${request.writeApiVersion}, now() + interval '60 seconds')
+         ${userId}, ${request.scope}, ${request.tenantId}, ${request.environment}, ${request.readApiVersion}, ${request.readApiVersion}, ${request.writeApiVersion ?? null}, now() + interval '60 seconds')
     `);
     return code;
   }
@@ -286,7 +285,7 @@ export class OAuthService {
       tenant_id: string | null;
       environment: 'test' | 'production';
       read_api_version: string;
-      write_api_version: string;
+      write_api_version: string | null;
       expires_at: Date;
       consumed_at: Date | null;
     }>(sql`SELECT * FROM oauth_authorization_codes WHERE code_hash = ${hashToken(code)}`);
@@ -337,7 +336,7 @@ export class OAuthService {
       tenant_id: string | null;
       environment: 'test' | 'production';
       read_api_version: string;
-      write_api_version: string;
+      write_api_version: string | null;
       expires_at: Date;
       revoked_at: Date | null;
     }>(sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`);
@@ -403,7 +402,7 @@ export class OAuthService {
     tenantId: string,
     environment: 'test' | 'production',
     readApiVersion: string,
-    writeApiVersion: string,
+    writeApiVersion: string | null,
   ): Promise<string> {
     return new SignJWT({
       client_id: clientId,
@@ -411,7 +410,7 @@ export class OAuthService {
       tenant_id: tenantId,
       environment,
       read_api_version: readApiVersion,
-      write_api_version: writeApiVersion,
+      ...(writeApiVersion ? { write_api_version: writeApiVersion } : {}),
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(userId)

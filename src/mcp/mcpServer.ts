@@ -141,11 +141,6 @@ function toolContext(extra: Extra): ToolContext {
       'No active PTV read API version for this MCP connection; reconnect and select a connection',
     );
   }
-  if (typeof writeApiVersion !== 'string' || writeApiVersion === '') {
-    throw new Error(
-      'No active PTV write API version for this MCP connection; reconnect and select a connection',
-    );
-  }
   return {
     tenantId: activeTenantId,
     environment,
@@ -179,11 +174,6 @@ function resourceToolContext(
   if (typeof readApiVersion !== 'string' || readApiVersion === '') {
     throw new Error(
       'No active PTV read API version for this MCP connection; reconnect and select a connection',
-    );
-  }
-  if (typeof writeApiVersion !== 'string' || writeApiVersion === '') {
-    throw new Error(
-      'No active PTV write API version for this MCP connection; reconnect and select a connection',
     );
   }
   return {
