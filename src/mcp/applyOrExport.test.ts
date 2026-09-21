@@ -9,7 +9,13 @@ import { NotAuthorizedError } from './authorization.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
 import type { ToolContext } from './toolContext.js';
 
-const ctx: ToolContext = { tenantId: 'tenant-1', environment: 'test', actingUserId: 'user-1' };
+const ctx: ToolContext = {
+  tenantId: 'tenant-1',
+  environment: 'test',
+  readApiVersion: 'v11',
+  writeApiVersion: 'v11',
+  actingUserId: 'user-1',
+};
 const fakeEditorResolver = async () => 'editor' as const;
 const fakeReaderResolver = async () => 'reader' as const;
 
@@ -96,6 +102,27 @@ describe('exportForManualPublish', () => {
 });
 
 describe('applyChanges', () => {
+  it('returns an explicit read-only error when no write API is selected', async () => {
+    const registry = fakeRegistry(buildAdapter(true));
+    const readOnlyContext: ToolContext = {
+      ...ctx,
+      writeApiVersion: undefined,
+    };
+
+    await expect(
+      applyChanges(
+        fakeEditorResolver,
+        registry,
+        fakeAuditService(),
+        new V11ChangeValidator(),
+        readOnlyContext,
+        'svc-1',
+        {},
+      ),
+    ).rejects.toThrow('No write API version is selected');
+    expect(registry.resolve).not.toHaveBeenCalled();
+  });
+
   it('validates, writes via a write-capable adapter, and records both steps', async () => {
     const registry = fakeRegistry(buildAdapter(true));
     const audit = fakeAuditService();
