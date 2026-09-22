@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PtvV11Client } from './client.js';
-import { fetchAllIdNamePairs, fetchListByIds, fetchOrganizationServiceWindow } from './pagination.js';
+import { fetchAllIdNamePairs, fetchListByIds, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceWindow } from './pagination.js';
 import type { V11ServiceWire } from './wireModel.js';
 
 const ORGANIZATION_ID = '47e05190-11d1-435d-a657-c7dccbd91603';
@@ -108,5 +108,75 @@ describe('PTV v11 organization catalogue pagination', () => {
     await fetchListByIds<{ id: string }>(client, '/api/v11/Organization/list', ids);
 
     expect(calls.map((call) => String(call.query?.guids).split(',').length)).toEqual([100, 100, 1]);
+  });
+});
+
+
+describe('PTV v11 organization service-channel pagination', () => {
+  it('uses the organization endpoint and returns only the requested organization', async () => {
+    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const client = fakeClient(async (path, query) => {
+      calls.push({ path, query });
+      const page = Number(query?.page);
+      return {
+        pageNumber: page,
+        pageSize: 2,
+        pageCount: 2,
+        itemList:
+          page === 1
+            ? [
+                {
+                  id: 'channel-1',
+                  serviceChannelType: 'Phone',
+                  organizationId: ORGANIZATION_ID,
+                  publishingStatus: 'Published',
+                  serviceChannelNames: [{ language: 'fi', value: 'Riihimäki 1' }],
+                  serviceChannelDescriptions: [],
+                  languages: ['fi'],
+                  modified: '2026-01-01T00:00:00Z',
+                },
+                {
+                  id: 'channel-other-1',
+                  serviceChannelType: 'WebPage',
+                  organizationId: 'other-org',
+                  publishingStatus: 'Published',
+                  serviceChannelNames: [{ language: 'fi', value: 'Other 1' }],
+                  serviceChannelDescriptions: [],
+                  languages: ['fi'],
+                  modified: '2026-01-01T00:00:00Z',
+                },
+              ]
+            : [
+                {
+                  id: 'channel-2',
+                  serviceChannelType: 'ServiceLocation',
+                  organizationId: ORGANIZATION_ID,
+                  publishingStatus: 'Published',
+                  serviceChannelNames: [{ language: 'fi', value: 'Riihimäki 2' }],
+                  serviceChannelDescriptions: [],
+                  languages: ['fi'],
+                  modified: '2026-01-01T00:00:00Z',
+                },
+              ],
+      };
+    });
+
+    const result = await fetchOrganizationServiceChannelWindow(client, ORGANIZATION_ID);
+
+    expect(result.items.map((item) => item.id)).toEqual([
+      'channel-1',
+      'channel-other-1',
+      'channel-2',
+    ]);
+    expect(calls).toEqual([
+      {
+        path: '/api/v11/ServiceChannel/list/organization',
+        query: { organizationId: ORGANIZATION_ID, page: 1 },
+      },
+      {
+        path: '/api/v11/ServiceChannel/list/organization',
+        query: { organizationId: ORGANIZATION_ID, page: 2 },
+      },
+    ]);
   });
 });
