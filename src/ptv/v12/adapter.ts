@@ -176,7 +176,7 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12Service(item as V12ServiceWire),
     );
     const query = params.query?.trim();
-    const hydrated = query || params.organizationId ? await this.hydrateServices(all) : all;
+    const hydrated = await this.hydrateServices(all);
 
     const filtered = hydrated.filter(
       (service) =>
@@ -204,7 +204,7 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12ServiceChannel(item as V12ServiceChannelWire),
     );
     const query = params.query?.trim();
-    const hydrated = query || params.organizationId ? await this.hydrateChannels(all) : all;
+    const hydrated = await this.hydrateChannels(all);
     const filtered = hydrated.filter(
       (channel) =>
         (!params.organizationId || channel.organizationId === params.organizationId) &&
@@ -220,7 +220,10 @@ export class PtvV12Adapter implements PtvAdapter {
       mapV12Organization(item as V12OrganizationWire),
     );
     const query = params.query?.trim();
-    const hydrated = query ? await this.hydrateOrganisations(all) : all;
+    // v12 search is a catalogue feed; search results can omit fields present
+    // on the individual resource. Hydrate every organization before applying
+    // the MCP query so the public interface does not depend on search DTO shape.
+    const hydrated = await this.hydrateOrganisations(all);
     const filtered = query ? hydrated.filter((org) => matchesOrganisation(org, query)) : hydrated;
     return paginate(filtered, page, pageSize);
   }
