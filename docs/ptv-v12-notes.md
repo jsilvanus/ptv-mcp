@@ -105,7 +105,8 @@ their PTV v12 paths haven't been vendored/confirmed in this codebase.
 
 v12 uses `languageVersions`: `{ fi: { name, summary, description }, sv:
 {...}, en: {...} }`, a nested per-language object — **not** v11's array of
-`{language, value}` records. The adapter's `localized()` helper
+`{language, value}` records. The official migration documentation also shows
+this structure in its v12 response example. The adapter's `localized()` helper
 (`adapter.ts`) maps this into the shared `LocalizedText` domain shape
 (`Partial<Record<LanguageCode, string>>`). A code comment in `adapter.ts`
 notes this was a real bug during development: an earlier version of the
@@ -163,3 +164,53 @@ in production today even though v12 write isn't — see
 4. Run the Phase 1 contract test suite (`src/ptv/testing/contractTests.ts`)
    against `PtvV12Adapter` — this would have caught the unimplemented-method
    gap immediately.
+
+
+## Read-parity implementation update
+
+The v12 read implementation now covers the three previously stubbed adapter
+operations:
+
+- `GET /api/v12/service-collection/search`
+- `GET /api/v12/general-description/search`
+- v12 reference-data endpoints for countries, industrial classes, languages,
+  life events, municipalities, ontology terms, postal codes, regions, service
+  classes, target groups, and wellbeing services counties.
+
+The implementation keeps the stable MCP/domain interface and performs
+client-side filtering/pagination for these operations, matching the existing
+v12 adapter strategy while the exact server-side filter parameter names remain
+an optimization task.
+
+### Important v12 semantic finding: classification names
+
+The v12 migration documentation explicitly says that supplementary and
+classification data such as service target groups, life events and keywords
+are returned as identifiers only in the search API, rather than as complete
+reference-data objects. Therefore a v12 service result containing a
+classification ID with an empty `names` object is **not by itself a mapper bug**.
+The adapter must not manufacture a localized name from the code. The
+reference-data endpoints are the authoritative way to resolve those names.
+
+### Organization reference
+
+The v12 implementation accepts `organizationContentId` as the primary
+organization reference, with defensive fallbacks for other beta shapes. This
+is separate from the OAuth tenant ID. The repository's v12 implementation plan
+already identified `organizationContentId` as a required v12 service field.
+
+### Timestamps
+
+The mapper recognizes several timestamp field variants and normalizes valid
+string/numeric timestamps to ISO-8601. If none is present it still uses the
+Unix epoch as an explicit "wire field missing" fallback; it does not invent a
+real modification time.
+
+### Beta API caveat
+
+The official v12 API documentation is currently version 0.1.0 / OpenAPI 3.1.1
+and describes the v12 API as beta. The Suomi.fi transition documentation says
+the v12 search API may still change during the transition. The exact
+server-side filter parameter names should therefore be verified against the
+live Scalar specification before replacing the adapter's client-side filtering
+with server-side filters.
