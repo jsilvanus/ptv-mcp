@@ -188,7 +188,7 @@ export class PtvV11Adapter implements PtvAdapter {
       };
     }
 
-    const { ids } = await fetchIdWindow(
+    const { ids, totalCountEstimate } = await fetchIdWindow(
       this.client,
       '/api/v11/Organization',
       start,
@@ -203,7 +203,7 @@ export class PtvV11Adapter implements PtvAdapter {
       items: wires.map(organizationWireToDomain),
       page,
       pageSize,
-      totalCount: ids.length,
+      totalCount: totalCountEstimate,
     };
   }
 
