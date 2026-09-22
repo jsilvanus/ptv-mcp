@@ -764,12 +764,16 @@ function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
     if (!value || typeof value !== 'object') return { names: {} };
 
     const v = value as Record<string, unknown>;
+    const code = firstString(v.code, v.contentId, v.id, v.value);
+    const names = localized(
+      v.names ?? v.name ?? v.languageVersions ?? v.displayName ?? v.label,
+      'name',
+    );
+
     return {
-      ...(typeof v.code === 'string' ? { code: v.code } : {}),
-      ...(typeof v.contentId === 'string' ? { code: v.contentId } : {}),
-      ...(typeof v.id === 'string' ? { code: v.id } : {}),
+      ...(code ? { code } : {}),
       ...(typeof v.uri === 'string' ? { uri: v.uri } : {}),
-      names: localized(v.names ?? v.name ?? v.languageVersions, 'name'),
+      names,
     };
   });
 }
