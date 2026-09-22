@@ -19,7 +19,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import { fetchAllIdNamePairs, fetchIdWindow, fetchListByIds, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceWindow } from './pagination.js';
+import { fetchAllIdNamePairs, fetchIdWindow, fetchListByIds, fetchOrganizationGeneralDescriptionWindow, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceCollectionWindow, fetchOrganizationServiceWindow } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
@@ -298,6 +298,12 @@ export class PtvV11Adapter implements PtvAdapter {
     const pageSize = params.pageSize ?? 100;
     const start = (page - 1) * pageSize;
 
+    if (params.organizationId) {
+      const { items: organizationWires } = await fetchOrganizationServiceCollectionWindow(this.client, params.organizationId);
+      const items = organizationWires.map(serviceCollectionWireToDomain);
+      return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+    }
+
     // v11 has no bulk /ServiceCollection/list?guids= endpoint (unlike
     // Service/ServiceChannel/Organization/GeneralDescription), so each id
     // in the window is fetched individually.
@@ -327,6 +333,12 @@ export class PtvV11Adapter implements PtvAdapter {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
     const start = (page - 1) * pageSize;
+
+    if (params.organizationId) {
+      const { items: organizationWires } = await fetchOrganizationGeneralDescriptionWindow(this.client, params.organizationId);
+      const items = organizationWires.map(generalDescriptionWireToDomain);
+      return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+    }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
       this.client,
