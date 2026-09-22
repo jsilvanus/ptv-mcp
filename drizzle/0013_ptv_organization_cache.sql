@@ -27,3 +27,5 @@ ALTER TABLE "ptv_organization_cache" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "ptv_organization_cache" FORCE ROW LEVEL SECURITY;
 CREATE POLICY "tenant_isolation" ON "ptv_organization_cache"
   USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "ptv_organization_cache" TO ptv_mcp_app;
