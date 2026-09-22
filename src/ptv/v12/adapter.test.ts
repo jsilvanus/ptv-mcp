@@ -92,7 +92,7 @@ describe('PTV v12 service mapping', () => {
 });
 
 describe('PTV v12 service search parameters', () => {
-  it('never sends the unsupported searchText parameter', async () => {
+  it('uses the v12 organization filter parameter names', async () => {
     const requestedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {
       requestedUrls.push(String(input));
@@ -119,6 +119,17 @@ describe('PTV v12 service search parameters', () => {
     expect(serviceUrl).toBeDefined();
     expect(new URL(serviceUrl!).searchParams.has('searchText')).toBe(false);
     expect(new URL(serviceUrl!).searchParams.get('pageSize')).toBe('100');
+
+    await adapter.searchServices({
+      organizationId: 'org-123',
+      page: 1,
+      pageSize: 10,
+    });
+    const filteredServiceUrl = requestedUrls.find(
+      (url) => url.includes('/service/search') && url.includes('organizationId=org-123'),
+    );
+    expect(filteredServiceUrl).toBeDefined();
+    expect(new URL(filteredServiceUrl!).searchParams.get('organizationId')).toBe('org-123');
   });
 });
 
@@ -243,7 +254,7 @@ describe('PTV v12 search hydration', () => {
 
 
 describe('PTV v12 read parity mappings', () => {
-  it('uses organizationContentId and preserves the v12 timestamp representation', async () => {
+  it('maps the v12 organization reference and preserves the v12 timestamp representation', async () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service/service-1')) {
@@ -281,7 +292,7 @@ describe('PTV v12 read parity mappings', () => {
     expect(result?.modifiedAt).not.toBe(new Date(0).toISOString());
   });
 
-  it('maps organization businessCode and organizationContentId from a search result', async () => {
+  it('maps organization businessCode and contentId from a search result', async () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/organization/search')) {
