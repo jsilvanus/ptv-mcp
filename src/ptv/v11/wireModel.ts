@@ -78,6 +78,16 @@ export interface V11ServiceWire {
   modified: string;
 }
 
+/** Summary item returned by GET /api/v11/ServiceCollection/organization. */
+export interface V11ServiceCollectionSummaryWire {
+  id: string;
+  serviceCollectionNames?: V11LocalizedItem[];
+  serviceCollectionDescriptions?: V11LocalizedItem[];
+  services?: V11IdNamePair[];
+  serviceChannels?: V11IdNamePair[];
+  name?: string;
+}
+
 export interface V11ServiceRelation {
   service: V11IdNamePair;
   modified?: string;
