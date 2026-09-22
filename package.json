@@ -23,7 +23,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "mcp:token": "tsx src/mcp/token.ts"
+    "mcp:token": "tsx src/mcp/token.ts",
+    "db:status": "tsx src/db/status.ts"
   },
   "dependencies": {
     "@fastify/env": "^5.0.2",
