@@ -35,3 +35,25 @@ runPtvAdapterContractTests(
     knownCodeListName: 'languages',
   },
 );
+
+
+describe('PTV v11 organization service regression', () => {
+  it('returns Riihimäen kaupungin services without an oversized Service/list URL', async () => {
+    const organizationId = '47e05190-11d1-435d-a657-c7dccbd91603';
+    const adapter = new PtvV11Adapter({ environment: 'production' });
+
+    const organization = await adapter.getOrganisation(organizationId);
+    expect(Object.values(organization?.names ?? {}).some((name) => name?.includes('Riihimäen kaupunki'))).toBe(
+      true,
+    );
+
+    const result = await adapter.searchServices({
+      organizationId,
+      page: 1,
+      pageSize: 1000,
+    });
+
+    expect(result.items.length).toBeGreaterThan(0);
+    expect(result.items.every((service) => service.organizationId === organizationId)).toBe(true);
+  });
+});

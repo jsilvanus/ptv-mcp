@@ -18,7 +18,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import { fetchIdWindow } from './pagination.js';
+import { fetchIdWindow, fetchListInBatches, fetchOrganizationServiceWindow } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
@@ -82,6 +82,21 @@ export class PtvV11Adapter implements PtvAdapter {
     const pageSize = params.pageSize ?? 100;
     const start = (page - 1) * pageSize;
 
+    if (params.organizationId) {
+      const { items, totalCountEstimate } = await fetchOrganizationServiceWindow(
+        this.client,
+        params.organizationId,
+        start,
+        pageSize,
+      );
+      return {
+        items: items.map(serviceWireToDomain),
+        page,
+        pageSize,
+        totalCount: totalCountEstimate,
+      };
+    }
+
     const { ids, totalCountEstimate } = await fetchIdWindow(
       this.client,
       '/api/v11/Service',
@@ -90,9 +105,7 @@ export class PtvV11Adapter implements PtvAdapter {
     );
     const wires =
       ids.length > 0
-        ? await this.client.get<V11ServiceWire[]>('/api/v11/Service/list', {
-            guids: ids.join(','),
-          })
+        ? await fetchListInBatches<V11ServiceWire>(this.client, '/api/v11/Service/list', ids)
         : [];
 
     return {
@@ -121,9 +134,11 @@ export class PtvV11Adapter implements PtvAdapter {
     );
     const wires =
       ids.length > 0
-        ? await this.client.get<V11ServiceChannelWire[]>('/api/v11/ServiceChannel/list', {
-            guids: ids.join(','),
-          })
+        ? await fetchListInBatches<V11ServiceChannelWire>(
+            this.client,
+            '/api/v11/ServiceChannel/list',
+            ids,
+          )
         : [];
 
     return {
@@ -151,9 +166,11 @@ export class PtvV11Adapter implements PtvAdapter {
     );
     const wires =
       ids.length > 0
-        ? await this.client.get<V11OrganizationWire[]>('/api/v11/Organization/list', {
-            guids: ids.join(','),
-          })
+        ? await fetchListInBatches<V11OrganizationWire>(
+            this.client,
+            '/api/v11/Organization/list',
+            ids,
+          )
         : [];
     const query = params.query?.trim().toLocaleLowerCase('fi-FI');
     const items = wires
@@ -238,9 +255,11 @@ export class PtvV11Adapter implements PtvAdapter {
     );
     const wires =
       ids.length > 0
-        ? await this.client.get<V11GeneralDescriptionWire[]>('/api/v11/GeneralDescription/list', {
-            guids: ids.join(','),
-          })
+        ? await fetchListInBatches<V11GeneralDescriptionWire>(
+            this.client,
+            '/api/v11/GeneralDescription/list',
+            ids,
+          )
         : [];
 
     return {
