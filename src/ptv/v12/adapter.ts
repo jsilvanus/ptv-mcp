@@ -603,7 +603,7 @@ function modifiedAtOf(wire: {
   lastModified?: string | number;
   lastModifiedAt?: string | number;
   updatedAt?: string | number;
-}): string {
+}): string | undefined {
   const value =
     wire.modifiedAt ??
     wire.modified ??
@@ -619,7 +619,7 @@ function modifiedAtOf(wire: {
     const date = new Date(millis);
     if (!Number.isNaN(date.getTime())) return date.toISOString();
   }
-  return new Date(0).toISOString();
+  return undefined;
 }
 
 function firstString(...values: unknown[]): string | undefined {
