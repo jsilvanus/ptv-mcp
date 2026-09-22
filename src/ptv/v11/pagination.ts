@@ -14,15 +14,15 @@ export async function fetchAllIdNamePairs(
   return items;
 }
 
-export async function fetchListByIds(
+export async function fetchListByIds<T>(
   client: PtvV11Client,
   listPath: string,
   ids: string[],
-): Promise<V11ServiceWire[]> {
+): Promise<T[]> {
   const wires: V11ServiceWire[] = [];
   for (let i = 0; i < ids.length; i += 100) {
     const batch = ids.slice(i, i + 100);
-    const result = await client.get<V11ServiceWire[]>(listPath, { guids: batch.join(',') });
+    const result = await client.get<T[]>(listPath, { guids: batch.join(',') });
     wires.push(...result);
   }
   return wires;
