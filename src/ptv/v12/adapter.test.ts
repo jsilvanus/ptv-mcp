@@ -118,6 +118,8 @@ describe('PTV v12 service search parameters', () => {
     const serviceUrl = requestedUrls.find((url) => url.includes('/service/search'));
     expect(serviceUrl).toBeDefined();
     expect(new URL(serviceUrl!).searchParams.has('searchText')).toBe(false);
+    expect(new URL(serviceUrl!).searchParams.has('organizationId')).toBe(false);
+    expect(new URL(serviceUrl!).searchParams.has('organizationContentIds')).toBe(false);
     expect(new URL(serviceUrl!).searchParams.get('pageSize')).toBe('100');
 
     await adapter.searchServices({
@@ -126,10 +128,10 @@ describe('PTV v12 service search parameters', () => {
       pageSize: 10,
     });
     const filteredServiceUrl = requestedUrls.find(
-      (url) => url.includes('/service/search') && url.includes('organizationId=org-123'),
+      (url) => url.includes('/service/search') && url.includes('organizationContentIds=org-123'),
     );
     expect(filteredServiceUrl).toBeDefined();
-    expect(new URL(filteredServiceUrl!).searchParams.get('organizationId')).toBe('org-123');
+    expect(new URL(filteredServiceUrl!).searchParams.getAll('organizationContentIds')).toEqual(['org-123']);
   });
 });
 
