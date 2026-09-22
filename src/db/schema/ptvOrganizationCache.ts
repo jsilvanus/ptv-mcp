@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { tenants } from './tenant.js';
 import { ptvEnvironmentEnum } from './enums.js';
 
@@ -20,6 +20,7 @@ export const ptvOrganizationCache = pgTable(
     environment: ptvEnvironmentEnum('environment').notNull(),
     apiVersion: text('api_version').notNull(),
     organizationId: uuid('organization_id').notNull(),
+    catalogOrder: integer('catalog_order').notNull(),
     name: text('name').notNull(),
     normalizedName: text('normalized_name').notNull(),
     organization: jsonb('organization').notNull(),
