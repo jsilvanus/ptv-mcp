@@ -1,4 +1,4 @@
-import { and, eq, gt, lte } from 'drizzle-orm';
+import { and, asc, eq, gt, lte } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { withContext } from './context.js';
 import { ptvOrganizationCache } from './schema/ptvOrganizationCache.js';
@@ -70,7 +70,7 @@ export class PtvOrganizationCacheService {
             gt(ptvOrganizationCache.staleAt, now),
           ),
         )
-        .orderBy(ptvOrganizationCache.name);
+        .orderBy(asc(ptvOrganizationCache.catalogOrder));
 
       const normalizedQuery = query?.trim().toLocaleLowerCase('fi-FI');
       return rows
@@ -106,11 +106,12 @@ export class PtvOrganizationCacheService {
         if (batch.length === 0) continue;
 
         await tx.insert(ptvOrganizationCache).values(
-          batch.map((organization) => ({
+          batch.map((organization, index) => ({
             tenantId: key.tenantId,
             environment: key.environment,
             apiVersion: key.apiVersion,
             organizationId: organization.id,
+            catalogOrder: i + index,
             name: organization.organizationNames[0]?.value ?? organization.id,
             normalizedName: organization.organizationNames
               .map((name) => name.value)
