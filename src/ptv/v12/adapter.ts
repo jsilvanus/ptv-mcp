@@ -24,7 +24,13 @@ interface V12ServiceChannelWire {
   id?: string;
   sourceId?: string;
   organizationId?: string;
-  organization?: { contentId?: string; id?: string; organizationId?: string };
+  organizationContentId?: string;
+  organization?: {
+    contentId?: string;
+    id?: string;
+    organizationId?: string;
+    organizationContentId?: string;
+  };
   serviceChannelType?: string;
   channelType?: string;
   type?: string;
@@ -35,9 +41,11 @@ interface V12ServiceChannelWire {
   description?: unknown;
   descriptions?: unknown;
   languages?: string[];
-  modifiedAt?: string;
-  modified?: string;
-  lastModified?: string;
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
 }
 
 interface V12OrganizationWire {
@@ -51,16 +59,24 @@ interface V12OrganizationWire {
   name?: unknown;
   names?: unknown;
   languageVersions?: Record<string, unknown>;
-  modifiedAt?: string;
-  modified?: string;
-  lastModified?: string;
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
 }
 interface V12ServiceWire {
   contentId?: string;
   id?: string;
   sourceId?: string;
   organizationId?: string;
-  organization?: { contentId?: string; id?: string; organizationId?: string };
+  organizationContentId?: string;
+  organization?: {
+    contentId?: string;
+    id?: string;
+    organizationId?: string;
+    organizationContentId?: string;
+  };
   serviceType?: string;
   type?: string;
   publishingStatus?: string;
@@ -80,9 +96,57 @@ interface V12ServiceWire {
   generalDescriptionId?: string;
   serviceChannelIds?: Array<string | { contentId?: string; id?: string }>;
   serviceChannels?: Array<string | { contentId?: string; id?: string }>;
-  modifiedAt?: string;
-  modified?: string;
-  lastModified?: string;
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
+}
+
+interface V12ServiceCollectionWire {
+  contentId?: string;
+  id?: string;
+  publishingStatus?: string;
+  languageVersions?: Record<string, unknown>;
+  names?: unknown;
+  name?: unknown;
+  descriptions?: unknown;
+  description?: unknown;
+  organizationContentId?: string;
+  organizationId?: string;
+  services?: Array<string | { contentId?: string; id?: string }>;
+  serviceIds?: Array<string | { contentId?: string; id?: string }>;
+  serviceChannels?: Array<string | { contentId?: string; id?: string }>;
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
+}
+
+interface V12GeneralDescriptionWire {
+  contentId?: string;
+  id?: string;
+  serviceType?: string;
+  type?: string;
+  publishingStatus?: string;
+  languageVersions?: Record<string, unknown>;
+  names?: unknown;
+  name?: unknown;
+  descriptions?: unknown;
+  description?: unknown;
+  organizationContentId?: string;
+  organizationId?: string;
+  serviceClasses?: unknown[];
+  ontologyTerms?: unknown[];
+  targetGroups?: unknown[];
+  lifeEvents?: unknown[];
+  industrialClasses?: unknown[];
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
 }
 
 export class PtvV12Adapter implements PtvAdapter {
@@ -195,14 +259,49 @@ export class PtvV12Adapter implements PtvAdapter {
     return hierarchy;
   }
   async searchServiceCollections(
-    _params: SearchParams,
+    params: SearchParams,
   ): Promise<PaginatedResult<ServiceCollection>> {
-    return unsupported('service-collection search');
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const query = params.query?.trim();
+    const rawItems = await this.fetchAllRaw<V12ServiceCollectionWire>(
+      '/api/v12/service-collection/search',
+    );
+    const filtered = rawItems
+      .filter(
+        (item) =>
+          !params.organizationId &&
+          !query
+            ? true
+            : (!params.organizationId ||
+                organizationIdOf(item) === params.organizationId) &&
+              (!query || matchesCollection(mapV12ServiceCollection(item), query)),
+      )
+      .map(mapV12ServiceCollection);
+    return paginate(filtered, page, pageSize);
   }
+
   async searchGeneralDescriptions(
-    _params: SearchParams,
+    params: SearchParams,
   ): Promise<PaginatedResult<GeneralDescription>> {
-    return unsupported('general-description search');
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const query = params.query?.trim();
+    const rawItems = await this.fetchAllRaw<V12GeneralDescriptionWire>(
+      '/api/v12/general-description/search',
+    );
+    const filtered = rawItems
+      .filter(
+        (item) =>
+          !params.organizationId &&
+          !query
+            ? true
+            : (!params.organizationId ||
+                organizationIdOf(item) === params.organizationId) &&
+              (!query || matchesGeneralDescription(mapV12GeneralDescription(item), query)),
+      )
+      .map(mapV12GeneralDescription);
+    return paginate(filtered, page, pageSize);
   }
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
     const raw = await this.client.get<unknown>('/api/v12/connection/search');
@@ -212,9 +311,29 @@ export class PtvV12Adapter implements PtvAdapter {
         (connection) => connection.serviceId === entityId || connection.channelId === entityId,
       );
   }
-  async listCodes(_codeListName: string): Promise<CodeListEntry[]> {
-    return unsupported('code lists');
+  async listCodes(codeListName: string): Promise<CodeListEntry[]> {
+    const path = V12_REFERENCE_CODE_LIST_PATHS[codeListName];
+    if (!path) {
+      throw new Error(
+        `v12 has no standalone code list named "${codeListName}". Supported names: ${Object.keys(
+          V12_REFERENCE_CODE_LIST_PATHS,
+        ).join(', ')}`,
+      );
+    }
+    const raw = await this.client.get<unknown>(path);
+    return extractItems(raw).map((item) => referenceCodeToDomain(item));
   }
+  private async fetchAllRaw<T>(path: string, pageSize = 100): Promise<T[]> {
+    const result: T[] = [];
+    for (let page = 1; ; page++) {
+      const raw = await this.client.get<unknown>(path, { page, pageSize });
+      const items = extractItems(raw) as T[];
+      result.push(...items);
+      const total = extractTotalCount(raw, result.length);
+      if (items.length === 0 || result.length >= total) return result;
+    }
+  }
+
   private async fetchAll<T>(path: string, map: (item: unknown) => T, pageSize = 100): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
@@ -335,12 +454,7 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId:
-      wire.organizationId ??
-      wire.organization?.contentId ??
-      wire.organization?.id ??
-      wire.organization?.organizationId ??
-      '',
+    organizationId: organizationIdOf(wire),
     channelType: normalizeChannelType(wire.serviceChannelType ?? wire.channelType ?? wire.type),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
@@ -349,7 +463,7 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
       'description',
     ),
     languages: wire.languages ?? (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
-    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
+    modifiedAt: modifiedAtOf(wire),
   };
 }
 
@@ -365,8 +479,136 @@ function mapV12Organization(wire: V12OrganizationWire): Organization {
     ...(wire.businessCode ? { businessCode: wire.businessCode } : {}),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
+    modifiedAt: modifiedAtOf(wire),
   };
+}
+
+function mapV12ServiceCollection(wire: V12ServiceCollectionWire): ServiceCollection {
+  const id = wire.contentId ?? wire.id;
+  if (!id) throw new Error('PTV v12 service collection response has no contentId');
+  return {
+    id,
+    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
+    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
+    descriptions: localized(
+      wire.descriptions ?? wire.description ?? wire.languageVersions,
+      'description',
+    ),
+    serviceIds: ids(wire.serviceIds ?? wire.services),
+    modifiedAt: modifiedAtOf(wire),
+  };
+}
+
+function mapV12GeneralDescription(wire: V12GeneralDescriptionWire): GeneralDescription {
+  const id = wire.contentId ?? wire.id;
+  if (!id) throw new Error('PTV v12 general description response has no contentId');
+  return {
+    id,
+    serviceType: normalizeServiceType(wire.serviceType ?? wire.type),
+    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
+    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
+    descriptions: localized(
+      wire.descriptions ?? wire.description ?? wire.languageVersions,
+      'description',
+    ),
+    serviceClasses: codeEntries(wire.serviceClasses),
+    ontologyTerms: codeEntries(wire.ontologyTerms),
+    targetGroups: codeEntries(wire.targetGroups),
+    lifeEvents: codeEntries(wire.lifeEvents),
+    industrialClasses: codeEntries(wire.industrialClasses),
+    modifiedAt: modifiedAtOf(wire),
+  };
+}
+
+const V12_REFERENCE_CODE_LIST_PATHS: Record<string, string> = {
+  countries: '/api/v12/country-codes',
+  industrialClasses: '/api/v12/industrial-classes',
+  languages: '/api/v12/language-codes',
+  lifeEvents: '/api/v12/life-events',
+  municipalities: '/api/v12/municipality-codes',
+  ontologyTerms: '/api/v12/ontology-terms',
+  postalCodes: '/api/v12/postal-codes',
+  regions: '/api/v12/region-codes',
+  serviceClasses: '/api/v12/service-classes',
+  targetGroups: '/api/v12/target-groups',
+  wellbeingServicesCounties: '/api/v12/wellbeing-services-county-codes',
+};
+
+function referenceCodeToDomain(value: unknown): CodeListEntry {
+  if (typeof value === 'string') return { code: value, names: {} };
+  if (!value || typeof value !== 'object') return { names: {} };
+  const item = value as Record<string, unknown>;
+  const code = firstString(item.code, item.contentId, item.id, item.value);
+  return {
+    ...(code ? { code } : {}),
+    ...(typeof item.uri === 'string' ? { uri: item.uri } : {}),
+    names: localized(item.names ?? item.name ?? item.languageVersions, 'name'),
+  };
+}
+
+function organizationIdOf(wire: {
+  organizationId?: string;
+  organizationContentId?: string;
+  organization?: {
+    contentId?: string;
+    id?: string;
+    organizationId?: string;
+    organizationContentId?: string;
+  };
+}): string {
+  return (
+    wire.organizationContentId ??
+    wire.organizationId ??
+    wire.organization?.organizationContentId ??
+    wire.organization?.contentId ??
+    wire.organization?.id ??
+    wire.organization?.organizationId ??
+    ''
+  );
+}
+
+function modifiedAtOf(wire: {
+  modifiedAt?: string | number;
+  modified?: string | number;
+  lastModified?: string | number;
+  lastModifiedAt?: string | number;
+  updatedAt?: string | number;
+}): string {
+  const value =
+    wire.modifiedAt ??
+    wire.modified ??
+    wire.lastModified ??
+    wire.lastModifiedAt ??
+    wire.updatedAt;
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = value < 1_000_000_000_000 ? value * 1000 : value;
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return new Date(0).toISOString();
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+function matchesCollection(collection: ServiceCollection, query: string): boolean {
+  const needle = normalizeSearchText(query);
+  return [...Object.values(collection.names), ...Object.values(collection.descriptions)].some(
+    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
+  );
+}
+
+function matchesGeneralDescription(description: GeneralDescription, query: string): boolean {
+  const needle = normalizeSearchText(query);
+  return [
+    ...Object.values(description.names),
+    ...Object.values(description.descriptions),
+  ].some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
 }
 
 function mapV12Connection(wire: unknown): Connection {
@@ -426,12 +668,7 @@ export function mapV12Service(wire: V12ServiceWire): Service {
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId:
-      wire.organizationId ??
-      wire.organization?.contentId ??
-      wire.organization?.id ??
-      wire.organization?.organizationId ??
-      '',
+    organizationId: organizationIdOf(wire),
     serviceType: normalizeServiceType(wire.serviceType ?? wire.type),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names,
@@ -445,7 +682,7 @@ export function mapV12Service(wire: V12ServiceWire): Service {
     languages,
     ...(wire.generalDescriptionId ? { generalDescriptionId: wire.generalDescriptionId } : {}),
     serviceChannelIds: ids(wire.serviceChannelIds ?? wire.serviceChannels),
-    modifiedAt: wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? new Date(0).toISOString(),
+    modifiedAt: modifiedAtOf(wire),
   };
 }
 
@@ -524,7 +761,4 @@ function normalizePublishingStatus(value: string | undefined): Service['publishi
   if (value === 'Draft' || value === 'Archived' || value === 'Withdrawn') return value;
   return 'Published';
 }
-
-function unsupported(name: string): never {
-  throw new Error(`PTV v12 adapter operation not implemented yet: ${name}`);
-}
+\n
