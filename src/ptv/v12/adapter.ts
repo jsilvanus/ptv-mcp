@@ -210,7 +210,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/service-channel/search',
       (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
       100,
-      params.organizationId ? { organizationId: params.organizationId } : undefined,
+      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateChannels(all);
@@ -282,7 +282,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const rawItems = await this.fetchAllRaw<V12ServiceCollectionWire>(
       '/api/v12/service-collection/search',
       100,
-      params.organizationId ? { organizationId: params.organizationId } : undefined,
+      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const filtered = rawItems
       .filter(
@@ -307,7 +307,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const rawItems = await this.fetchAllRaw<V12GeneralDescriptionWire>(
       '/api/v12/general-description/search',
       100,
-      params.organizationId ? { organizationId: params.organizationId } : undefined,
+      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const filtered = rawItems
       .filter(
