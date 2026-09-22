@@ -188,6 +188,13 @@ export async function mcpOAuthRoutes(
         const membership = memberships.find((item) => item.tenantId === tenantId);
         if (!membership) return reply.badRequest('You are not a member of that organisation');
 
+        // v11 published reads are a baseline capability. Ensure the default
+        // config exists here as well as during account connection, so users who
+        // connected v11 before the default was introduced are not blocked by a
+        // stale tenant configuration.
+        if (readApiVersion === 'v11') {
+          await options.adapterConfigService.ensureV11ReadDefaults(membership.tenantId);
+        }
         const configs = await options.adapterConfigService.list(membership.tenantId);
         const readConfig = configs.find(
           (item) =>
