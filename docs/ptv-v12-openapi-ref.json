@@ -1,0 +1,76 @@
+{
+  "source": {
+    "filename": "ptv-api-documentation.json",
+    "openapi": "3.1.1",
+    "version": "0.1.0",
+    "sha256": "f7c9f39ebba2facba0d0d55ae39fa2ba34349bd423dd3a31ea1314b204665b26",
+    "note": "Extracted wire-contract reference from the uploaded PTV v12 OpenAPI document. The original uploaded document is 592361 bytes."
+  },
+  "searchEndpoints": {
+    "/api/v12/organization/search": {
+      "operationId": "searchOrganizations",
+      "queryParameters": [
+        "page",
+        "pageSize",
+        "areaType",
+        "municipalities",
+        "regions",
+        "wellbeingServicesCounties",
+        "municipalitiesMatch",
+        "regionsMatch",
+        "wellbeingServicesCountiesMatch",
+        "publishedAtOrAfter",
+        "languageVersions",
+        "languageVersionsMatch",
+        "businessIds",
+        "organizationTypes"
+      ],
+      "organizationNameFilter": null
+    },
+    "/api/v12/service/search": {
+      "operationId": "searchServices",
+      "organizationFilter": {
+        "name": "organizationContentIds",
+        "type": "array",
+        "maxItems": 20,
+        "uniqueItems": true,
+        "items": "ContentIdType"
+      }
+    },
+    "/api/v12/service-channel/search": {
+      "operationId": "searchChannels",
+      "organizationFilter": {
+        "name": "organizationContentIds",
+        "type": "array",
+        "maxItems": 20,
+        "uniqueItems": true,
+        "items": "ContentIdType"
+      }
+    },
+    "/api/v12/service-collection/search": {
+      "operationId": "searchServiceCollections",
+      "organizationFilter": {
+        "name": "organizationContentIds",
+        "type": "array",
+        "maxItems": 20,
+        "uniqueItems": true,
+        "items": "ContentIdType"
+      }
+    },
+    "/api/v12/general-description/search": {
+      "operationId": "searchGeneralDescriptions",
+      "organizationFilter": {
+        "name": "organizationContentIds",
+        "type": "array",
+        "maxItems": 20,
+        "uniqueItems": true,
+        "items": "ContentIdType"
+      }
+    }
+  },
+  "wireSemantics": {
+    "searchArraySerialization": "OpenAPI query array parameter; client serializes repeated organizationContentIds query parameters.",
+    "organizationResponseReference": "organizationContentId",
+    "organizationSearchText": "No organization name/text query parameter is defined."
+  }
+}
