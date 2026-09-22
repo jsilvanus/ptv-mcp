@@ -100,8 +100,8 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     private readonly configService: PtvAdapterConfigService,
     private readonly tenantEnvironmentService: TenantEnvironmentService,
     private readonly userConnectionService: UserPtvConnectionService,
-    private readonly organizationCache?: PtvOrganizationCacheService,
     adapterFactories?: Record<string, AdapterFactory>,
+    private readonly organizationCache?: PtvOrganizationCacheService,
   ) {
     this.adapterFactories = { ...DEFAULT_ADAPTER_FACTORIES, ...adapterFactories };
   }
