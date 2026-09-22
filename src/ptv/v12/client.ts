@@ -61,7 +61,13 @@ export class PtvV12Client {
 
         if (response.ok) {
           if (response.status === 204) return undefined as T;
-          return (await response.json()) as T;
+          const body = await response.json();
+          if (process.env.PTV_V12_DEBUG_RAW === 'true') {
+            console.log(
+              `[PTV v12 raw] ${method} ${url.toString()}\n${JSON.stringify(body, null, 2)}`,
+            );
+          }
+          return body as T;
         }
 
         if (!isRetryable(response.status) || attempt === this.maxRetries) {
