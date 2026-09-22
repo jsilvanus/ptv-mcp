@@ -18,7 +18,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import { fetchIdWindow, fetchOrganizationServiceWindow } from './pagination.js';
+import { fetchAllIdNamePairs, fetchIdWindow, fetchListByIds, fetchOrganizationServiceWindow } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
@@ -160,33 +160,50 @@ export class PtvV11Adapter implements PtvAdapter {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
     const start = (page - 1) * pageSize;
-    const { ids, totalCountEstimate } = await fetchIdWindow(
+    const query = params.query?.trim().toLocaleLowerCase('fi-FI');
+
+    if (query) {
+      // Search must not depend on the caller's pageSize. The v11 catalogue
+      // is paged independently; first enumerate its id/name pairs, then
+      // fetch matching full organizations in batches of at most 100 GUIDs.
+      const catalog = await fetchAllIdNamePairs(this.client, '/api/v11/Organization');
+      const matchingIds = catalog
+        .filter(
+          (item) =>
+            item.name !== undefined &&
+            item.name.toLocaleLowerCase('fi-FI').includes(query),
+        )
+        .map((item) => item.id);
+      const wires = await fetchListByIds<V11OrganizationWire>(
+        this.client,
+        '/api/v11/Organization/list',
+        matchingIds,
+      );
+      const items = wires.map(organizationWireToDomain);
+      return {
+        items: items.slice(start, start + pageSize),
+        page,
+        pageSize,
+        totalCount: items.length,
+      };
+    }
+
+    const { ids } = await fetchIdWindow(
       this.client,
       '/api/v11/Organization',
       start,
       pageSize,
     );
-    const wires =
-      ids.length > 0
-        ? await this.client.get<V11OrganizationWire[]>('/api/v11/Organization/list', {
-            guids: ids.join(','),
-          })
-        : [];
-    const query = params.query?.trim().toLocaleLowerCase('fi-FI');
-    const items = wires
-      .map(organizationWireToDomain)
-      .filter(
-        (org) =>
-          !query ||
-          Object.values(org.names).some(
-            (name) => name !== undefined && name.toLocaleLowerCase('fi-FI').includes(query),
-          ),
-      );
+    const wires = await fetchListByIds<V11OrganizationWire>(
+      this.client,
+      '/api/v11/Organization/list',
+      ids,
+    );
     return {
-      items,
+      items: wires.map(organizationWireToDomain),
       page,
       pageSize,
-      totalCount: totalCountEstimate,
+      totalCount: ids.length,
     };
   }
 
