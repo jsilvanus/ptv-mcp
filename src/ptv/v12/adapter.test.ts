@@ -387,7 +387,7 @@ describe('PTV v12 read parity mappings', () => {
             ],
             totalCount: 2,
           }),
-          { status: 200, headers: { 'content-type': 'application/json' },
+          { status: 200, headers: { 'content-type': 'application/json' } },
         );
       }
       throw new Error(`Unexpected URL: ${url}`);
