@@ -65,7 +65,7 @@ export interface Service {
   generalDescriptionId?: PtvContentId;
   /** IDs of connected service channels — see `Connection` for the fuller relationship. */
   serviceChannelIds: PtvContentId[];
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 export type ServiceChannelType =
@@ -80,7 +80,7 @@ export interface ServiceChannel {
   names: LocalizedText;
   descriptions: LocalizedText;
   languages: LanguageCode[];
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 export interface Organization {
@@ -90,7 +90,7 @@ export interface Organization {
   businessCode?: string;
   publishingStatus: PublishingStatus;
   names: LocalizedText;
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 export interface GeneralDescription {
@@ -104,7 +104,7 @@ export interface GeneralDescription {
   targetGroups: CodeListEntry[];
   lifeEvents: CodeListEntry[];
   industrialClasses: CodeListEntry[];
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 export interface ServiceCollection {
@@ -113,7 +113,7 @@ export interface ServiceCollection {
   names: LocalizedText;
   descriptions: LocalizedText;
   serviceIds: PtvContentId[];
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 /**
@@ -127,7 +127,7 @@ export interface Connection {
   serviceId: PtvContentId;
   channelId: PtvContentId;
   descriptions?: LocalizedText;
-  modifiedAt: string;
+  modifiedAt?: string;
 }
 
 export interface PaginatedResult<T> {
