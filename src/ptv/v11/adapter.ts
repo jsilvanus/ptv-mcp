@@ -18,7 +18,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import { fetchIdWindow } from './pagination.js';
+import { fetchIdWindow, fetchOrganizationServiceWindow } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
@@ -81,6 +81,23 @@ export class PtvV11Adapter implements PtvAdapter {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
     const start = (page - 1) * pageSize;
+
+    if (params.organizationId) {
+      const { items: organizationWires } = await fetchOrganizationServiceWindow(
+        this.client,
+        params.organizationId,
+      );
+      const services = organizationWires
+        .map(serviceWireToDomain)
+        .filter((service) => service.organizationId === params.organizationId);
+
+      return {
+        items: services.slice(start, start + pageSize),
+        page,
+        pageSize,
+        totalCount: services.length,
+      };
+    }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
       this.client,
