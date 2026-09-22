@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { runPtvAdapterContractTests } from '../testing/contractTests.js';
 import { PtvV11Adapter } from './adapter.js';
 
