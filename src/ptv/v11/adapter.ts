@@ -18,7 +18,11 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import {\n  fetchIdWindow,\n  fetchListInBatches,\n  fetchOrganizationServiceWindow,\n} from './pagination.js';
+import {
+  fetchIdWindow,
+  fetchListInBatches,
+  fetchOrganizationServiceWindow,
+} from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';

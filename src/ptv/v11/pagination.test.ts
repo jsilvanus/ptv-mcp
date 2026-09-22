@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { PtvV11Client } from './client.js';
-import {\n  fetchIdWindow,\n  fetchListInBatches,\n  fetchOrganizationServiceWindow,\n} from './pagination.js';
+import {
+  fetchIdWindow,
+  fetchListInBatches,
+  fetchOrganizationServiceWindow,
+} from './pagination.js';
 import type { V11ServiceWire } from './wireModel.js';
 
 function fakeClient(
@@ -69,7 +73,10 @@ describe('PTV v11 pagination and batching', () => {
         pageNumber,
         pageSize: 2,
         pageCount: 2,
-        itemList: [\n          makeService('service-' + pageNumber + '-1'),\n          makeService('service-' + pageNumber + '-2'),\n        ],
+        itemList: [
+          makeService('service-' + pageNumber + '-1'),
+          makeService('service-' + pageNumber + '-2'),
+        ],
       };
     });
 
