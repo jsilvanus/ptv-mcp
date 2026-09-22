@@ -1,5 +1,5 @@
 import type { PtvV11Client } from './client.js';
-import type { V11IdNamePair, V11PagedList, V11ServiceWire } from './wireModel.js';
+import type { V11IdNamePair, V11PagedList, V11ServiceChannelWire, V11ServiceWire } from './wireModel.js';
 
 export async function fetchAllIdNamePairs(
   client: PtvV11Client,
@@ -97,6 +97,33 @@ export async function fetchOrganizationServiceWindow(
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
     const result = await client.get<V11PagedList<V11ServiceWire>>(
       '/api/v11/Service/list/organization',
+      { organizationId, page },
+    );
+    items.push(...result.itemList);
+  }
+
+  return { items, totalCount: items.length };
+}
+
+
+/**
+ * v11 exposes a dedicated organization-filtered service-channel endpoint.
+ * Its pagination is server-controlled, so enumerate the complete filtered
+ * result and let the adapter apply the MCP page/pageSize window.
+ */
+export async function fetchOrganizationServiceChannelWindow(
+  client: PtvV11Client,
+  organizationId: string,
+): Promise<{ items: V11ServiceChannelWire[]; totalCount: number }> {
+  const firstPage = await client.get<V11PagedList<V11ServiceChannelWire>>(
+    '/api/v11/ServiceChannel/list/organization',
+    { organizationId, page: 1 },
+  );
+
+  const items = [...firstPage.itemList];
+  for (let page = 2; page <= firstPage.pageCount; page += 1) {
+    const result = await client.get<V11PagedList<V11ServiceChannelWire>>(
+      '/api/v11/ServiceChannel/list/organization',
       { organizationId, page },
     );
     items.push(...result.itemList);
