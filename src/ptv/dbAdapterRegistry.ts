@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
+import type { PtvOrganizationCacheService } from '../db/ptvOrganizationCacheService.js';
 import { withContext } from '../db/context.js';
 import { memberships } from '../db/schema/index.js';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
@@ -34,6 +35,8 @@ import {
 export interface AdapterConstructionOptions {
   environment: PtvEnvironment;
   canWrite: boolean;
+  tenantId?: string;
+  organizationCache?: PtvOrganizationCacheService;
   credential:
     | { scope: 'user'; accessToken?: string }
     | { scope: 'tenant'; credentials?: Record<string, unknown> };
@@ -50,6 +53,8 @@ function v11Factory(options: AdapterConstructionOptions): PtvAdapter {
   return new PtvV11Adapter({
     environment: options.environment,
     canWrite: options.canWrite,
+    ...(options.tenantId ? { tenantId: options.tenantId } : {}),
+    ...(options.organizationCache ? { organizationCache: options.organizationCache } : {}),
     ...(options.credential.accessToken ? { accessToken: options.credential.accessToken } : {}),
   });
 }
@@ -95,6 +100,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     private readonly configService: PtvAdapterConfigService,
     private readonly tenantEnvironmentService: TenantEnvironmentService,
     private readonly userConnectionService: UserPtvConnectionService,
+    private readonly organizationCache?: PtvOrganizationCacheService,
     adapterFactories?: Record<string, AdapterFactory>,
   ) {
     this.adapterFactories = { ...DEFAULT_ADAPTER_FACTORIES, ...adapterFactories };
@@ -170,6 +176,8 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     const credential = await this.resolveCredential(tenantId, actingUserId, config, operation);
     return factory({
       environment,
+      tenantId,
+      ...(this.organizationCache ? { organizationCache: this.organizationCache } : {}),
       canWrite: operation === 'write' && config.supportsWrite,
       credential,
     });
