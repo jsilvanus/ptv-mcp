@@ -36,7 +36,7 @@ export class PtvV12Client {
     this.maxRetries = options.maxRetries ?? 3;
   }
 
-  async get<T>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
+  async get<T>(path: string, query?: Record<string, string | number | readonly string[] | undefined>): Promise<T> {
     return this.request<T>('GET', path, query);
   }
 
@@ -48,7 +48,13 @@ export class PtvV12Client {
     const url = new URL(path, this.baseUrl);
     if (query) {
       for (const [key, value] of Object.entries(query)) {
-        if (value !== undefined) url.searchParams.set(key, String(value));
+        if (value !== undefined) {
+          if (Array.isArray(value)) {
+            for (const item of value) url.searchParams.append(key, item);
+          } else {
+            url.searchParams.set(key, String(value));
+          }
+        }
       }
     }
 
