@@ -1,3 +1,4 @@
+import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
   ApplyServiceChangeResult,
   PtvAdapter,
@@ -48,13 +49,20 @@ export interface PtvV11AdapterOptions {
    * decision should never silently be able to write.
    */
   canWrite?: boolean;
+  /** Tenant-scoped persistent organization catalogue cache. Omit for public reads. */
+  organizationCache?: PtvOrganizationCacheService;
+  tenantId?: string;
 }
 
 export class PtvV11Adapter implements PtvAdapter {
   private readonly client: PtvV11Client;
   private readonly capabilities: PtvAdapterCapabilities;
+  private readonly organizationCache?: PtvOrganizationCacheService;
+  private readonly tenantId?: string;
 
   constructor(options: PtvV11AdapterOptions) {
+    this.organizationCache = options.organizationCache;
+    this.tenantId = options.tenantId;
     this.client = new PtvV11Client({
       environment: options.environment,
       ...(options.accessToken ? { accessToken: options.accessToken } : {}),
@@ -162,10 +170,30 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
     const query = params.query?.trim().toLocaleLowerCase('fi-FI');
 
+    if (this.organizationCache && this.tenantId) {
+      const cacheKey = {
+        tenantId: this.tenantId,
+        environment: this.capabilities.environment,
+        apiVersion: 'v11',
+      } as const;
+
+      if (!(await this.organizationCache.hasFreshCatalogue(cacheKey))) {
+        await this.refreshOrganizationCache(cacheKey);
+      }
+
+      const wires = await this.organizationCache.search(cacheKey, query);
+      const items = wires.map(organizationWireToDomain);
+      return {
+        items: items.slice(start, start + pageSize),
+        page,
+        pageSize,
+        totalCount: items.length,
+      };
+    }
+
     if (query) {
-      // Search must not depend on the caller's pageSize. The v11 catalogue
-      // is paged independently; first enumerate its id/name pairs, then
-      // fetch matching full organizations in batches of at most 100 GUIDs.
+      // Public v11 reads have no tenant context, so they cannot use the
+      // tenant-scoped persistent cache. Keep the catalogue scan as fallback.
       const catalog = await fetchAllIdNamePairs(this.client, '/api/v11/Organization');
       const matchingIds = catalog
         .filter(
@@ -205,6 +233,25 @@ export class PtvV11Adapter implements PtvAdapter {
       pageSize,
       totalCount: totalCountEstimate,
     };
+  }
+
+  private async refreshOrganizationCache(key: {
+    tenantId: string;
+    environment: PtvEnvironment;
+    apiVersion: string;
+  }): Promise<void> {
+    const catalog = await fetchAllIdNamePairs(this.client, '/api/v11/Organization');
+    const wires = await fetchListByIds<V11OrganizationWire>(
+      this.client,
+      '/api/v11/Organization/list',
+      catalog.map((item) => item.id),
+    );
+    const byId = new Map(wires.map((wire) => [wire.id, wire]));
+    const ordered = catalog
+      .map((item) => byId.get(item.id))
+      .filter((wire): wire is V11OrganizationWire => wire !== undefined);
+
+    await this.organizationCache!.replaceCatalogue(key, ordered);
   }
 
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
