@@ -179,7 +179,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/service/search',
       (item) => mapV12Service(item as V12ServiceWire),
       100,
-      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
+      params.organizationId ? { organizationId: params.organizationId } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateServices(all);
@@ -210,7 +210,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/service-channel/search',
       (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
       100,
-      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
+      params.organizationId ? { organizationId: params.organizationId } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateChannels(all);
@@ -229,7 +229,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
       100,
-      params.query?.trim() ? { searchText: params.query.trim() } : undefined,
+      params.query?.trim() ? { name: params.query.trim() } : undefined,
     );
     const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
@@ -282,7 +282,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const rawItems = await this.fetchAllRaw<V12ServiceCollectionWire>(
       '/api/v12/service-collection/search',
       100,
-      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
+      params.organizationId ? { organizationId: params.organizationId } : undefined,
     );
     const filtered = rawItems
       .filter(
@@ -307,7 +307,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const rawItems = await this.fetchAllRaw<V12GeneralDescriptionWire>(
       '/api/v12/general-description/search',
       100,
-      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
+      params.organizationId ? { organizationId: params.organizationId } : undefined,
     );
     const filtered = rawItems
       .filter(
@@ -612,12 +612,12 @@ function modifiedAtOf(wire: {
     wire.updatedAt;
   if (typeof value === 'string') {
     const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
+    if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
     const millis = value < 1_000_000_000_000 ? value * 1000 : value;
     const date = new Date(millis);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
+    if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
   }
   return undefined;
 }
