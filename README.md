@@ -41,6 +41,13 @@ Or via Docker Compose, which runs the bootstrap script automatically:
 docker compose up
 ```
 
+## PTV v12 raw-response debugging
+
+Set `PTV_V12_DEBUG_RAW=true` to print successful v12 API responses to the
+server console before they are mapped into the MCP domain model. This is
+intended for temporary integration debugging; responses can contain public
+PTV content and should not be enabled in routine production operation.
+
 ## Production
 
 - Use `docker-compose.production.yml` for production container runtime.
