@@ -1,5 +1,5 @@
 import type { PtvV11Client } from './client.js';
-import type { V11IdNamePair, V11PagedList } from './wireModel.js';
+import type { V11IdNamePair, V11PagedList, V11ServiceWire } from './wireModel.js';
 
 /**
  * v11's list endpoints (`GET /Service`, `/ServiceChannel`, etc.) page in
@@ -49,4 +49,31 @@ export async function fetchIdWindow(
     // not an exact figure.
     totalCountEstimate: firstPageResult.pageCount * firstPageResult.pageSize,
   };
+}
+
+
+/**
+ * v11 exposes an organization-specific service endpoint. It has a server-fixed
+ * page size and accepts the organizationId directly, so use it instead of
+ * enumerating the global Service id catalogue.
+ */
+export async function fetchOrganizationServiceWindow(
+  client: PtvV11Client,
+  organizationId: string,
+): Promise<{ items: V11ServiceWire[]; totalCount: number }> {
+  const firstPage = await client.get<V11PagedList<V11ServiceWire>>(
+    '/api/v11/Service/list/organization',
+    { organizationId, page: 1 },
+  );
+
+  const items = [...firstPage.itemList];
+  for (let page = 2; page <= firstPage.pageCount; page += 1) {
+    const result = await client.get<V11PagedList<V11ServiceWire>>(
+      '/api/v11/Service/list/organization',
+      { organizationId, page },
+    );
+    items.push(...result.itemList);
+  }
+
+  return { items, totalCount: items.length };
 }
