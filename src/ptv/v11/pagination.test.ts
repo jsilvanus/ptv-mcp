@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PtvV11Client } from './client.js';
-import { fetchAllIdNamePairs, fetchListByIds, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceWindow } from './pagination.js';
-import type { V11ServiceWire } from './wireModel.js';
+import { fetchAllIdNamePairs, fetchListByIds, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceCollectionWindow, fetchOrganizationGeneralDescriptionWindow, fetchOrganizationServiceWindow } from './pagination.js';
+import type { V11GeneralDescriptionWire, V11ServiceCollectionWire, V11ServiceWire } from './wireModel.js';
 
 const ORGANIZATION_ID = '47e05190-11d1-435d-a657-c7dccbd91603';
 
@@ -177,6 +177,81 @@ describe('PTV v11 organization service-channel pagination', () => {
         path: '/api/v11/ServiceChannel/list/organization',
         query: { organizationId: ORGANIZATION_ID, page: 2 },
       },
+    ]);
+  });
+});
+
+
+
+describe('PTV v11 organization service-collection pagination', () => {
+  it('uses the organization endpoint for ids and fetches full collection entities', async () => {
+    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const client = fakeClient(async (path, query) => {
+      calls.push({ path, query });
+      if (path === '/api/v11/ServiceCollection/organization') {
+        return { pageNumber: 1, pageSize: 10, pageCount: 1, itemList: [{ id: 'collection-1', name: 'Collection 1' }] };
+      }
+      const full: V11ServiceCollectionWire = {
+        id: 'collection-1',
+        publishingStatus: 'Published',
+        serviceCollectionNames: [{ language: 'fi', value: 'Collection 1' }],
+        serviceCollectionDescriptions: [],
+        services: [],
+        modified: '2026-01-01T00:00:00Z',
+      };
+      return full;
+    });
+
+    const result = await fetchOrganizationServiceCollectionWindow(client, ORGANIZATION_ID);
+
+    expect(result.items.map((item) => item.id)).toEqual(['collection-1']);
+    expect(calls).toEqual([
+      { path: '/api/v11/ServiceCollection/organization', query: { organizationId: ORGANIZATION_ID, page: 1 } },
+      { path: '/api/v11/ServiceCollection/collection-1' },
+    ]);
+  });
+});
+
+describe('PTV v11 organization general-description pagination', () => {
+  it('derives unique general descriptions from organization services', async () => {
+    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const client = fakeClient(async (path, query) => {
+      calls.push({ path, query });
+      if (path === '/api/v11/Service/list/organization') {
+        return {
+          pageNumber: 1,
+          pageSize: 10,
+          pageCount: 1,
+          itemList: [
+            { ...service('service-1', ORGANIZATION_ID), generalDescriptionId: 'gd-1' },
+            { ...service('service-2', ORGANIZATION_ID), generalDescriptionId: 'gd-1' },
+            { ...service('service-3', ORGANIZATION_ID), generalDescriptionId: null },
+          ],
+        };
+      }
+      const full: V11GeneralDescriptionWire = {
+        id: 'gd-1',
+        type: 'Service',
+        publishingStatus: 'Published',
+        names: [{ language: 'fi', value: 'GD 1' }],
+        descriptions: [],
+        serviceClasses: [],
+        ontologyTerms: [],
+        targetGroups: [],
+        lifeEvents: [],
+        industrialClasses: [],
+        modified: '2026-01-01T00:00:00Z',
+      };
+      return full;
+    });
+
+    const result = await fetchOrganizationGeneralDescriptionWindow(client, ORGANIZATION_ID);
+
+    expect(result.totalCount).toBe(1);
+    expect(result.items.map((item) => item.id)).toEqual(['gd-1']);
+    expect(calls.map((call) => call.path)).toEqual([
+      '/api/v11/Service/list/organization',
+      '/api/v11/GeneralDescription/gd-1',
     ]);
   });
 });
