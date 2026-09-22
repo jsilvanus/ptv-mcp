@@ -1,6 +1,33 @@
 import type { PtvV11Client } from './client.js';
 import type { V11IdNamePair, V11PagedList, V11ServiceWire } from './wireModel.js';
 
+export async function fetchAllIdNamePairs(
+  client: PtvV11Client,
+  listPath: string,
+): Promise<V11IdNamePair[]> {
+  const firstPage = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page: 1 });
+  const items = [...firstPage.itemList];
+  for (let page = 2; page <= firstPage.pageCount; page += 1) {
+    const result = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page });
+    items.push(...result.itemList);
+  }
+  return items;
+}
+
+export async function fetchListByIds(
+  client: PtvV11Client,
+  listPath: string,
+  ids: string[],
+): Promise<V11ServiceWire[]> {
+  const wires: V11ServiceWire[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const result = await client.get<V11ServiceWire[]>(listPath, { guids: batch.join(',') });
+    wires.push(...result);
+  }
+  return wires;
+}
+
 /**
  * v11's list endpoints (`GET /Service`, `/ServiceChannel`, etc.) page in
  * a server-fixed size — confirmed live (`pageSize: 1000` in every
