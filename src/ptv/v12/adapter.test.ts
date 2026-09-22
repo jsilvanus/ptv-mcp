@@ -135,6 +135,76 @@ describe('PTV v12 service search parameters', () => {
   });
 });
 
+
+describe('PTV v12 organizationContentIds filters', () => {
+  it('uses the OpenAPI organizationContentIds array on services, channels, collections, and general descriptions', async () => {
+    const requestedUrls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ items: [], totalItems: 0, totalCount: 0 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl,
+    });
+
+    const params = { organizationId: '2de11b91-2552-4f51-b10e-5dfad8bade77' };
+    await adapter.searchServices(params);
+    await adapter.searchChannels(params);
+    await adapter.searchServiceCollections(params);
+    await adapter.searchGeneralDescriptions(params);
+
+    for (const path of [
+      '/service/search',
+      '/service-channel/search',
+      '/service-collection/search',
+      '/general-description/search',
+    ]) {
+      const url = requestedUrls.find((value) => value.includes(path));
+      expect(url).toBeDefined();
+      const parsed = new URL(url!);
+      expect(parsed.searchParams.getAll('organizationContentIds')).toEqual([
+        '2de11b91-2552-4f51-b10e-5dfad8bade77',
+      ]);
+      expect(parsed.searchParams.has('organizationId')).toBe(false);
+    }
+  });
+
+  it('does not send a name/search-text parameter for organization search', async () => {
+    const requestedUrls: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      requestedUrls.push(String(input));
+      if (String(input).includes('/organization/search')) {
+        return new Response(JSON.stringify({ items: [], totalItems: 0 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected URL: ${String(input)}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl,
+    });
+
+    await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
+
+    const url = new URL(requestedUrls[0]!);
+    expect(url.searchParams.has('name')).toBe(false);
+    expect(url.searchParams.has('searchText')).toBe(false);
+    expect(url.searchParams.has('organizationId')).toBe(false);
+  });
+});
+
 describe('PTV v12 search hydration', () => {
   it('hydrates an incomplete service search result before filtering', async () => {
     const requested: string[] = [];
