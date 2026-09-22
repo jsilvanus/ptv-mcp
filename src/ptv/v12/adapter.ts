@@ -229,7 +229,11 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
       100,
-      undefined,
+      // The live v12 organization search catalogue otherwise returns rows
+      // without localized names in some environments. Request Finnish
+      // language versions explicitly; text matching remains client-side
+      // because v12 exposes no organization-name query parameter.
+      { languageVersions: ['fi'] },
     );
     const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
