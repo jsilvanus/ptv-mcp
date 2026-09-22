@@ -46,6 +46,8 @@ interface V12ServiceChannelWire {
   lastModified?: string | number;
   lastModifiedAt?: string | number;
   updatedAt?: string | number;
+  publishedAt?: string;
+  migratedAt?: string;
 }
 
 interface V12OrganizationWire {
@@ -55,6 +57,7 @@ interface V12OrganizationWire {
   parentOrganizationId?: string;
   parentOrganization?: { contentId?: string; id?: string };
   businessCode?: string;
+  businessId?: string;
   publishingStatus?: string;
   name?: unknown;
   names?: unknown;
@@ -172,8 +175,11 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
-    const all = await this.fetchAll('/api/v12/service/search', (item) =>
-      mapV12Service(item as V12ServiceWire),
+    const all = await this.fetchAll(
+      '/api/v12/service/search',
+      (item) => mapV12Service(item as V12ServiceWire),
+      100,
+      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateServices(all);
@@ -200,8 +206,11 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchChannels(params: SearchParams): Promise<PaginatedResult<ServiceChannel>> {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
-    const all = await this.fetchAll('/api/v12/service-channel/search', (item) =>
-      mapV12ServiceChannel(item as V12ServiceChannelWire),
+    const all = await this.fetchAll(
+      '/api/v12/service-channel/search',
+      (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
+      100,
+      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateChannels(all);
@@ -216,8 +225,11 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 100;
-    const all = await this.fetchAll('/api/v12/organization/search', (item) =>
-      mapV12Organization(item as V12OrganizationWire),
+    const all = await this.fetchAll(
+      '/api/v12/organization/search',
+      (item) => mapV12Organization(item as V12OrganizationWire),
+      100,
+      params.query?.trim() ? { searchText: params.query.trim() } : undefined,
     );
     const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
@@ -269,6 +281,8 @@ export class PtvV12Adapter implements PtvAdapter {
     const query = params.query?.trim();
     const rawItems = await this.fetchAllRaw<V12ServiceCollectionWire>(
       '/api/v12/service-collection/search',
+      100,
+      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
     );
     const filtered = rawItems
       .filter(
@@ -292,6 +306,8 @@ export class PtvV12Adapter implements PtvAdapter {
     const query = params.query?.trim();
     const rawItems = await this.fetchAllRaw<V12GeneralDescriptionWire>(
       '/api/v12/general-description/search',
+      100,
+      params.organizationId ? { organizationContentId: params.organizationId } : undefined,
     );
     const filtered = rawItems
       .filter(
@@ -326,10 +342,14 @@ export class PtvV12Adapter implements PtvAdapter {
     const raw = await this.client.get<unknown>(path);
     return extractItems(raw).map((item) => referenceCodeToDomain(item));
   }
-  private async fetchAllRaw<T>(path: string, pageSize = 100): Promise<T[]> {
+  private async fetchAllRaw<T>(
+    path: string,
+    pageSize = 100,
+    query?: Record<string, string | number | undefined>,
+  ): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
-      const raw = await this.client.get<unknown>(path, { page, pageSize });
+      const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
       const items = extractItems(raw) as T[];
       result.push(...items);
       const total = extractTotalCount(raw, result.length);
@@ -337,10 +357,15 @@ export class PtvV12Adapter implements PtvAdapter {
     }
   }
 
-  private async fetchAll<T>(path: string, map: (item: unknown) => T, pageSize = 100): Promise<T[]> {
+  private async fetchAll<T>(
+    path: string,
+    map: (item: unknown) => T,
+    pageSize = 100,
+    query?: Record<string, string | number | undefined>,
+  ): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
-      const raw = await this.client.get<unknown>(path, { page, pageSize });
+      const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
       const items = extractItems(raw);
       result.push(...items.map(map));
       const total = extractTotalCount(raw, result.length);
@@ -479,7 +504,9 @@ function mapV12Organization(wire: V12OrganizationWire): Organization {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
     ...(parentOrganizationId ? { parentOrganizationId } : {}),
-    ...(wire.businessCode ? { businessCode: wire.businessCode } : {}),
+    ...(wire.businessCode ?? wire.businessId
+      ? { businessCode: wire.businessCode ?? wire.businessId }
+      : {}),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
     modifiedAt: modifiedAtOf(wire),
