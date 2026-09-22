@@ -179,7 +179,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/service/search',
       (item) => mapV12Service(item as V12ServiceWire),
       100,
-      params.organizationId ? { organizationId: params.organizationId } : undefined,
+      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const query = params.query?.trim();
     const hydrated = await this.hydrateServices(all);
@@ -229,7 +229,7 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
       100,
-      params.query?.trim() ? { name: params.query.trim() } : undefined,
+      undefined,
     );
     const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
@@ -345,7 +345,7 @@ export class PtvV12Adapter implements PtvAdapter {
   private async fetchAllRaw<T>(
     path: string,
     pageSize = 100,
-    query?: Record<string, string | number | undefined>,
+    query?: Record<string, string | number | readonly string[] | undefined>,
   ): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
@@ -361,7 +361,7 @@ export class PtvV12Adapter implements PtvAdapter {
     path: string,
     map: (item: unknown) => T,
     pageSize = 100,
-    query?: Record<string, string | number | undefined>,
+    query?: Record<string, string | number | readonly string[] | undefined>,
   ): Promise<T[]> {
     const result: T[] = [];
     for (let page = 1; ; page++) {
