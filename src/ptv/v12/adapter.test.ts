@@ -448,6 +448,77 @@ describe('PTV v12 read parity mappings', () => {
     });
   });
 
+  it('requests localized organization search results explicitly', async () => {
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      requested.push(url);
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              contentId: 'org-1',
+              languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+              modified: '2026-09-19T00:00:00Z',
+            },
+          ],
+          totalCount: 1,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
+
+    expect(requested[0]).toContain('languageVersions=fi');
+  });
+
+  it('maps localized names from v12 classification objects', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('/service/service-1')) {
+        return new Response(
+          JSON.stringify({
+            contentId: 'service-1',
+            organizationContentId: 'org-1',
+            languageVersions: { fi: { name: 'Palvelu' } },
+            serviceClasses: [
+              { code: 'class-1', name: { fi: 'Palveluluokka' } },
+            ],
+            ontologyTerms: [
+              { code: 'term-1', languageVersions: { fi: { name: 'Ontologiatermi' } } },
+            ],
+            targetGroups: [
+              { code: 'target-1', names: { fi: 'Kohderyhmä' } },
+            ],
+            lifeEvents: [
+              { code: 'life-1', label: { fi: 'Elämäntapahtuma' } },
+            ],
+            industrialClasses: [
+              { code: 'TOL-1', displayName: { fi: 'Toimiala' } },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.getService('service-1');
+
+    expect(result).toMatchObject({
+      serviceClasses: [{ code: 'class-1', names: { fi: 'Palveluluokka' } }],
+      ontologyTerms: [{ code: 'term-1', names: { fi: 'Ontologiatermi' } }],
+      targetGroups: [{ code: 'target-1', names: { fi: 'Kohderyhmä' } }],
+      lifeEvents: [{ code: 'life-1', names: { fi: 'Elämäntapahtuma' } }],
+      industrialClasses: [{ code: 'TOL-1', names: { fi: 'Toimiala' } }],
+    });
+  });
+
   it('implements general description search with organization filtering', async () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
