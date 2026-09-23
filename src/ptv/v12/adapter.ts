@@ -195,13 +195,15 @@ export class PtvV12Adapter implements PtvAdapter {
         (!params.organizationId || service.organizationId === params.organizationId) &&
         (!query || matchesService(service, query)),
     );
-    return paginate(filtered, page, pageSize);
+    const result = paginate(filtered, page, pageSize);
+    return { ...result, items: await this.withChannelIds(result.items) };
   }
 
   async getService(id: PtvContentId): Promise<Service | null> {
     try {
       const raw = await this.client.get<V12ServiceWire>(`/api/v12/service/${id}`);
-      return mapV12Service(raw);
+      const [service] = await this.withChannelIds([mapV12Service(raw)]);
+      return service ?? null;
     } catch (err) {
       if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404)
         return null;
@@ -342,6 +344,40 @@ export class PtvV12Adapter implements PtvAdapter {
       .map(mapV12GeneralDescription);
     return paginate(filtered, page, pageSize);
   }
+  /**
+   * v12 services carry no channel list; connections are their own
+   * resource. Fill `serviceChannelIds` from /connection/search (which takes
+   * at most 20 service ids per request) so v12 matches v11's shape.
+   */
+  private async withChannelIds(services: Service[]): Promise<Service[]> {
+    const needingIds = services.filter((service) => service.serviceChannelIds.length === 0);
+    if (needingIds.length === 0) return services;
+    const batches: string[][] = [];
+    for (let i = 0; i < needingIds.length; i += CONNECTION_SEARCH_MAX_IDS) {
+      batches.push(needingIds.slice(i, i + CONNECTION_SEARCH_MAX_IDS).map((service) => service.id));
+    }
+    const connections = (
+      await Promise.all(
+        batches.map((serviceContentIds) =>
+          this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { serviceContentIds }),
+        ),
+      )
+    )
+      .flat()
+      .map(mapV12Connection);
+    const channelIdsByService = new Map<string, string[]>();
+    for (const connection of connections) {
+      const channelIds = channelIdsByService.get(connection.serviceId) ?? [];
+      if (!channelIds.includes(connection.channelId)) channelIds.push(connection.channelId);
+      channelIdsByService.set(connection.serviceId, channelIds);
+    }
+    return services.map((service) =>
+      service.serviceChannelIds.length === 0
+        ? { ...service, serviceChannelIds: channelIdsByService.get(service.id) ?? [] }
+        : service,
+    );
+  }
+
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
     // The id may be a service or a channel; v12 filters by either server-side.
     const [asService, asChannel] = await Promise.all([
@@ -484,6 +520,8 @@ function extractTotalCount(raw: unknown, fallback: number): number {
 }
 
 const PAGE_FETCH_CONCURRENCY = 6;
+/** `serviceContentIds` / `channelContentIds` maxItems in the v12 spec. */
+const CONNECTION_SEARCH_MAX_IDS = 20;
 
 function extractPageCount(raw: unknown, firstPageLength: number, pageSize: number): number {
   if (firstPageLength === 0) return 1;
@@ -721,10 +759,14 @@ function mapV12Connection(wire: unknown): Connection {
     '';
   if (!serviceId || !channelId)
     throw new Error('PTV v12 connection response has no service/channel id');
+  const descriptions = localized(value.languageVersions, 'description');
+  const timestamp = value.modifiedAt ?? value.publishedAt;
+  const modifiedAt = modifiedAtOf(typeof timestamp === 'string' ? { modifiedAt: timestamp } : {});
   return {
     serviceId: String(serviceId),
     channelId: String(channelId),
-    modifiedAt: typeof value.modifiedAt === 'string' ? value.modifiedAt : new Date(0).toISOString(),
+    ...(Object.keys(descriptions).length > 0 ? { descriptions } : {}),
+    ...(modifiedAt ? { modifiedAt } : {}),
   };
 }
 

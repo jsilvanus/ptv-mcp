@@ -237,6 +237,12 @@ describe('PTV v12 search hydration', () => {
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
       }
+      if (url.includes('/connection/search')) {
+        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       throw new Error(`Unexpected URL: ${url}`);
     };
 
@@ -344,6 +350,12 @@ describe('PTV v12 read parity mappings', () => {
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
+      }
+      if (url.includes('/connection/search')) {
+        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
@@ -494,6 +506,12 @@ describe('PTV v12 read parity mappings', () => {
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
+      }
+      if (url.includes('/connection/search')) {
+        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
@@ -726,6 +744,53 @@ describe('PTV v12 wire-shape mappings', () => {
     expect(requested.map((url) => url.searchParams.getAll('channelContentIds'))).toContainEqual([
       'service-1',
     ]);
+  });
+
+  it('fills serviceChannelIds from connection search', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/v12/service/service-1')
+        return json({
+          contentId: 'service-1',
+          organizationContentId: 'org-1',
+          serviceType: 'Service',
+          languageVersions: { fi: { name: 'Kaste' } },
+        });
+      if (url.pathname === '/api/v12/connection/search') {
+        if (url.searchParams.getAll('serviceContentIds').join() !== 'service-1')
+          return json({ page: 1, pageSize: 100, totalItems: 0, totalPages: 1, items: [] });
+        return json({
+          page: 1,
+          pageSize: 100,
+          totalItems: 2,
+          totalPages: 1,
+          items: [
+            {
+              serviceContentId: 'service-1',
+              channelContentId: 'channel-1',
+              publishedAt: '2026-09-01T10:00:00Z',
+              languageVersions: { fi: { description: 'Toimisto' } },
+            },
+            { serviceContentId: 'service-1', channelContentId: 'channel-2' },
+          ],
+        });
+      }
+      throw new Error(`Unexpected URL: ${url.toString()}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+
+    expect((await adapter.getService('service-1'))?.serviceChannelIds).toEqual([
+      'channel-1',
+      'channel-2',
+    ]);
+    expect(await adapter.getConnectionsFor('service-1')).toContainEqual({
+      serviceId: 'service-1',
+      channelId: 'channel-1',
+      descriptions: { fi: 'Toimisto' },
+      modifiedAt: '2026-09-01T10:00:00.000Z',
+    });
   });
 
   it('reads service collection members from items', async () => {
