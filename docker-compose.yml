@@ -26,11 +26,11 @@ services:
     environment:
       NODE_ENV: development
       HOST: 0.0.0.0
-      PORT: 3000
+      PORT: 5996
       DATABASE_URL: postgres://ptv_mcp:ptv_mcp_dev@postgres:5432/ptv_mcp_dev
       MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY in your .env}
     ports:
-      - '3000:3000'
+      - '5996:5996'
 
 volumes:
   postgres-data:
