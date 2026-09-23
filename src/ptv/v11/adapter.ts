@@ -19,7 +19,15 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV11Client } from './client.js';
-import { fetchAllIdNamePairs, fetchIdWindow, fetchListByIds, fetchOrganizationGeneralDescriptionWindow, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceCollectionWindow, fetchOrganizationServiceWindow } from './pagination.js';
+import {
+  fetchAllIdNamePairs,
+  fetchIdWindow,
+  fetchListByIds,
+  fetchOrganizationGeneralDescriptionWindow,
+  fetchOrganizationServiceChannelWindow,
+  fetchOrganizationServiceCollectionWindow,
+  fetchOrganizationServiceWindow,
+} from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
@@ -57,8 +65,8 @@ export interface PtvV11AdapterOptions {
 export class PtvV11Adapter implements PtvAdapter {
   private readonly client: PtvV11Client;
   private readonly capabilities: PtvAdapterCapabilities;
-  private readonly organizationCache?: PtvOrganizationCacheService;
-  private readonly tenantId?: string;
+  private readonly organizationCache?: PtvOrganizationCacheService | undefined;
+  private readonly tenantId?: string | undefined;
 
   constructor(options: PtvV11AdapterOptions) {
     this.organizationCache = options.organizationCache;
@@ -214,9 +222,7 @@ export class PtvV11Adapter implements PtvAdapter {
       const catalog = await fetchAllIdNamePairs(this.client, '/api/v11/Organization');
       const matchingIds = catalog
         .filter(
-          (item) =>
-            item.name !== undefined &&
-            item.name.toLocaleLowerCase('fi-FI').includes(query),
+          (item) => item.name !== undefined && item.name.toLocaleLowerCase('fi-FI').includes(query),
         )
         .map((item) => item.id);
       const wires = await fetchListByIds<V11OrganizationWire>(
@@ -299,9 +305,17 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationServiceCollectionWindow(this.client, params.organizationId);
+      const { items: organizationWires } = await fetchOrganizationServiceCollectionWindow(
+        this.client,
+        params.organizationId,
+      );
       const items = organizationWires.map(serviceCollectionWireToDomain);
-      return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+      return {
+        items: items.slice(start, start + pageSize),
+        page,
+        pageSize,
+        totalCount: items.length,
+      };
     }
 
     // v11 has no bulk /ServiceCollection/list?guids= endpoint (unlike
@@ -335,9 +349,17 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationGeneralDescriptionWindow(this.client, params.organizationId);
+      const { items: organizationWires } = await fetchOrganizationGeneralDescriptionWindow(
+        this.client,
+        params.organizationId,
+      );
       const items = organizationWires.map(generalDescriptionWireToDomain);
-      return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+      return {
+        items: items.slice(start, start + pageSize),
+        page,
+        pageSize,
+        totalCount: items.length,
+      };
     }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(

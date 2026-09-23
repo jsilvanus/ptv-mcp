@@ -1,5 +1,13 @@
 import type { PtvV11Client } from './client.js';
-import type { V11GeneralDescriptionWire, V11IdNamePair, V11PagedList, V11ServiceChannelWire, V11ServiceCollectionSummaryWire, V11ServiceCollectionWire, V11ServiceWire } from './wireModel.js';
+import type {
+  V11GeneralDescriptionWire,
+  V11IdNamePair,
+  V11PagedList,
+  V11ServiceChannelWire,
+  V11ServiceCollectionSummaryWire,
+  V11ServiceCollectionWire,
+  V11ServiceWire,
+} from './wireModel.js';
 
 export async function fetchAllIdNamePairs(
   client: PtvV11Client,
@@ -78,7 +86,6 @@ export async function fetchIdWindow(
   };
 }
 
-
 /**
  * v11 exposes an organization-specific service endpoint. It has a server-fixed
  * page size and accepts the organizationId directly, so use it instead of
@@ -104,7 +111,6 @@ export async function fetchOrganizationServiceWindow(
 
   return { items, totalCount: items.length };
 }
-
 
 /**
  * v11 exposes a dedicated organization-filtered service-channel endpoint.
@@ -132,12 +138,20 @@ export async function fetchOrganizationServiceChannelWindow(
   return { items, totalCount: items.length };
 }
 
-
-export async function fetchOrganizationServiceCollectionWindow(client: PtvV11Client, organizationId: string): Promise<{ items: V11ServiceCollectionWire[]; totalCount: number }> {
-  const firstPage = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>('/api/v11/ServiceCollection/organization', { organizationId, page: 1 });
+export async function fetchOrganizationServiceCollectionWindow(
+  client: PtvV11Client,
+  organizationId: string,
+): Promise<{ items: V11ServiceCollectionWire[]; totalCount: number }> {
+  const firstPage = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>(
+    '/api/v11/ServiceCollection/organization',
+    { organizationId, page: 1 },
+  );
   const summaries = [...firstPage.itemList];
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
-    const result = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>('/api/v11/ServiceCollection/organization', { organizationId, page });
+    const result = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>(
+      '/api/v11/ServiceCollection/organization',
+      { organizationId, page },
+    );
     summaries.push(...result.itemList);
   }
 
@@ -153,9 +167,20 @@ export async function fetchOrganizationServiceCollectionWindow(client: PtvV11Cli
 }
 
 /** v11 has no organization-filtered GeneralDescription endpoint; derive the set from the organization's services. */
-export async function fetchOrganizationGeneralDescriptionWindow(client: PtvV11Client, organizationId: string): Promise<{ items: V11GeneralDescriptionWire[]; totalCount: number }> {
+export async function fetchOrganizationGeneralDescriptionWindow(
+  client: PtvV11Client,
+  organizationId: string,
+): Promise<{ items: V11GeneralDescriptionWire[]; totalCount: number }> {
   const { items: services } = await fetchOrganizationServiceWindow(client, organizationId);
-  const ids = [...new Set(services.map((service) => service.generalDescriptionId).filter((id): id is string => Boolean(id)))];
-  const items = await Promise.all(ids.map((id) => client.get<V11GeneralDescriptionWire>(`/api/v11/GeneralDescription/${id}`)));
+  const ids = [
+    ...new Set(
+      services
+        .map((service) => service.generalDescriptionId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const items = await Promise.all(
+    ids.map((id) => client.get<V11GeneralDescriptionWire>(`/api/v11/GeneralDescription/${id}`)),
+  );
   return { items, totalCount: items.length };
 }

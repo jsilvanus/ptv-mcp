@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { PtvV11Client } from './client.js';
-import { fetchAllIdNamePairs, fetchListByIds, fetchOrganizationServiceChannelWindow, fetchOrganizationServiceCollectionWindow, fetchOrganizationGeneralDescriptionWindow, fetchOrganizationServiceWindow } from './pagination.js';
-import type { V11GeneralDescriptionWire, V11ServiceCollectionWire, V11ServiceWire } from './wireModel.js';
+import {
+  fetchAllIdNamePairs,
+  fetchListByIds,
+  fetchOrganizationServiceChannelWindow,
+  fetchOrganizationServiceCollectionWindow,
+  fetchOrganizationGeneralDescriptionWindow,
+  fetchOrganizationServiceWindow,
+} from './pagination.js';
+import type {
+  V11GeneralDescriptionWire,
+  V11ServiceCollectionWire,
+  V11ServiceWire,
+} from './wireModel.js';
 
 const ORGANIZATION_ID = '47e05190-11d1-435d-a657-c7dccbd91603';
 
@@ -32,7 +43,10 @@ function fakeClient(
 
 describe('PTV v11 organization service pagination', () => {
   it('uses the organization endpoint and preserves the organization filter', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       const page = Number(query?.page);
@@ -50,13 +64,13 @@ describe('PTV v11 organization service pagination', () => {
     const result = await fetchOrganizationServiceWindow(client, ORGANIZATION_ID);
 
     expect(result.items).toHaveLength(4);
-    expect(result.items.filter((item) =>
-      item.organizations.some(
-        (org) =>
-          org.roleType === 'Responsible' &&
-          org.organization.id === ORGANIZATION_ID,
+    expect(
+      result.items.filter((item) =>
+        item.organizations.some(
+          (org) => org.roleType === 'Responsible' && org.organization.id === ORGANIZATION_ID,
+        ),
       ),
-    )).toHaveLength(2);
+    ).toHaveLength(2);
     expect(calls).toEqual([
       {
         path: '/api/v11/Service/list/organization',
@@ -72,7 +86,10 @@ describe('PTV v11 organization service pagination', () => {
 
 describe('PTV v11 organization catalogue pagination', () => {
   it('enumerates the complete catalogue independently of requested page size', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       const page = Number(query?.page);
@@ -82,9 +99,15 @@ describe('PTV v11 organization catalogue pagination', () => {
         pageCount: 3,
         itemList:
           page === 1
-            ? [{ id: '1', name: 'Other' }, { id: '2', name: 'Riihimäen kaupunki' }]
+            ? [
+                { id: '1', name: 'Other' },
+                { id: '2', name: 'Riihimäen kaupunki' },
+              ]
             : page === 2
-              ? [{ id: '3', name: 'Tuusulan kunta' }, { id: '4', name: 'Riihimäen seurakunta' }]
+              ? [
+                  { id: '3', name: 'Tuusulan kunta' },
+                  { id: '4', name: 'Riihimäen seurakunta' },
+                ]
               : [{ id: '5', name: 'Other 2' }],
       };
     });
@@ -92,13 +115,20 @@ describe('PTV v11 organization catalogue pagination', () => {
     const catalog = await fetchAllIdNamePairs(client, '/api/v11/Organization');
 
     expect(catalog.map((item) => item.id)).toEqual(['1', '2', '3', '4', '5']);
-    expect(catalog.filter((item) => item.name?.toLocaleLowerCase('fi-FI').includes('riihimäki'))).toHaveLength(1);
+    expect(
+      catalog.filter((item) =>
+        item.name?.toLocaleLowerCase('fi-FI').includes('riihimäen seurakunta'),
+      ),
+    ).toHaveLength(1);
     expect(calls).toHaveLength(3);
     expect(calls.map((call) => call.query?.page)).toEqual([1, 2, 3]);
   });
 
   it('batches full organization fetches in groups of at most 100 GUIDs', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       return [];
@@ -111,10 +141,12 @@ describe('PTV v11 organization catalogue pagination', () => {
   });
 });
 
-
 describe('PTV v11 organization service-channel pagination', () => {
   it('uses the organization endpoint and returns only the requested organization', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       const page = Number(query?.page);
@@ -181,15 +213,21 @@ describe('PTV v11 organization service-channel pagination', () => {
   });
 });
 
-
-
 describe('PTV v11 organization service-collection pagination', () => {
   it('uses the organization endpoint for ids and fetches full collection entities', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       if (path === '/api/v11/ServiceCollection/organization') {
-        return { pageNumber: 1, pageSize: 10, pageCount: 1, itemList: [{ id: 'collection-1', name: 'Collection 1' }] };
+        return {
+          pageNumber: 1,
+          pageSize: 10,
+          pageCount: 1,
+          itemList: [{ id: 'collection-1', name: 'Collection 1' }],
+        };
       }
       const full: V11ServiceCollectionWire = {
         id: 'collection-1',
@@ -206,7 +244,10 @@ describe('PTV v11 organization service-collection pagination', () => {
 
     expect(result.items.map((item) => item.id)).toEqual(['collection-1']);
     expect(calls).toEqual([
-      { path: '/api/v11/ServiceCollection/organization', query: { organizationId: ORGANIZATION_ID, page: 1 } },
+      {
+        path: '/api/v11/ServiceCollection/organization',
+        query: { organizationId: ORGANIZATION_ID, page: 1 },
+      },
       { path: '/api/v11/ServiceCollection/collection-1' },
     ]);
   });
@@ -214,7 +255,10 @@ describe('PTV v11 organization service-collection pagination', () => {
 
 describe('PTV v11 organization general-description pagination', () => {
   it('derives unique general descriptions from organization services', async () => {
-    const calls: Array<{ path: string; query?: Record<string, string | number | undefined> }> = [];
+    const calls: Array<{
+      path: string;
+      query?: Record<string, string | number | undefined> | undefined;
+    }> = [];
     const client = fakeClient(async (path, query) => {
       calls.push({ path, query });
       if (path === '/api/v11/Service/list/organization') {

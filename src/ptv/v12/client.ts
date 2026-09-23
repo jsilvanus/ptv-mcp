@@ -36,14 +36,17 @@ export class PtvV12Client {
     this.maxRetries = options.maxRetries ?? 3;
   }
 
-  async get<T>(path: string, query?: Record<string, string | number | readonly string[] | undefined>): Promise<T> {
+  async get<T>(
+    path: string,
+    query?: Record<string, string | number | readonly string[] | undefined>,
+  ): Promise<T> {
     return this.request<T>('GET', path, query);
   }
 
   private async request<T>(
     method: 'GET',
     path: string,
-    query?: Record<string, string | number | undefined>,
+    query?: Record<string, string | number | readonly string[] | undefined>,
   ): Promise<T> {
     const url = new URL(path, this.baseUrl);
     if (query) {

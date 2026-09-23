@@ -145,7 +145,7 @@ function toolContext(extra: Extra): ToolContext {
     tenantId: activeTenantId,
     environment,
     readApiVersion,
-    writeApiVersion,
+    ...(typeof writeApiVersion === 'string' ? { writeApiVersion } : {}),
     actingUserId: userId,
   };
 }
@@ -180,7 +180,7 @@ function resourceToolContext(
     tenantId: uriTenantId,
     environment: uriEnvironment,
     readApiVersion,
-    writeApiVersion,
+    ...(typeof writeApiVersion === 'string' ? { writeApiVersion } : {}),
     actingUserId: userId,
   };
 }

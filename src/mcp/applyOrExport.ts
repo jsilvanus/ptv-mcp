@@ -9,7 +9,9 @@ import type { ToolContext } from './toolContext.js';
 
 export class WriteApiNotSelectedError extends Error {
   constructor() {
-    super('No write API version is selected for this MCP connection. This connection is read-only; reconnect and select a write API version to use PTV write tools.');
+    super(
+      'No write API version is selected for this MCP connection. This connection is read-only; reconnect and select a write API version to use PTV write tools.',
+    );
     this.name = 'WriteApiNotSelectedError';
   }
 }

@@ -254,11 +254,7 @@ export class OAuthService {
   }
 
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
-    if (
-      !request.tenantId ||
-      !request.environment ||
-      !request.readApiVersion
-    )
+    if (!request.tenantId || !request.environment || !request.readApiVersion)
       throw new Error('Invalid authorization selection');
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
       throw new Error('Invalid client or redirect_uri');
