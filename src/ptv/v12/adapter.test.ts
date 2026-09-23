@@ -60,7 +60,7 @@ describe('PTV v12 service mapping', () => {
       },
       languages: ['fi', 'sv'],
       serviceChannelIds: ['channel-1', 'channel-2'],
-      modifiedAt: '2026-09-18T12:34:56Z',
+      modifiedAt: '2026-09-18T12:34:56.000Z',
     });
 
     expect(result.serviceClasses).toEqual([
@@ -131,10 +131,11 @@ describe('PTV v12 service search parameters', () => {
       (url) => url.includes('/service/search') && url.includes('organizationContentIds=org-123'),
     );
     expect(filteredServiceUrl).toBeDefined();
-    expect(new URL(filteredServiceUrl!).searchParams.getAll('organizationContentIds')).toEqual(['org-123']);
+    expect(new URL(filteredServiceUrl!).searchParams.getAll('organizationContentIds')).toEqual([
+      'org-123',
+    ]);
   });
 });
-
 
 describe('PTV v12 organizationContentIds filters', () => {
   it('uses the OpenAPI organizationContentIds array on services, channels, collections, and general descriptions', async () => {
@@ -324,7 +325,6 @@ describe('PTV v12 search hydration', () => {
   });
 });
 
-
 describe('PTV v12 read parity mappings', () => {
   it('maps the v12 organization reference and preserves the v12 timestamp representation', async () => {
     const fetchImpl: typeof fetch = async (input) => {
@@ -484,21 +484,13 @@ describe('PTV v12 read parity mappings', () => {
             contentId: 'service-1',
             organizationContentId: 'org-1',
             languageVersions: { fi: { name: 'Palvelu' } },
-            serviceClasses: [
-              { code: 'class-1', name: { fi: 'Palveluluokka' } },
-            ],
+            serviceClasses: [{ code: 'class-1', name: { fi: 'Palveluluokka' } }],
             ontologyTerms: [
               { code: 'term-1', languageVersions: { fi: { name: 'Ontologiatermi' } } },
             ],
-            targetGroups: [
-              { code: 'target-1', names: { fi: 'Kohderyhmä' } },
-            ],
-            lifeEvents: [
-              { code: 'life-1', label: { fi: 'Elämäntapahtuma' } },
-            ],
-            industrialClasses: [
-              { code: 'TOL-1', displayName: { fi: 'Toimiala' } },
-            ],
+            targetGroups: [{ code: 'target-1', names: { fi: 'Kohderyhmä' } }],
+            lifeEvents: [{ code: 'life-1', label: { fi: 'Elämäntapahtuma' } }],
+            industrialClasses: [{ code: 'TOL-1', displayName: { fi: 'Toimiala' } }],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
@@ -570,8 +562,8 @@ describe('PTV v12 read parity mappings', () => {
             languageVersions: { fi: { name: 'Suomi' } },
           },
         ]),
-        { status: 200, headers: { 'content-type': 'application/json' },
-      });
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
     };
 
     const { PtvV12Adapter } = await import('./adapter.js');
@@ -598,5 +590,48 @@ describe('PTV v12 read parity mappings', () => {
     expect(requested).toContain(
       'https://api-gw.palvelutietovaranto.trn.suomi.fi/api/v12/service-classes',
     );
+  });
+});
+
+describe('PTV v12 catalogue pagination', () => {
+  it('keeps fetching pages until totalItems is reached', async () => {
+    const requestedPages: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/v12/organization/search') {
+        const page = url.searchParams.get('page') ?? '';
+        requestedPages.push(page);
+        const items =
+          page === '1'
+            ? Array.from({ length: 100 }, (_, i) => ({
+                contentId: `org-${i}`,
+                languageVersions: { fi: { name: `Organisaatio ${i}` } },
+              }))
+            : [
+                {
+                  contentId: 'org-riihimaki',
+                  languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+                },
+              ];
+        return new Response(
+          JSON.stringify({
+            page: Number(page),
+            pageSize: 100,
+            totalItems: 101,
+            totalPages: 2,
+            items,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url.toString()}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
+
+    expect(requestedPages).toEqual(['1', '2']);
+    expect(result.items.map((org) => org.id)).toEqual(['org-riihimaki']);
   });
 });

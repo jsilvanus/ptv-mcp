@@ -289,14 +289,11 @@ export class PtvV12Adapter implements PtvAdapter {
       params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const filtered = rawItems
-      .filter(
-        (item) =>
-          !params.organizationId &&
-          !query
-            ? true
-            : (!params.organizationId ||
-                organizationIdOf(item) === params.organizationId) &&
-              (!query || matchesCollection(mapV12ServiceCollection(item), query)),
+      .filter((item) =>
+        !params.organizationId && !query
+          ? true
+          : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
+            (!query || matchesCollection(mapV12ServiceCollection(item), query)),
       )
       .map(mapV12ServiceCollection);
     return paginate(filtered, page, pageSize);
@@ -314,14 +311,11 @@ export class PtvV12Adapter implements PtvAdapter {
       params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
     const filtered = rawItems
-      .filter(
-        (item) =>
-          !params.organizationId &&
-          !query
-            ? true
-            : (!params.organizationId ||
-                organizationIdOf(item) === params.organizationId) &&
-              (!query || matchesGeneralDescription(mapV12GeneralDescription(item), query)),
+      .filter((item) =>
+        !params.organizationId && !query
+          ? true
+          : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
+            (!query || matchesGeneralDescription(mapV12GeneralDescription(item), query)),
       )
       .map(mapV12GeneralDescription);
     return paginate(filtered, page, pageSize);
@@ -440,8 +434,16 @@ function extractItems(raw: unknown): unknown[] {
 
 function extractTotalCount(raw: unknown, fallback: number): number {
   if (!raw || typeof raw !== 'object') return fallback;
-  const object = raw as { totalCount?: number; totalElements?: number; total?: number };
-  return object.totalCount ?? object.totalElements ?? object.total ?? fallback;
+  // v12's paginated responses carry `totalItems` (see PaginatedType in
+  // docs/ptv-api-documentation.json). Missing it made every catalogue scan
+  // stop after the first page of 100.
+  const object = raw as {
+    totalItems?: number;
+    totalCount?: number;
+    totalElements?: number;
+    total?: number;
+  };
+  return object.totalItems ?? object.totalCount ?? object.totalElements ?? object.total ?? fallback;
 }
 
 function paginate<T>(items: T[], page: number, pageSize: number): PaginatedResult<T> {
@@ -495,7 +497,7 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
       'description',
     ),
     languages: wire.languages ?? (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
-    modifiedAt: modifiedAtOf(wire),
+    ...modifiedAtField(wire),
   };
 }
 
@@ -508,12 +510,12 @@ function mapV12Organization(wire: V12OrganizationWire): Organization {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
     ...(parentOrganizationId ? { parentOrganizationId } : {}),
-    ...(wire.businessCode ?? wire.businessId
+    ...((wire.businessCode ?? wire.businessId)
       ? { businessCode: wire.businessCode ?? wire.businessId }
       : {}),
     publishingStatus: normalizePublishingStatus(wire.publishingStatus),
     names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    modifiedAt: modifiedAtOf(wire),
+    ...modifiedAtField(wire),
   };
 }
 
@@ -529,7 +531,7 @@ function mapV12ServiceCollection(wire: V12ServiceCollectionWire): ServiceCollect
       'description',
     ),
     serviceIds: ids(wire.serviceIds ?? wire.services),
-    modifiedAt: modifiedAtOf(wire),
+    ...modifiedAtField(wire),
   };
 }
 
@@ -550,7 +552,7 @@ function mapV12GeneralDescription(wire: V12GeneralDescriptionWire): GeneralDescr
     targetGroups: codeEntries(wire.targetGroups),
     lifeEvents: codeEntries(wire.lifeEvents),
     industrialClasses: codeEntries(wire.industrialClasses),
-    modifiedAt: modifiedAtOf(wire),
+    ...modifiedAtField(wire),
   };
 }
 
@@ -609,11 +611,7 @@ function modifiedAtOf(wire: {
   updatedAt?: string | number;
 }): string | undefined {
   const value =
-    wire.modifiedAt ??
-    wire.modified ??
-    wire.lastModified ??
-    wire.lastModifiedAt ??
-    wire.updatedAt;
+    wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? wire.lastModifiedAt ?? wire.updatedAt;
   if (typeof value === 'string') {
     const date = new Date(value);
     if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
@@ -624,6 +622,11 @@ function modifiedAtOf(wire: {
     if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
   }
   return undefined;
+}
+
+function modifiedAtField(wire: Parameters<typeof modifiedAtOf>[0]): { modifiedAt?: string } {
+  const modifiedAt = modifiedAtOf(wire);
+  return modifiedAt ? { modifiedAt } : {};
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -639,10 +642,9 @@ function matchesCollection(collection: ServiceCollection, query: string): boolea
 
 function matchesGeneralDescription(description: GeneralDescription, query: string): boolean {
   const needle = normalizeSearchText(query);
-  return [
-    ...Object.values(description.names),
-    ...Object.values(description.descriptions),
-  ].some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
+  return [...Object.values(description.names), ...Object.values(description.descriptions)].some(
+    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
+  );
 }
 
 function mapV12Connection(wire: unknown): Connection {
@@ -716,7 +718,7 @@ export function mapV12Service(wire: V12ServiceWire): Service {
     languages,
     ...(wire.generalDescriptionId ? { generalDescriptionId: wire.generalDescriptionId } : {}),
     serviceChannelIds: ids(wire.serviceChannelIds ?? wire.serviceChannels),
-    modifiedAt: modifiedAtOf(wire),
+    ...modifiedAtField(wire),
   };
 }
 
