@@ -7,9 +7,7 @@ import { loadConfig } from '../config.js';
 type MigrationFile = { name: string; hash: string };
 
 const migrationsDir = join(process.cwd(), 'drizzle');
-const files = (await readdir(migrationsDir))
-  .filter((name) => /^\d+_.*\.sql$/.test(name))
-  .sort();
+const files = (await readdir(migrationsDir)).filter((name) => /^\d+_.*\.sql$/.test(name)).sort();
 
 const migrations: MigrationFile[] = [];
 for (const name of files) {
@@ -35,7 +33,9 @@ try {
   for (const migration of migrations) {
     const applied = appliedByHash.get(migration.hash);
     if (applied) {
-      console.log(`  ✓ ${migration.name} (db id ${applied.id}, applied ${new Date(Number(applied.created_at)).toISOString()})`);
+      console.log(
+        `  ✓ ${migration.name} (db id ${applied.id}, applied ${new Date(Number(applied.created_at)).toISOString()})`,
+      );
     } else {
       console.log(`  - ${migration.name} (PENDING)`);
     }
@@ -44,12 +44,16 @@ try {
   const knownHashes = new Set(migrations.map((migration) => migration.hash));
   for (const row of rows) {
     if (!knownHashes.has(row.hash)) {
-      console.log(`  ? database migration id ${row.id} has no matching local SQL file (hash ${row.hash})`);
+      console.log(
+        `  ? database migration id ${row.id} has no matching local SQL file (hash ${row.hash})`,
+      );
     }
   }
 
   const pending = migrations.filter((migration) => !appliedByHash.has(migration.hash));
-  console.log(`\nSummary: ${migrations.length} local, ${rows.length} applied, ${pending.length} pending.`);
+  console.log(
+    `\nSummary: ${migrations.length} local, ${rows.length} applied, ${pending.length} pending.`,
+  );
 } finally {
   await sql.end();
 }

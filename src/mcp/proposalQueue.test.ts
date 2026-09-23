@@ -19,6 +19,8 @@ import type {
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
+/** approve_and_apply needs a selected write API before the registry's role check runs. */
+const writeCtx = { ...ctx, writeApiVersion: 'v11' };
 const readerResolver: MembershipRoleResolver = async () => 'reader';
 const editorResolver: MembershipRoleResolver = async () => 'editor';
 const publisherResolver: MembershipRoleResolver = async () => 'publisher';
@@ -164,7 +166,7 @@ describe('proposalQueue', () => {
         api,
         audit,
         new V11ChangeValidator(),
-        ctx,
+        writeCtx,
         queued.proposalId,
         'approve_and_apply',
       ),
@@ -187,7 +189,7 @@ describe('proposalQueue', () => {
       api,
       audit,
       new V11ChangeValidator(),
-      ctx,
+      writeCtx,
       queued.proposalId,
       'approve_and_apply',
     );

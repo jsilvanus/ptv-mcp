@@ -53,10 +53,7 @@ export class PtvOrganizationCacheService {
     });
   }
 
-  async search(
-    key: PtvOrganizationCacheKey,
-    query?: string,
-  ): Promise<V11OrganizationWire[]> {
+  async search(key: PtvOrganizationCacheKey, query?: string): Promise<V11OrganizationWire[]> {
     const now = new Date();
     return withContext(this.db, { tenantId: key.tenantId }, async (tx) => {
       const rows = await tx
@@ -74,11 +71,7 @@ export class PtvOrganizationCacheService {
 
       const normalizedQuery = query?.trim().toLocaleLowerCase('fi-FI');
       return rows
-        .filter(
-          (row) =>
-            !normalizedQuery ||
-            row.normalizedName.includes(normalizedQuery),
-        )
+        .filter((row) => !normalizedQuery || row.normalizedName.includes(normalizedQuery))
         .map((row) => row.organization as V11OrganizationWire);
     });
   }

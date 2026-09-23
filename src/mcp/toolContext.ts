@@ -10,7 +10,7 @@ export interface ToolContext {
   tenantId: string;
   environment: PtvEnvironment;
   readApiVersion?: string;
-  writeApiVersion?: string;
+  writeApiVersion?: string | undefined;
   /** @deprecated Use readApiVersion/writeApiVersion. Kept for existing test/tool contexts during migration. */
   apiVersion?: string;
   actingUserId: string;
