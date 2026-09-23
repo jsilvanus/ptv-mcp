@@ -32,6 +32,7 @@ interface V12ServiceChannelWire {
     organizationContentId?: string;
   };
   serviceChannelType?: string;
+  serviceLanguages?: string[];
   channelType?: string;
   type?: string;
   publishingStatus?: string;
@@ -54,6 +55,7 @@ interface V12OrganizationWire {
   contentId?: string;
   id?: string;
   sourceId?: string;
+  parentOrganizationContentId?: string | null;
   parentOrganizationId?: string;
   parentOrganization?: { contentId?: string; id?: string };
   businessCode?: string;
@@ -96,7 +98,9 @@ interface V12ServiceWire {
   lifeEvents?: unknown[];
   industrialClasses?: unknown[];
   languages?: string[];
+  generalDescriptionContentId?: string | null;
   generalDescriptionId?: string;
+  serviceLanguages?: string[];
   serviceChannelIds?: Array<string | { contentId?: string; id?: string }>;
   serviceChannels?: Array<string | { contentId?: string; id?: string }>;
   modifiedAt?: string | number;
@@ -119,6 +123,8 @@ interface V12ServiceCollectionWire {
   organizationId?: string;
   services?: Array<string | { contentId?: string; id?: string }>;
   serviceIds?: Array<string | { contentId?: string; id?: string }>;
+  /** v12: collection members, each tagged Service or Channel. */
+  items?: Array<{ itemType?: string; contentId?: string }>;
   serviceChannels?: Array<string | { contentId?: string; id?: string }>;
   modifiedAt?: string | number;
   modified?: string | number;
@@ -288,15 +294,31 @@ export class PtvV12Adapter implements PtvAdapter {
       100,
       params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
     );
-    const filtered = rawItems
-      .filter((item) =>
-        !params.organizationId && !query
-          ? true
-          : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
-            (!query || matchesCollection(mapV12ServiceCollection(item), query)),
-      )
-      .map(mapV12ServiceCollection);
-    return paginate(filtered, page, pageSize);
+    const filtered = rawItems.filter((item) =>
+      !params.organizationId && !query
+        ? true
+        : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
+          (!query || matchesCollection(mapV12ServiceCollection(item), query)),
+    );
+    const result = paginate(filtered, page, pageSize);
+    // The search listing omits collection members (`items`); only the
+    // detail endpoint carries them, so hydrate just the returned page.
+    const hydrated = await Promise.all(
+      result.items.map(async (item) => {
+        if (item.items ?? item.serviceIds ?? item.services) return item;
+        const id = item.contentId ?? item.id;
+        if (!id) return item;
+        try {
+          return await this.client.get<V12ServiceCollectionWire>(
+            `/api/v12/service-collection/${id}`,
+          );
+        } catch (err) {
+          if (isNotFound(err)) return item;
+          throw err;
+        }
+      }),
+    );
+    return { ...result, items: hydrated.map(mapV12ServiceCollection) };
   }
 
   async searchGeneralDescriptions(
@@ -321,8 +343,16 @@ export class PtvV12Adapter implements PtvAdapter {
     return paginate(filtered, page, pageSize);
   }
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
-    const raw = await this.client.get<unknown>('/api/v12/connection/search');
-    return extractItems(raw)
+    // The id may be a service or a channel; v12 filters by either server-side.
+    const [asService, asChannel] = await Promise.all([
+      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, {
+        serviceContentIds: [entityId],
+      }),
+      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, {
+        channelContentIds: [entityId],
+      }),
+    ]);
+    return [...asService, ...asChannel]
       .map(mapV12Connection)
       .filter(
         (connection) => connection.serviceId === entityId || connection.channelId === entityId,
@@ -337,22 +367,36 @@ export class PtvV12Adapter implements PtvAdapter {
         ).join(', ')}`,
       );
     }
-    const raw = await this.client.get<unknown>(path);
-    return extractItems(raw).map((item) => referenceCodeToDomain(item));
+    const items = await this.fetchAllRaw<unknown>(path, 100);
+    return items.map((item) => referenceCodeToDomain(item));
   }
+  /**
+   * Fetch every page of a v12 paginated endpoint. Page 1 tells us
+   * totalPages/totalItems; the remaining pages are fetched with bounded
+   * concurrency so a full catalogue scan (e.g. organisation name search,
+   * which v12 cannot do server-side) stays fast.
+   */
   private async fetchAllRaw<T>(
     path: string,
     pageSize = 100,
     query?: Record<string, string | number | readonly string[] | undefined>,
   ): Promise<T[]> {
-    const result: T[] = [];
-    for (let page = 1; ; page++) {
-      const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
-      const items = extractItems(raw) as T[];
-      result.push(...items);
-      const total = extractTotalCount(raw, result.length);
-      if (items.length === 0 || result.length >= total) return result;
-    }
+    const first = await this.client.get<unknown>(path, { ...query, page: 1, pageSize });
+    const firstItems = extractItems(first) as T[];
+    const pageCount = extractPageCount(first, firstItems.length, pageSize);
+    const rest: T[][] = new Array(Math.max(0, pageCount - 1));
+    let next = 2;
+    const worker = async (): Promise<void> => {
+      while (next <= pageCount) {
+        const page = next++;
+        const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
+        rest[page - 2] = extractItems(raw) as T[];
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(PAGE_FETCH_CONCURRENCY, pageCount - 1) }, worker),
+    );
+    return [...firstItems, ...rest.flat()];
   }
 
   private async fetchAll<T>(
@@ -361,14 +405,7 @@ export class PtvV12Adapter implements PtvAdapter {
     pageSize = 100,
     query?: Record<string, string | number | readonly string[] | undefined>,
   ): Promise<T[]> {
-    const result: T[] = [];
-    for (let page = 1; ; page++) {
-      const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
-      const items = extractItems(raw);
-      result.push(...items.map(map));
-      const total = extractTotalCount(raw, result.length);
-      if (items.length === 0 || result.length >= total) return result;
-    }
+    return (await this.fetchAllRaw<unknown>(path, pageSize, query)).map(map);
   }
 
   private async hydrateServices(items: Service[]): Promise<Service[]> {
@@ -446,6 +483,18 @@ function extractTotalCount(raw: unknown, fallback: number): number {
   return object.totalItems ?? object.totalCount ?? object.totalElements ?? object.total ?? fallback;
 }
 
+const PAGE_FETCH_CONCURRENCY = 6;
+
+function extractPageCount(raw: unknown, firstPageLength: number, pageSize: number): number {
+  if (firstPageLength === 0) return 1;
+  if (raw && typeof raw === 'object') {
+    const totalPages = (raw as { totalPages?: unknown }).totalPages;
+    if (typeof totalPages === 'number' && Number.isFinite(totalPages))
+      return Math.max(1, totalPages);
+  }
+  return Math.max(1, Math.ceil(extractTotalCount(raw, firstPageLength) / pageSize));
+}
+
 function paginate<T>(items: T[], page: number, pageSize: number): PaginatedResult<T> {
   const start = (page - 1) * pageSize;
   return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
@@ -496,7 +545,10 @@ function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
       wire.descriptions ?? wire.description ?? wire.languageVersions,
       'description',
     ),
-    languages: wire.languages ?? (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
+    languages:
+      wire.languages ??
+      wire.serviceLanguages ??
+      (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
     ...modifiedAtField(wire),
   };
 }
@@ -505,7 +557,10 @@ function mapV12Organization(wire: V12OrganizationWire): Organization {
   const id = wire.contentId ?? wire.id;
   if (!id) throw new Error('PTV v12 organization response has no contentId');
   const parentOrganizationId =
-    wire.parentOrganizationId ?? wire.parentOrganization?.contentId ?? wire.parentOrganization?.id;
+    wire.parentOrganizationContentId ??
+    wire.parentOrganizationId ??
+    wire.parentOrganization?.contentId ??
+    wire.parentOrganization?.id;
   return {
     id,
     ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
@@ -530,7 +585,11 @@ function mapV12ServiceCollection(wire: V12ServiceCollectionWire): ServiceCollect
       wire.descriptions ?? wire.description ?? wire.languageVersions,
       'description',
     ),
-    serviceIds: ids(wire.serviceIds ?? wire.services),
+    serviceIds: wire.items
+      ? wire.items.flatMap((item) =>
+          item.itemType === 'Service' && item.contentId ? [item.contentId] : [],
+        )
+      : ids(wire.serviceIds ?? wire.services),
     ...modifiedAtField(wire),
   };
 }
@@ -677,6 +736,8 @@ function normalizeChannelType(value: string | undefined): ServiceChannel['channe
     value === 'WebPage'
   )
     return value;
+  // v12's wire name for the phone channel subtype (see ChannelResponse's discriminator).
+  if (value === 'TelephoneService') return 'Phone';
   return 'EChannel';
 }
 /**
@@ -699,7 +760,10 @@ export function mapV12Service(wire: V12ServiceWire): Service {
     wire.descriptions ?? wire.description ?? languageVersions,
     'description',
   );
-  const languages = wire.languages ?? (languageVersions ? Object.keys(languageVersions) : []);
+  const languages =
+    wire.languages ??
+    wire.serviceLanguages ??
+    (languageVersions ? Object.keys(languageVersions) : []);
 
   return {
     id,
@@ -716,7 +780,9 @@ export function mapV12Service(wire: V12ServiceWire): Service {
     lifeEvents: codeEntries(wire.lifeEvents),
     industrialClasses: codeEntries(wire.industrialClasses),
     languages,
-    ...(wire.generalDescriptionId ? { generalDescriptionId: wire.generalDescriptionId } : {}),
+    ...((wire.generalDescriptionContentId ?? wire.generalDescriptionId)
+      ? { generalDescriptionId: (wire.generalDescriptionContentId ?? wire.generalDescriptionId)! }
+      : {}),
     serviceChannelIds: ids(wire.serviceChannelIds ?? wire.serviceChannels),
     ...modifiedAtField(wire),
   };
@@ -794,6 +860,8 @@ function ids(values: Array<string | { contentId?: string; id?: string }> | undef
 
 function normalizeServiceType(value: string | undefined): Service['serviceType'] {
   if (value === 'ProfessionalQualification' || value === 'PermitOrObligation') return value;
+  // v12's wire name for the same subtype.
+  if (value === 'PermitOrOtherObligation') return 'PermitOrObligation';
   return 'Service';
 }
 

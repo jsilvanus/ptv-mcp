@@ -588,7 +588,7 @@ describe('PTV v12 read parity mappings', () => {
 
     expect(requested).toHaveLength(11);
     expect(requested).toContain(
-      'https://api-gw.palvelutietovaranto.trn.suomi.fi/api/v12/service-classes',
+      'https://api-gw.palvelutietovaranto.trn.suomi.fi/api/v12/service-classes?page=1&pageSize=100',
     );
   });
 });
@@ -633,5 +633,145 @@ describe('PTV v12 catalogue pagination', () => {
 
     expect(requestedPages).toEqual(['1', '2']);
     expect(result.items.map((org) => org.id)).toEqual(['org-riihimaki']);
+  });
+});
+
+describe('PTV v12 wire-shape mappings', () => {
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('maps v12 service field names and the PermitOrOtherObligation subtype', () => {
+    const result = mapV12Service({
+      contentId: 'service-1',
+      organizationContentId: 'org-1',
+      serviceType: 'PermitOrOtherObligation',
+      generalDescriptionContentId: 'gd-1',
+      serviceLanguages: ['fi', 'sv'],
+      languageVersions: { fi: { name: 'Lupa' } },
+    });
+
+    expect(result).toMatchObject({
+      serviceType: 'PermitOrObligation',
+      generalDescriptionId: 'gd-1',
+      languages: ['fi', 'sv'],
+    });
+  });
+
+  it('walks the hierarchy through parentOrganizationContentId', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/organization/child'))
+        return json({
+          contentId: 'child',
+          parentOrganizationContentId: 'parent',
+          languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+        });
+      if (url.endsWith('/organization/parent'))
+        return json({
+          contentId: 'parent',
+          parentOrganizationContentId: null,
+          languageVersions: { fi: { name: 'Hämeenlinnan hiippakunta' } },
+        });
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const hierarchy = await adapter.getOrganisationHierarchy('child');
+
+    expect(hierarchy.map((org) => org.id)).toEqual(['child', 'parent']);
+  });
+
+  it('maps TelephoneService channels to Phone', async () => {
+    const fetchImpl: typeof fetch = async () =>
+      json({
+        contentId: 'channel-1',
+        organizationContentId: 'org-1',
+        serviceChannelType: 'TelephoneService',
+        serviceLanguages: ['fi'],
+        languageVersions: { fi: { name: 'Puhelinpalvelu' } },
+      });
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+
+    expect(await adapter.getChannel('channel-1')).toMatchObject({
+      channelType: 'Phone',
+      languages: ['fi'],
+    });
+  });
+
+  it('searches connections server-side by service and by channel id', async () => {
+    const requested: URL[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url);
+      const items = url.searchParams.has('serviceContentIds')
+        ? [{ serviceContentId: 'service-1', channelContentId: 'channel-1' }]
+        : [];
+      return json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const connections = await adapter.getConnectionsFor('service-1');
+
+    expect(connections).toMatchObject([{ serviceId: 'service-1', channelId: 'channel-1' }]);
+    expect(requested.map((url) => url.searchParams.getAll('serviceContentIds'))).toContainEqual([
+      'service-1',
+    ]);
+    expect(requested.map((url) => url.searchParams.getAll('channelContentIds'))).toContainEqual([
+      'service-1',
+    ]);
+  });
+
+  it('reads service collection members from items', async () => {
+    const fetchImpl: typeof fetch = async () =>
+      json({
+        page: 1,
+        pageSize: 100,
+        totalItems: 1,
+        totalPages: 1,
+        items: [
+          {
+            contentId: 'collection-1',
+            organizationContentId: 'org-1',
+            languageVersions: { fi: { name: 'Kokoelma' } },
+            items: [
+              { itemType: 'Service', contentId: 'service-1' },
+              { itemType: 'Channel', contentId: 'channel-1' },
+            ],
+          },
+        ],
+      });
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchServiceCollections({});
+
+    expect(result.items[0]?.serviceIds).toEqual(['service-1']);
+  });
+
+  it('fetches every page listed in totalPages, in order', async () => {
+    const fetchImpl: typeof fetch = async (input) => {
+      const page = Number(new URL(String(input)).searchParams.get('page'));
+      return json({
+        page,
+        pageSize: 1,
+        totalItems: 4,
+        totalPages: 4,
+        items: [{ contentId: `org-${page}`, languageVersions: { fi: { name: `Org ${page}` } } }],
+      });
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const result = await adapter.searchOrganisations({});
+
+    expect(result.items.map((org) => org.id)).toEqual(['org-1', 'org-2', 'org-3', 'org-4']);
+    expect(result.totalCount).toBe(4);
   });
 });
