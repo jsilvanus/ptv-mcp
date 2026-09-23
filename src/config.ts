@@ -74,7 +74,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     nodeEnv,
-    host: env.HOST ?? '0.0.0.0',
+    // Loopback by default: outside a container the API sits behind a reverse proxy. Containers set HOST=0.0.0.0.
+    host: env.HOST ?? '127.0.0.1',
     port,
     logLevel: env.LOG_LEVEL ?? 'info',
     databaseUrl: requireEnv('DATABASE_URL', env),
