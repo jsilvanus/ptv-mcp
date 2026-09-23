@@ -229,7 +229,11 @@ export class PtvV12Adapter implements PtvAdapter {
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
       100,
-      undefined,
+      // The live v12 organization search catalogue otherwise returns rows
+      // without localized names in some environments. Request Finnish
+      // language versions explicitly; text matching remains client-side
+      // because v12 exposes no organization-name query parameter.
+      { languageVersions: ['fi'] },
     );
     const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
@@ -764,12 +768,16 @@ function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
     if (!value || typeof value !== 'object') return { names: {} };
 
     const v = value as Record<string, unknown>;
+    const code = firstString(v.code, v.contentId, v.id, v.value);
+    const names = localized(
+      v.names ?? v.name ?? v.languageVersions ?? v.displayName ?? v.label,
+      'name',
+    );
+
     return {
-      ...(typeof v.code === 'string' ? { code: v.code } : {}),
-      ...(typeof v.contentId === 'string' ? { code: v.contentId } : {}),
-      ...(typeof v.id === 'string' ? { code: v.id } : {}),
+      ...(code ? { code } : {}),
       ...(typeof v.uri === 'string' ? { uri: v.uri } : {}),
-      names: localized(v.names ?? v.name ?? v.languageVersions, 'name'),
+      names,
     };
   });
 }
