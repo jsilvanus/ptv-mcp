@@ -1,3 +1,4 @@
+import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyServiceChangeResult, NewService } from '../ptv/adapter.js';
@@ -72,6 +73,7 @@ export async function queueNewServiceProposal(
   reviewItemId?: string,
 ): Promise<QueuedNewServiceResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  assertLocalizedTextFields(input);
   const proposed = normalizeNewService(input);
   const diff = diffService(EMPTY_SERVICE, proposed);
   const validation = validator.validate(asService(proposed));

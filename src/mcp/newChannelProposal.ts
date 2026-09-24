@@ -1,3 +1,4 @@
+import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkChannel, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult, NewChannel } from '../ptv/adapter.js';
@@ -91,6 +92,7 @@ export async function queueNewChannelProposal(
   reviewItemId?: string,
 ): Promise<QueuedNewChannelResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  assertLocalizedTextFields(input);
   if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
   const proposed = normalizeNewChannel(input);
   const channel = asChannel(proposed);
