@@ -23,7 +23,7 @@ Test targets in organisation 15 (test data is wiped when DVV upgrades PTV):
 | 2 | Removals (languages, delete flags, general description unlink) | ✅ | #39, #49, #51 |
 | 3 | Readable PTV errors | ✅ | #40 |
 | 4 | Draft reads (`active` endpoints) | ✅ | #41 |
-| 5 | Create service (POST), publish, archive | POST failed live (area too wide), fixed in #54; retest pending redeploy | #48, #54 |
+| 5 | Create service (POST), publish, archive | ✅ | #48, #54, #56 |
 | 6 | Connections (add, remove, extra info kept) | ✅ | #44, #46 |
 | 6 | Channel updates (EChannel, Phone, ServiceLocation, WebPage) | ✅ | #50 |
 | 7 | Credential-change audit | integration-tested | #52 |

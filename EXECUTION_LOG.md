@@ -1450,7 +1450,7 @@ verification: the connector's tool list predates them, so it has to be
 reconnected.
 
 
-## 2026-09-24 — v11 channel updates verified live; service creation fixed
+## 2026-09-24 — v11 channel updates and service creation verified live
 
 Through the reconnected PTV-MCP connector (test environment, organisation
 15):
@@ -1466,6 +1466,13 @@ Through the reconnected PTV-MCP connector (test environment, organisation
   organisation's area into the POST, and the `ptv_propose_new_service`
   description now says localized fields are keyed by language (an array
   shape only failed validation on `names`).
-- Known gap: #54 is merged but not deployed (the Farcmd deploy was not
-  permitted from this session), so create → publish → archive still needs
-  a live run after a redeploy. No test service was created.
+- After #54 was deployed, create → publish → archive passed live with
+  the test service *PTV-MCP testipalvelu (poistetaan)*
+  (`4678d0e0-ca3f-476c-8dfa-1630ebcfe378`, now archived). The proposal
+  recorded the new id, and the draft read back through `Service/active`.
+- The archive worked in PTV, but the tool call failed with "Service not
+  found": the proposal response re-diffs against the live service, which
+  404s once archived. #56 returns the stored proposal instead
+  (`current`/`proposed` null), for `ptv_get_proposal` too.
+- The first deploy attempt failed on the server's GitHub SSH key
+  (`Permission denied (publickey)`); fixed on the server, outside the repo.

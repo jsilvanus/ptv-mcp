@@ -165,6 +165,14 @@ were both verified.
   information type Nationwide is too wide."* The domain model carries no
   area, so the adapter copies the organisation's `areaType` and `areas`
   (as `{type, areaCodes}` per type) into the POST (#54).
+- Verified after #54: the new service is readable as Draft through
+  `Service/active` (the public read 404s until it is published), then
+  published and archived with the usual PUT. The public read shows the
+  copied area (`LimitedType`, WellbeingServiceCounties 16).
+- **An archived (`Deleted`) service 404s** on the public and `active`
+  reads alike. So anything that reads a service after archiving it must
+  treat "not found" as expected; the proposal response did not, and
+  failed after a successful archive (#56).
 
 ### Channel PUT (`PUT /api/v11/ServiceChannel/{type}/{id}`)
 
