@@ -37,6 +37,7 @@ import { serviceCollectionWireToDomain } from './mappers/serviceCollection.js';
 import { connectionsFromChannel, connectionsFromService } from './mappers/connection.js';
 import { referenceCodeWireToDomain, V11_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
 import { serviceChangesToV11Body } from './writeMapping.js';
+import { planServiceConnections } from './connectionWrite.js';
 import {
   sharedV11ApiTokenCache,
   type V11ApiTokenCache,
@@ -450,11 +451,41 @@ export class PtvV11Adapter implements PtvAdapter {
       `/api/v11/Service/${proposal.serviceId}`,
       body,
     );
+    if (proposal.changes.serviceChannelIds !== undefined) {
+      await this.applyServiceConnections(current, proposal.changes.serviceChannelIds);
+    }
     return {
       serviceId: updated.id,
       publishingStatus: serviceWireToDomain(updated).publishingStatus,
       appliedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Connections are written through their own endpoint, after the service
+   * PUT. Removing any connection takes two calls (delete all, re-add the
+   * rest); if the second fails, the error says which channels to reconnect.
+   */
+  private async applyServiceConnections(
+    current: V11ServiceWire,
+    desiredChannelIds: PtvContentId[],
+  ): Promise<void> {
+    const path = `/api/v11/Connection/serviceId/${current.id}`;
+    const [first, ...rest] = planServiceConnections(current, desiredChannelIds);
+    if (!first) return;
+    await this.client.put(path, first);
+    for (const body of rest) {
+      try {
+        await this.client.put(path, body);
+      } catch (err) {
+        const ids = body.channelRelations.map((relation) => relation.serviceChannelId).join(', ');
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `PTV removed all connections of service ${current.id} but re-adding ${ids} failed; ` +
+            `reconnect them. ${reason}`,
+        );
+      }
+    }
   }
 
   /**

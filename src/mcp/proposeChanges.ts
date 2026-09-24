@@ -122,6 +122,11 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
 
     const before = current[field];
     const after = changes[field];
+    if (field === 'serviceChannelIds') {
+      const key = (ids: unknown) => JSON.stringify([...((ids as string[]) ?? [])].sort());
+      if (key(before) !== key(after)) entries.push({ field, before, after });
+      continue;
+    }
     if (CODE_LIST_FIELDS.includes(field as (typeof CODE_LIST_FIELDS)[number])) {
       if (codeListKey(before) !== codeListKey(after)) {
         entries.push({ field, before, after });
