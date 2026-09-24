@@ -442,7 +442,10 @@ export class PtvV11Adapter implements PtvAdapter {
     if (!this.capabilities.supportsWrite) {
       throw new Error('PtvV11Adapter: write is not enabled for this instance');
     }
-    const body = serviceChangesToV11Body(proposal.changes);
+    // The PUT has to resend required fields the change doesn't touch (see
+    // writeMapping.ts), so it's built on top of PTV's current record.
+    const current = await this.client.get<V11ServiceWire>(`/api/v11/Service/${proposal.serviceId}`);
+    const body = serviceChangesToV11Body(proposal.changes, current);
     const updated = await this.client.put<V11ServiceWire>(
       `/api/v11/Service/${proposal.serviceId}`,
       body,

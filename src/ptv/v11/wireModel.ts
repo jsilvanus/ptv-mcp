@@ -11,7 +11,8 @@
 
 export interface V11LocalizedItem {
   language: string;
-  value: string;
+  /** PTV returns `null` for an empty optional text, e.g. `UserInstruction`. */
+  value: string | null;
   type?: string;
 }
 
@@ -74,7 +75,8 @@ export interface V11ServiceWire {
   industrialClasses: V11CodeListItem[];
   languages: string[];
   organizations: V11ServiceOrganizationRole[];
-  serviceChannels: V11ServiceChannelRelation[];
+  /** `null`, not `[]`, when the service has no connections. */
+  serviceChannels: V11ServiceChannelRelation[] | null;
   modified: string;
 }
 

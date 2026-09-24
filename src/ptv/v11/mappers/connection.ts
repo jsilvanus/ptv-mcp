@@ -11,7 +11,7 @@ import type { V11ServiceChannelWire, V11ServiceWire } from '../wireModel.js';
  * result either way.
  */
 export function connectionsFromService(wire: V11ServiceWire): Connection[] {
-  return wire.serviceChannels.map((relation) => ({
+  return (wire.serviceChannels ?? []).map((relation) => ({
     serviceId: wire.id,
     channelId: relation.serviceChannel.id,
     modifiedAt: relation.modified ?? wire.modified,
