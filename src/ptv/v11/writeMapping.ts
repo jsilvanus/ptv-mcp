@@ -91,10 +91,15 @@ export function serviceChangesToV11Body(
     }
   }
 
+  // An entry the service and its general description both have looks the
+  // same on the read, so if filtering would empty a list (e.g. both have
+  // target group KR1), the list is kept as is: PTV requires it after an
+  // unlink, and the entries were the service's anyway (live, organisation 15).
   for (const field of CLASSIFICATION_FIELDS) {
     const value = body[field];
     if (Array.isArray(value) && inheritedUris.size > 0) {
-      body[field] = value.filter((uri) => !inheritedUris.has(uri as string));
+      const own = value.filter((uri) => !inheritedUris.has(uri as string));
+      body[field] = own.length > 0 ? own : value;
     }
   }
 
