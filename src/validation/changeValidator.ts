@@ -45,6 +45,7 @@ export class V11ChangeValidator implements ChangeValidator {
     this.validateServiceClassesLimit(proposed, errors);
     this.validateUriFields(proposed, errors);
     this.validateIndustrialClassesCode(proposed, errors);
+    this.validateOntologyTermUris(proposed, errors);
 
     return {
       valid: errors.length === 0,
@@ -167,4 +168,28 @@ export class V11ChangeValidator implements ChangeValidator {
       });
     }
   }
+
+  /**
+   * Rule 9: ontologyTerms URIs must be KOKO concept URIs
+   * (`http://www.yso.fi/onto/koko/pNNN`), the form PTV stores. A YSO
+   * (`.../onto/yso/pNNN`) or other Finto URI is a different concept id —
+   * KOKO numbers don't match YSO's — so it must be looked up, not rewritten.
+   * Entries without a uri are already reported by rule 7.
+   */
+  private validateOntologyTermUris(proposed: Service, errors: ValidationError[]): void {
+    if (!Array.isArray(proposed.ontologyTerms)) return;
+    proposed.ontologyTerms.forEach((entry, index) => {
+      if (typeof entry.uri !== 'string' || entry.uri.trim() === '') return;
+      if (KOKO_URI.test(entry.uri)) return;
+      const hint = /\/onto\/yso\/p\d+$/.test(entry.uri)
+        ? ' This is a YSO URI; KOKO numbers differ from YSO, so find the matching KOKO concept (e.g. with ptv_search_ontology_terms) instead of rewriting the prefix.'
+        : ' Find the term with ptv_search_ontology_terms.';
+      errors.push({
+        field: `ontologyTerms[${index}]`,
+        message: `Ontology term URI must be a KOKO URI of the form http://www.yso.fi/onto/koko/p<number> (got "${entry.uri}").${hint}`,
+      });
+    });
+  }
 }
+
+const KOKO_URI = /^http:\/\/www\.yso\.fi\/onto\/koko\/p\d+$/;

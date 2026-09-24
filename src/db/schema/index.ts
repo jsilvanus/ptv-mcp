@@ -5,6 +5,7 @@ export * from './membership.js';
 export * from './tenantEnvironment.js';
 export * from './ptvAdapterConfig.js';
 export * from './ptvOrganizationCache.js';
+export * from './ptvCodeNameCache.js';
 export * from './userPtvConnection.js';
 export * from './auditEntry.js';
 export * from './proposal.js';

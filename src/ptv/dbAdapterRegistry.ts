@@ -18,6 +18,7 @@ import type {
 } from '../credentials/ptvAdapterConfigService.js';
 import { PtvV11Adapter } from './v11/adapter.js';
 import { PtvV12Adapter } from './v12/adapter.js';
+import type { CodeNameCache } from './v12/codeNameCache.js';
 import type { PtvAdapter, PtvEnvironment } from './adapter.js';
 import {
   PtvAdapterResolutionError,
@@ -37,6 +38,7 @@ export interface AdapterConstructionOptions {
   canWrite: boolean;
   tenantId?: string;
   organizationCache?: PtvOrganizationCacheService;
+  codeNameCache?: CodeNameCache;
   credential:
     | { scope: 'user'; accessToken?: string }
     | { scope: 'tenant'; credentials?: Record<string, unknown> };
@@ -69,7 +71,11 @@ function v12Factory(options: AdapterConstructionOptions): PtvAdapter {
   if (typeof apiKey !== 'string' || !apiKey) {
     throw new Error('v12 adapter requires an API key');
   }
-  return new PtvV12Adapter({ environment: options.environment, apiKey });
+  return new PtvV12Adapter({
+    environment: options.environment,
+    apiKey,
+    ...(options.codeNameCache ? { codeNameCache: options.codeNameCache } : {}),
+  });
 }
 
 const DEFAULT_ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
@@ -102,6 +108,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
     private readonly userConnectionService: UserPtvConnectionService,
     adapterFactories?: Record<string, AdapterFactory>,
     private readonly organizationCache?: PtvOrganizationCacheService,
+    private readonly codeNameCache?: CodeNameCache,
   ) {
     this.adapterFactories = { ...DEFAULT_ADAPTER_FACTORIES, ...adapterFactories };
   }
@@ -178,6 +185,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
       environment,
       tenantId,
       ...(this.organizationCache ? { organizationCache: this.organizationCache } : {}),
+      ...(this.codeNameCache ? { codeNameCache: this.codeNameCache } : {}),
       canWrite: operation === 'write' && config.supportsWrite,
       credential,
     });

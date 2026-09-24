@@ -173,7 +173,10 @@ export class PtvV12Adapter implements PtvAdapter {
     environment: PtvEnvironment;
     apiKey: string;
     fetchImpl?: typeof fetch;
-    /** Defaults to the process-wide cache; tests pass their own. */
+    /**
+     * Defaults to a process-wide memory-only cache; the app passes a
+     * Postgres-backed one (via the registry), tests their own.
+     */
     codeNameCache?: CodeNameCache;
   }) {
     this.client = new PtvV12Client(options);
@@ -424,6 +427,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const items = (await this.fetchAllRaw<unknown>(path, 100)).map(referenceCodeToDomain);
     if (isCodeListKind(codeListName)) {
       for (const item of items) this.cacheCodeEntry(codeListName, item);
+      await this.codeNames.flush();
     }
     return items;
   }
@@ -441,6 +445,7 @@ export class PtvV12Adapter implements PtvAdapter {
     });
     const items = extractItems(raw).map(referenceCodeToDomain);
     for (const item of items) this.cacheCodeEntry('ontologyTerms', item);
+    await this.codeNames.flush();
     return { items, page, pageSize, totalCount: extractTotalCount(raw, items.length) };
   }
 
@@ -459,16 +464,18 @@ export class PtvV12Adapter implements PtvAdapter {
     const environment = this.capabilities.environment;
     await Promise.all(
       CODE_LIST_KINDS.map(async (kind) => {
-        const missing = new Set<string>();
+        const incomplete = new Set<string>();
         for (const item of items) {
           for (const entry of item[kind]) {
             const key = lookupKey(entry);
-            if (key && isIncomplete(kind, entry) && !this.codeNames.get(environment, kind, key)) {
-              missing.add(key);
-            }
+            if (key && isIncomplete(kind, entry)) incomplete.add(key);
           }
         }
-        const keys = [...missing];
+        await this.codeNames.prime(environment, kind, [...incomplete]);
+        const missing = [...incomplete].filter(
+          (key) => !this.codeNames.get(environment, kind, key),
+        );
+        const keys = missing;
         const batches: Array<{ param: 'codes' | 'uris'; values: string[] }> = [];
         for (const param of ['uris', 'codes'] as const) {
           const values = keys.filter((key) => isUri(key) === (param === 'uris'));
@@ -504,6 +511,7 @@ export class PtvV12Adapter implements PtvAdapter {
         );
       }),
     );
+    await this.codeNames.flush();
     return items.map((item) => {
       const completed = { ...item };
       for (const kind of CODE_LIST_KINDS) {

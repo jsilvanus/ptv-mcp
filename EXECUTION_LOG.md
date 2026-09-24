@@ -1365,3 +1365,20 @@ Deviation worth knowing: the deployed server runs `tsx watch` (dev mode),
 not the Docker image, so the code-name cache lives only as long as that
 process.
 
+
+## 2026-09-24 — Persistent code-name cache, KOKO URI rule, deploy script
+
+- The v12 code-name cache is now backed by Postgres
+  (`ptv_code_name_cache`, migration 0016), so names survive restarts and
+  redeploys. The table is global reference data: no `tenant_id`, no RLS,
+  explicit `GRANT` to `ptv_mcp_app` (see 0015 for why not rely on default
+  privileges). The in-memory `CodeNameCache` stays as the first level;
+  missing keys are primed from Postgres, new entries written through.
+  Store errors are swallowed and fall back to PTV lookups.
+- `V11ChangeValidator` rule 9: `ontologyTerms[].uri` must be
+  `http://www.yso.fi/onto/koko/pNNN`. YSO URIs get a hint that KOKO
+  numbers differ, so they must be looked up (`ptv_search_ontology_terms`),
+  not rewritten.
+- `scripts/deploy.sh`: pull (fast-forward only), `npm ci` when
+  dependencies change, `db:migrate`, optional `PTV_MCP_RESTART_CMD`,
+  health check. The previous Farcmd deploy didn't run migrations.

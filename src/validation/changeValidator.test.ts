@@ -16,7 +16,7 @@ function validService(): Service {
       { uri: 'http://example.com/class1', names: { fi: 'Class 1' } },
       { uri: 'http://example.com/class2', names: { fi: 'Class 2' } },
     ],
-    ontologyTerms: [{ uri: 'http://example.com/term1', names: { fi: 'Term 1' } }],
+    ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p1', names: { fi: 'Term 1' } }],
     targetGroups: [{ uri: 'http://example.com/group1', names: { fi: 'Group 1' } }],
     lifeEvents: [{ uri: 'http://example.com/event1', names: { fi: 'Event 1' } }],
     industrialClasses: [{ code: 'CODE1', names: { fi: 'Industrial 1' } }],
@@ -166,7 +166,7 @@ describe('V11ChangeValidator', () => {
   describe('ontologyTerms limit (Rule 5)', () => {
     it('fails when ontologyTerms has more than 10 entries', () => {
       const terms = Array.from({ length: 11 }, (_, i) => ({
-        uri: `http://example.com/term${i}`,
+        uri: `http://www.yso.fi/onto/koko/p${i}`,
         names: { fi: `Term ${i}` },
       }));
       const service = { ...validService(), ontologyTerms: terms };
@@ -177,7 +177,7 @@ describe('V11ChangeValidator', () => {
 
     it('passes when ontologyTerms has exactly 10 entries', () => {
       const terms = Array.from({ length: 10 }, (_, i) => ({
-        uri: `http://example.com/term${i}`,
+        uri: `http://www.yso.fi/onto/koko/p${i}`,
         names: { fi: `Term ${i}` },
       }));
       const service = { ...validService(), ontologyTerms: terms };
@@ -345,7 +345,7 @@ describe('V11ChangeValidator', () => {
         languages: [], // violates Rule 4
         ontologyTerms: Array.from({ length: 11 }, (_, i) => ({
           // violates Rule 5
-          uri: `http://example.com/term${i}`,
+          uri: `http://www.yso.fi/onto/koko/p${i}`,
           names: { fi: `Term ${i}` },
         })),
         serviceClasses: [
@@ -364,6 +364,42 @@ describe('V11ChangeValidator', () => {
       expect(result.errors).toContainEqual(expect.objectContaining({ field: 'languages' }));
       expect(result.errors).toContainEqual(expect.objectContaining({ field: 'ontologyTerms' }));
       expect(result.errors).toContainEqual(expect.objectContaining({ field: 'serviceClasses' }));
+    });
+  });
+
+  describe('ontologyTerms KOKO URIs (Rule 9)', () => {
+    const withTerm = (uri: string) => ({
+      ...validService(),
+      ontologyTerms: [{ uri, names: { fi: 'kaste' } }],
+    });
+
+    it('passes for a KOKO concept URI', () => {
+      const result = validator.validate(withTerm('http://www.yso.fi/onto/koko/p71748'));
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects a YSO URI with a hint that numbers differ', () => {
+      const result = validator.validate(withTerm('http://www.yso.fi/onto/yso/p5473'));
+      expect(result.valid).toBe(false);
+      const error = result.errors.find((e) => e.field === 'ontologyTerms[0]');
+      expect(error?.message).toMatch(/YSO URI/);
+      expect(error?.message).toMatch(/ptv_search_ontology_terms/);
+    });
+
+    it.each([
+      'https://www.yso.fi/onto/koko/p71748',
+      'http://www.yso.fi/onto/koko/p71748/',
+      'http://www.yso.fi/onto/mao/p1234',
+      'http://example.com/term1',
+      'koko:p71748',
+    ])('rejects %s', (uri) => {
+      const result = validator.validate(withTerm(uri));
+      expect(result.errors.some((e) => e.field === 'ontologyTerms[0]')).toBe(true);
+    });
+
+    it('reports an empty uri only once (rule 7)', () => {
+      const result = validator.validate(withTerm(''));
+      expect(result.errors.filter((e) => e.field === 'ontologyTerms[0]')).toHaveLength(1);
     });
   });
 });
