@@ -54,6 +54,16 @@ export interface ApplyServiceChangeResult {
  * the time PtvAdapterRegistry (Phase 3) hands it out; no auth parameters
  * appear on these methods.
  */
+export class OntologySearchUnsupportedError extends Error {
+  constructor(apiVersion: string) {
+    super(
+      `Ontology term search is not available on PTV ${apiVersion}: it has no ontology ` +
+        `endpoint. Reconnect with v12 as the read API version to search ontology terms.`,
+    );
+    this.name = 'OntologySearchUnsupportedError';
+  }
+}
+
 export interface PtvAdapter {
   getCapabilities(): PtvAdapterCapabilities;
 
@@ -73,6 +83,15 @@ export interface PtvAdapter {
   getConnectionsFor(entityId: PtvContentId): Promise<Connection[]>;
 
   listCodes(codeListName: string): Promise<CodeListEntry[]>;
+
+  /**
+   * Search PTV's ontology terms (KOKO concepts, which include YSO, MAO and
+   * other Finto ontologies) by name. Entries carry the KOKO `uri` that a
+   * service's `ontologyTerms` must use. Only valid (non-deprecated) terms
+   * are returned. Adapters whose API has no ontology endpoint (v11) throw
+   * OntologySearchUnsupportedError.
+   */
+  searchOntologyTerms(params: SearchParams): Promise<PaginatedResult<CodeListEntry>>;
 
   /**
    * Writes an approved change to PTV. Throws if `getCapabilities().supportsWrite`

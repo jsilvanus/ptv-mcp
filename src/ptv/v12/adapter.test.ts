@@ -1061,3 +1061,83 @@ describe('PTV v12 classifications are writable through v11', () => {
     expect(result.errors).toEqual([]);
   });
 });
+
+describe('PTV v12 ontology term search', () => {
+  it('searches by name server-side, valid terms only, and returns KOKO URIs', async () => {
+    const requested: URL[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url);
+      return new Response(
+        JSON.stringify({
+          page: 2,
+          pageSize: 20,
+          totalItems: 23,
+          totalPages: 2,
+          items: [
+            {
+              uri: 'http://www.yso.fi/onto/koko/p71748',
+              type: null,
+              parentUris: [],
+              isValid: true,
+              name: { fi: 'kaste (uskonto)', sv: 'dop (religion)', en: 'baptism' },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    const cache = new CodeNameCache();
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl,
+      codeNameCache: cache,
+    });
+    const result = await adapter.searchOntologyTerms({ query: ' kaste ', page: 2 });
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]!.pathname).toBe('/api/v12/ontology-terms');
+    expect(Object.fromEntries(requested[0]!.searchParams)).toEqual({
+      name: 'kaste',
+      isValid: 'true',
+      page: '2',
+      pageSize: '20',
+    });
+    expect(result).toEqual({
+      items: [
+        {
+          uri: 'http://www.yso.fi/onto/koko/p71748',
+          names: { fi: 'kaste (uskonto)', sv: 'dop (religion)', en: 'baptism' },
+        },
+      ],
+      page: 2,
+      pageSize: 20,
+      totalCount: 23,
+    });
+    // Found terms also warm the code-name cache.
+    expect(cache.get('test', 'ontologyTerms', 'http://www.yso.fi/onto/koko/p71748')?.names).toEqual(
+      { fi: 'kaste (uskonto)', sv: 'dop (religion)', en: 'baptism' },
+    );
+  });
+
+  it('caps pageSize at the v12 maximum of 100', async () => {
+    let pageSize: string | null = null;
+    const fetchImpl: typeof fetch = async (input) => {
+      pageSize = new URL(String(input)).searchParams.get('pageSize');
+      return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 0 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+
+    await adapter.searchOntologyTerms({ query: 'kaste', pageSize: 500 });
+
+    expect(pageSize).toBe('100');
+  });
+});

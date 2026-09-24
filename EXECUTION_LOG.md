@@ -1333,3 +1333,35 @@ Fixed, by area:
   `InMemoryPtvAdapter`. This is the single gap that would have caught the
   v12 unimplemented-methods issue immediately; recorded as the top
   priority in `docs/ptv-v12-notes.md`'s "open items" list.
+
+## 2026-09-24 — v12 read side verified live and fixed
+
+Every MCP read tool was run against the live v12 API through the deployed
+server (redeployed after each merge via the Farcmd "Deploy: PTV-MCP"
+command) and checked against `docs/ptv-api-documentation.json`. Details
+are in `docs/ptv-v12-notes.md` ("Live verification and fixes").
+
+- #22: read `totalItems` so catalogue scans fetch every page (Riihimäen
+  seurakunta was not findable). The same PR restored a green `main`:
+  `npm run build` (and so `docker build`) failed on
+  `exactOptionalPropertyTypes` errors, four unit tests had stale
+  expectations, and eleven files failed `prettier --check`.
+- #23: v12 field names (`parentOrganizationContentId`,
+  `TelephoneService`, `PermitOrOtherObligation`,
+  `generalDescriptionContentId`, `serviceLanguages`), server-side
+  connection search, collection members, code-list paging, parallel
+  page fetching.
+- #24: `serviceChannelIds` from connections; connection
+  `publishedAt`/description.
+- #25–#27: classification names from reference data with a process-wide
+  cache (30 days, 1 day for unknown codes); empty translations dropped;
+  entries completed to v11's `{code, uri, names}` so v12-read services
+  pass `V11ChangeValidator`.
+- This PR: `ptv_search_ontology_terms` (v12 only; v11 throws
+  `OntologySearchUnsupportedError`), plus this log entry and the v12
+  notes update.
+
+Deviation worth knowing: the deployed server runs `tsx watch` (dev mode),
+not the Docker image, so the code-name cache lives only as long as that
+process.
+

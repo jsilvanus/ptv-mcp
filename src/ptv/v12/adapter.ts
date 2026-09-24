@@ -428,6 +428,22 @@ export class PtvV12Adapter implements PtvAdapter {
     return items;
   }
 
+  async searchOntologyTerms(params: SearchParams): Promise<PaginatedResult<CodeListEntry>> {
+    const page = params.page ?? 1;
+    // v12 pages server-side with pageSize ≤ 100.
+    const pageSize = Math.min(params.pageSize ?? 20, 100);
+    const query = params.query?.trim();
+    const raw = await this.client.get<unknown>('/api/v12/ontology-terms', {
+      page,
+      pageSize,
+      isValid: 'true',
+      ...(query ? { name: query } : {}),
+    });
+    const items = extractItems(raw).map(referenceCodeToDomain);
+    for (const item of items) this.cacheCodeEntry('ontologyTerms', item);
+    return { items, page, pageSize, totalCount: extractTotalCount(raw, items.length) };
+  }
+
   /**
    * Complete classification entries, which v12 returns as a bare code or
    * URI: fill `names`, and whichever of `code`/`uri` is missing, from the
