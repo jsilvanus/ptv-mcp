@@ -953,3 +953,38 @@ describe('PTV v12 classification code names', () => {
     expect(cache.get('test', 'serviceClasses', 'P25.6')).toBeUndefined();
   });
 });
+
+describe('PTV v12 empty translations and code-name TTLs', () => {
+  it('drops empty-string translations', () => {
+    const result = mapV12Service({
+      contentId: 'service-1',
+      organizationContentId: 'org-1',
+      languageVersions: {
+        fi: { name: 'Kahvitilaisuus', summary: '', description: '  ' },
+        sv: { name: '' },
+      },
+    });
+
+    expect(result.names).toEqual({ fi: 'Kahvitilaisuus' });
+    expect(result.summaries).toEqual({});
+    expect(result.descriptions).toEqual({});
+  });
+
+  it('keeps found names for 30 days but unknown codes for only a day', async () => {
+    const { CodeNameCache, DEFAULT_CODE_NAME_TTL_MS, MISSING_CODE_NAME_TTL_MS } =
+      await import('./codeNameCache.js');
+    const day = 24 * 60 * 60 * 1000;
+    expect(DEFAULT_CODE_NAME_TTL_MS).toBe(30 * day);
+    expect(MISSING_CODE_NAME_TTL_MS).toBe(day);
+
+    let now = 0;
+    const cache = new CodeNameCache(DEFAULT_CODE_NAME_TTL_MS, () => now);
+    cache.set('test', 'ontologyTerms', 'known', { fi: 'kaste' });
+    cache.set('test', 'ontologyTerms', 'unknown', {}, MISSING_CODE_NAME_TTL_MS);
+
+    now = day;
+    expect(cache.get('test', 'ontologyTerms', 'unknown')).toBeUndefined();
+    now = 30 * day - 1;
+    expect(cache.get('test', 'ontologyTerms', 'known')).toEqual({ fi: 'kaste' });
+  });
+});

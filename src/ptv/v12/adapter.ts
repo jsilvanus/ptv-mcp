@@ -18,7 +18,12 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV12Client } from './client.js';
-import { type CodeListKind, CodeNameCache, sharedCodeNameCache } from './codeNameCache.js';
+import {
+  type CodeListKind,
+  CodeNameCache,
+  MISSING_CODE_NAME_TTL_MS,
+  sharedCodeNameCache,
+} from './codeNameCache.js';
 
 interface V12ServiceChannelWire {
   contentId?: string;
@@ -462,7 +467,7 @@ export class PtvV12Adapter implements PtvAdapter {
               // Cache misses too, so an unknown code isn't re-requested on every read.
               for (const value of values) {
                 if (!this.codeNames.get(environment, kind, value)) {
-                  this.codeNames.set(environment, kind, value, {});
+                  this.codeNames.set(environment, kind, value, {}, MISSING_CODE_NAME_TTL_MS);
                 }
               }
             } catch {
@@ -936,7 +941,16 @@ export function mapV12Service(wire: V12ServiceWire): Service {
   };
 }
 
+/** PTV sends `""` for missing translations; treat those as absent. */
 function localized(value: unknown, preferredField?: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(localizedWithEmpty(value, preferredField)).filter(
+      ([, text]) => text.trim() !== '',
+    ),
+  );
+}
+
+function localizedWithEmpty(value: unknown, preferredField?: string): Record<string, string> {
   if (!value) return {};
 
   if (Array.isArray(value)) {
