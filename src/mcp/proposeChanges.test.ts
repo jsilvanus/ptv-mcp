@@ -9,8 +9,8 @@ import { diffService, proposeChanges, ServiceNotFoundError } from './proposeChan
 import type { ToolContext } from './toolContext.js';
 
 const ctx: ToolContext = { tenantId: 'tenant-1', environment: 'test', actingUserId: 'user-1' };
-const fakeEditorResolver = async () => 'editor' as const;
-const fakeReaderResolver = async () => 'reader' as const;
+const fakeEditorResolver = async () => 'approver' as const;
+const fakeReaderResolver = async () => 'contributor' as const;
 const fakeNoMembershipResolver = async () => null;
 
 const baseService: Service = {
@@ -73,6 +73,25 @@ describe('diffService', () => {
     expect(
       diffService(current, { serviceClasses: [{ uri: 'http://example/class/1', names: {} }] }),
     ).toHaveLength(1);
+  });
+
+  it('copies known classification names onto proposed entries given by uri or code', () => {
+    const current: Service = {
+      ...baseService,
+      serviceClasses: [
+        { code: 'P11.6', uri: 'http://example/class/p11.6', names: { fi: 'Seurakunnat' } },
+      ],
+    };
+    const [entry] = diffService(current, {
+      serviceClasses: [
+        { uri: 'http://example/class/p11.6', names: {} },
+        { code: 'P27', names: {} },
+      ],
+    });
+    expect(entry?.after).toEqual([
+      { uri: 'http://example/class/p11.6', names: { fi: 'Seurakunnat' } },
+      { code: 'P27', names: {} },
+    ]);
   });
 
   it('expands a localized field into one entry per changed language', () => {

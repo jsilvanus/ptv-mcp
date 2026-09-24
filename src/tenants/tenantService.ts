@@ -33,6 +33,27 @@ export interface TenantMembership {
   role: MembershipRole;
 }
 
+export interface TenantSettings {
+  /** Four-eyes: nobody approves (export/apply) a proposal they created. */
+  requireFourEyes: boolean;
+}
+
+export class TenantNotFoundError extends Error {
+  constructor() {
+    super('Tenant not found');
+    this.name = 'TenantNotFoundError';
+  }
+}
+
+/** Whether `tenantId` enforces four-eyes; unknown tenants fail closed (true). */
+export async function tenantRequiresFourEyes(db: Database, tenantId: string): Promise<boolean> {
+  const tenant = await db.query.tenants.findFirst({
+    where: eq(tenants.id, tenantId),
+    columns: { requireFourEyes: true },
+  });
+  return tenant?.requireFourEyes ?? true;
+}
+
 export interface Member {
   userId: string;
   email: string;
@@ -176,5 +197,39 @@ export class TenantService {
       resourceId: userId,
       result: 'Success',
     });
+  }
+
+  async getSettings(tenantId: string): Promise<TenantSettings> {
+    const tenant = await this.db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+      columns: { requireFourEyes: true },
+    });
+    if (!tenant) {
+      throw new TenantNotFoundError();
+    }
+    return { requireFourEyes: tenant.requireFourEyes };
+  }
+
+  async updateSettings(
+    tenantId: string,
+    settings: TenantSettings,
+    actingUserId: string,
+  ): Promise<TenantSettings> {
+    const before = await this.getSettings(tenantId);
+    await this.db
+      .update(tenants)
+      .set({ requireFourEyes: settings.requireFourEyes, updatedAt: new Date() })
+      .where(eq(tenants.id, tenantId));
+    await this.auditService.record({
+      tenantId,
+      userId: actingUserId,
+      action: 'UpdateTenantSettings',
+      resourceType: 'Tenant',
+      resourceId: tenantId,
+      beforeState: before,
+      afterState: settings,
+      result: 'Success',
+    });
+    return settings;
   }
 }

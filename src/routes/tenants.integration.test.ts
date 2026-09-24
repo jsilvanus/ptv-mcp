@@ -76,6 +76,28 @@ describe('tenant routes', () => {
     ]);
   });
 
+  it('rejects an unknown or retired role name with 400', async () => {
+    const admin = await createUserWithToken();
+    const member = await createUserWithToken();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: 'Role Tenant', slug: `role-${randomUUID()}` },
+    });
+    const { tenantId } = createRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/members`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { email: member.email, role: 'reader' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('viewer, contributor, approver, publisher, tenant_admin');
+  });
+
   it('rejects tenant creation without authentication', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -104,14 +126,14 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: reader.email, role: 'reader' },
+      payload: { email: reader.email, role: 'contributor' },
     });
 
     const forbiddenRes = await app.inject({
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${reader.token}` },
-      payload: { email: newMember.email, role: 'editor' },
+      payload: { email: newMember.email, role: 'approver' },
     });
     expect(forbiddenRes.statusCode).toBe(403);
 
@@ -119,7 +141,7 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: newMember.email, role: 'editor' },
+      payload: { email: newMember.email, role: 'approver' },
     });
     expect(addRes.statusCode).toBe(204);
 
@@ -129,6 +151,63 @@ describe('tenant routes', () => {
       headers: { authorization: `Bearer ${admin.token}` },
     });
     expect(membersRes.json()).toHaveLength(3);
+  });
+
+  it('defaults four-eyes on, lets members read it and only a tenant_admin change it', async () => {
+    const admin = await createUserWithToken();
+    const viewer = await createUserWithToken();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: 'Settings Tenant', slug: `tenant-${randomUUID()}` },
+    });
+    const { tenantId } = createRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+    await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/members`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { email: viewer.email, role: 'viewer' },
+    });
+
+    const asViewer = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+    });
+    expect(asViewer.statusCode).toBe(200);
+    expect(asViewer.json()).toEqual({ requireFourEyes: true });
+
+    const forbidden = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { requireFourEyes: false },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const invalid = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { requireFourEyes: 'no' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { requireFourEyes: false },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toEqual({ requireFourEyes: false });
+
+    const audit = await withContext(db, { tenantId }, async (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.tenantId, tenantId)),
+    );
+    expect(audit.map((entry) => entry.action)).toContain('UpdateTenantSettings');
   });
 
   it('updates and then removes a member via HTTP', async () => {
@@ -149,7 +228,7 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: member.email, role: 'reader' },
+      payload: { email: member.email, role: 'contributor' },
     });
 
     const patchRes = await app.inject({

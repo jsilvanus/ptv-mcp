@@ -1,9 +1,14 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
 
-/** Reader < Editor < Publisher < Tenant Admin, per docs/plan.md's role model. */
+/**
+ * Viewer < Contributor < Approver < Publisher < Tenant Admin, see
+ * docs/roles-and-review-plan.md. UI labels: Katselija, Ehdottaja,
+ * Hyväksyjä, Julkaisija, Pääkäyttäjä.
+ */
 export const membershipRoleEnum = pgEnum('membership_role', [
-  'reader',
-  'editor',
+  'viewer',
+  'contributor',
+  'approver',
   'publisher',
   'tenant_admin',
 ]);
@@ -37,4 +42,11 @@ export const proposalKindEnum = pgEnum('proposal_kind', [
   'service_update',
   'service_create',
   'channel_update',
+]);
+
+/** A required reviewer's sign-off (docs/roles-and-review-plan.md, step 5). */
+export const reviewDecisionEnum = pgEnum('review_decision', [
+  'pending',
+  'approved',
+  'changes_requested',
 ]);

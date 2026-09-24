@@ -3,21 +3,38 @@ import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
+import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import {
+  NotARequestedReviewerError,
   ProposalAlreadyResolvedError,
   ProposalNotFoundError,
   ProposalService,
+  type ProposalComment,
   type ProposalKind,
+  type ProposalReviewer,
   type ProposalRecord,
   type ProposalStatus,
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
-import { applyChannelChanges, prepareChannelProposal } from './channelProposal.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import {
+  applyChannelChanges,
+  ChannelNotFoundError,
+  prepareChannelProposal,
+} from './channelProposal.js';
+import {
+  FourEyesError,
+  requireTenantRole,
+  type FourEyesResolver,
+  type MembershipRoleResolver,
+} from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { applyChanges, exportForManualPublish } from './applyOrExport.js';
-import { prepareProposal, type ProposeChangesResult } from './proposeChanges.js';
+import {
+  prepareProposal,
+  ServiceNotFoundError,
+  type ProposeChangesResult,
+} from './proposeChanges.js';
 
 export type ResolveProposalAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 
@@ -44,9 +61,18 @@ export interface ProposalDetails extends ProposalSummary {
   changes: Partial<Service>;
   queuedDiff: ProposeChangesResult['diff'];
   diff: ProposeChangesResult['diff'];
-  /** `null` for a service_create proposal: there is nothing to diff against. */
+  /**
+   * `null` for a service_create proposal (there is nothing to diff against)
+   * and when the service or channel can no longer be read, e.g. after an
+   * approved archive: PTV then returns 404 for it.
+   */
   current: Service | ServiceChannel | null;
-  proposed: Service | NewService | ServiceChannel;
+  /** `null` when the service or channel can no longer be read (see `current`). */
+  proposed: Service | NewService | ServiceChannel | null;
+  /** Oldest first. */
+  comments: ProposalComment[];
+  /** Required reviewers; approving waits until all have `approved`. */
+  reviewers: ProposalReviewer[];
 }
 
 export class InvalidResolveActionError extends Error {
@@ -76,9 +102,45 @@ function toSummary(proposal: ProposalRecord): ProposalSummary {
 
 async function proposalDetails(
   registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
   proposal: ProposalRecord,
   ctx: ToolContext,
 ): Promise<ProposalDetails> {
+  const [details, comments, reviewers] = await Promise.all([
+    proposalDiffDetails(registry, proposal, ctx),
+    proposalService.listComments(ctx.tenantId, proposal.id),
+    proposalService.listReviewers(ctx.tenantId, proposal.id),
+  ]);
+  return { ...details, comments, reviewers };
+}
+
+async function proposalDiffDetails(
+  registry: PtvAdapterRegistry,
+  proposal: ProposalRecord,
+  ctx: ToolContext,
+): Promise<Omit<ProposalDetails, 'comments' | 'reviewers'>> {
+  try {
+    return await liveProposalDetails(registry, proposal, ctx);
+  } catch (err) {
+    if (!(err instanceof ServiceNotFoundError || err instanceof ChannelNotFoundError)) throw err;
+    // The target is gone (archived services and channels 404), but the
+    // proposal record itself is still reviewable.
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: [],
+      current: null,
+      proposed: null,
+    };
+  }
+}
+
+async function liveProposalDetails(
+  registry: PtvAdapterRegistry,
+  proposal: ProposalRecord,
+  ctx: ToolContext,
+): Promise<Omit<ProposalDetails, 'comments' | 'reviewers'>> {
   if (proposal.kind === 'service_create') {
     return {
       ...toSummary(proposal),
@@ -131,7 +193,7 @@ export async function queueProposal(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<QueuedProposeChangesResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'reader');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const prepared = await prepareProposal(registry, ctx, serviceId, changes);
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,
@@ -166,8 +228,15 @@ export async function listProposals(
   proposalService: ProposalService,
   ctx: ToolContext,
   status?: ProposalStatus,
+  /** Only pending proposals waiting for the acting user's sign-off. */
+  waitingForMe = false,
 ): Promise<ProposalSummary[]> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  if (waitingForMe) {
+    return (await proposalService.listAwaitingReview(ctx.tenantId, ctx.actingUserId)).map(
+      toSummary,
+    );
+  }
   const proposals = await proposalService.listForTenant(ctx.tenantId, {
     ...(status ? { status } : {}),
   });
@@ -182,7 +251,7 @@ export async function getProposal(
   ctx: ToolContext,
   proposalId: string,
 ): Promise<ProposalDetails> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   await auditService.record({
     tenantId: ctx.tenantId,
@@ -193,7 +262,208 @@ export async function getProposal(
     result: 'Viewed',
     correlationId: proposal.correlationId,
   });
-  return proposalDetails(registry, proposal, ctx);
+  return proposalDetails(registry, proposalService, proposal, ctx);
+}
+
+export class InvalidCommentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidCommentError';
+  }
+}
+
+/** Longest comment accepted; a review note, not a document. */
+export const MAX_COMMENT_LENGTH = 4000;
+
+/**
+ * Adds a comment to a proposal (Contributor+), whatever its status, so the
+ * reasons for a decision stay with it. Audited under the proposal's
+ * correlation id.
+ */
+export async function commentOnProposal(
+  resolveRole: MembershipRoleResolver,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposalId: string,
+  body: string,
+): Promise<ProposalComment> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  const text = body.trim();
+  if (text === '') throw new InvalidCommentError('Comment is empty');
+  if (text.length > MAX_COMMENT_LENGTH) {
+    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
+  }
+  const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  const comment = await proposalService.addComment(
+    ctx.tenantId,
+    proposal.id,
+    ctx.actingUserId,
+    text,
+  );
+  await auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action: 'CommentProposal',
+    resourceType: 'Proposal',
+    resourceId: proposal.id,
+    afterState: { commentId: comment.id, body: text },
+    result: 'Commented',
+    correlationId: proposal.correlationId,
+  });
+  return comment;
+}
+
+export class ReviewsPendingError extends Error {
+  constructor(waiting: ProposalReviewer[]) {
+    super(
+      `Waiting for required reviewers: ${waiting
+        .map((reviewer) => `${reviewer.userName} (${reviewer.decision})`)
+        .join(
+          ', ',
+        )}. Approve after every reviewer has signed off with approved; reject is always possible.`,
+    );
+    this.name = 'ReviewsPendingError';
+  }
+}
+
+export class InvalidReviewRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidReviewRequestError';
+  }
+}
+
+function requirePending(proposal: ProposalRecord): void {
+  if (proposal.status !== 'pending') {
+    throw new ProposalAlreadyResolvedError(proposal.id, proposal.status);
+  }
+}
+
+/** A tenant member as far as review requests need one. */
+export interface ReviewCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  role: MembershipRole;
+}
+
+/** Lists a tenant's members; production passes `TenantService.listMembers`. */
+export type MemberLister = (tenantId: string) => Promise<ReviewCandidate[]>;
+
+/** Members who can be named as reviewers: Contributor (Ehdottaja) or above. */
+export async function listReviewCandidates(
+  resolveRole: MembershipRoleResolver,
+  listMembers: MemberLister,
+  ctx: ToolContext,
+): Promise<ReviewCandidate[]> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  return (await listMembers(ctx.tenantId))
+    .filter((member) => ROLE_RANK[member.role] >= ROLE_RANK.contributor)
+    .sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+}
+
+/**
+ * Names required reviewers (by user id or email) for a pending proposal.
+ * The proposer or an Approver+ may ask; each reviewer must be a
+ * Contributor+ in the tenant and not the proposer. Audited under the
+ * proposal's correlation id.
+ */
+export async function requestReview(
+  resolveRole: MembershipRoleResolver,
+  listMembers: MemberLister,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposalId: string,
+  reviewers: string[],
+): Promise<ProposalReviewer[]> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  requirePending(proposal);
+  if (proposal.proposedByUserId !== ctx.actingUserId) {
+    await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
+  }
+  if (reviewers.length === 0) throw new InvalidReviewRequestError('Name at least one reviewer');
+  const candidates = await listReviewCandidates(resolveRole, listMembers, ctx);
+  const userIds = new Set<string>();
+  for (const reviewer of reviewers) {
+    const key = reviewer.trim().toLowerCase();
+    const match = candidates.find(
+      (candidate) => candidate.userId === reviewer.trim() || candidate.email.toLowerCase() === key,
+    );
+    if (!match) {
+      throw new InvalidReviewRequestError(
+        `${reviewer} is not a Contributor (Ehdottaja) or above in this organisation. Possible reviewers: ${candidates
+          .map((candidate) => `${candidate.name} <${candidate.email}>`)
+          .join(', ')}`,
+      );
+    }
+    if (match.userId === proposal.proposedByUserId) {
+      throw new InvalidReviewRequestError('The proposer cannot review their own proposal');
+    }
+    userIds.add(match.userId);
+  }
+  const reviewerUserIds = [...userIds];
+  const result = await proposalService.addReviewers(
+    ctx.tenantId,
+    proposal.id,
+    reviewerUserIds,
+    ctx.actingUserId,
+  );
+  await auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action: 'RequestReview',
+    resourceType: 'Proposal',
+    resourceId: proposal.id,
+    afterState: { reviewerUserIds },
+    result: 'Requested',
+    correlationId: proposal.correlationId,
+  });
+  return result;
+}
+
+export type SignOffDecision = 'approved' | 'changes_requested';
+
+/**
+ * A requested reviewer's sign-off (Hyväksyn / Pyydän muutoksia) on a
+ * pending proposal; can be changed until the proposal is resolved.
+ */
+export async function signOffProposal(
+  resolveRole: MembershipRoleResolver,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposalId: string,
+  decision: SignOffDecision,
+  comment?: string,
+): Promise<ProposalReviewer[]> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  const text = comment?.trim() || null;
+  if (text && text.length > MAX_COMMENT_LENGTH) {
+    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
+  }
+  const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  requirePending(proposal);
+  const reviewers = await proposalService.recordDecision(
+    ctx.tenantId,
+    proposal.id,
+    ctx.actingUserId,
+    decision,
+    text,
+  );
+  await auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action: 'SignOffProposal',
+    resourceType: 'Proposal',
+    resourceId: proposal.id,
+    afterState: { decision, comment: text },
+    result: decision === 'approved' ? 'Approved' : 'ChangesRequested',
+    correlationId: proposal.correlationId,
+  });
+  return reviewers;
 }
 
 export async function resolveProposal(
@@ -205,10 +475,29 @@ export async function resolveProposal(
   ctx: ToolContext,
   proposalId: string,
   action: ResolveProposalAction,
+  requireFourEyes: FourEyesResolver,
 ): Promise<ProposalDetails> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+
+  // Four-eyes: approving your own proposal is refused; rejecting (withdrawing) it is fine.
+  if (
+    action !== 'reject' &&
+    proposal.proposedByUserId === ctx.actingUserId &&
+    (await requireFourEyes(ctx.tenantId))
+  ) {
+    throw new FourEyesError(
+      'Four-eyes review: you cannot approve a proposal you created. Another Hyväksyjä or Julkaisija must resolve it (you can still reject it).',
+    );
+  }
+
+  if (action !== 'reject') {
+    const waiting = (await proposalService.listReviewers(ctx.tenantId, proposalId)).filter(
+      (reviewer) => reviewer.decision !== 'approved',
+    );
+    if (waiting.length > 0) throw new ReviewsPendingError(waiting);
+  }
 
   if (action === 'reject') {
     const rejected = await proposalService.markResolved(
@@ -226,7 +515,7 @@ export async function resolveProposal(
       result: 'Rejected',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, rejected, proposalCtx);
+    return proposalDetails(registry, proposalService, rejected, proposalCtx);
   }
 
   if (proposal.kind === 'channel_update') {
@@ -270,7 +559,7 @@ export async function resolveProposal(
       result: 'ApprovedForManualPublish',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
   if (action === 'approve_and_apply') {
@@ -317,7 +606,7 @@ export async function resolveProposal(
       result: 'Applied',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, applied, proposalCtx);
+    return proposalDetails(registry, proposalService, applied, proposalCtx);
   }
 
   throw new InvalidResolveActionError(action);
@@ -357,7 +646,7 @@ async function resolveNewServiceProposal(
       result: 'ApprovedForManualPublish',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
   if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
@@ -407,7 +696,7 @@ async function resolveNewServiceProposal(
     result: 'Applied',
     correlationId: proposal.correlationId,
   });
-  return proposalDetails(registry, applied, proposalCtx);
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
 }
 
 /**
@@ -444,7 +733,7 @@ async function resolveChannelProposal(
       ctx.actingUserId,
     );
     await record('ApprovedForManualPublish');
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
   if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
 
@@ -472,15 +761,26 @@ async function resolveChannelProposal(
     ctx.actingUserId,
   );
   await record('Applied');
-  return proposalDetails(registry, applied, proposalCtx);
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
 }
 
 export function isProposalQueueError(
   err: unknown,
-): err is ProposalNotFoundError | ProposalAlreadyResolvedError | InvalidResolveActionError {
+): err is
+  | ProposalNotFoundError
+  | ProposalAlreadyResolvedError
+  | InvalidResolveActionError
+  | InvalidCommentError
+  | InvalidReviewRequestError
+  | ReviewsPendingError
+  | NotARequestedReviewerError {
   return (
     err instanceof ProposalNotFoundError ||
     err instanceof ProposalAlreadyResolvedError ||
-    err instanceof InvalidResolveActionError
+    err instanceof InvalidResolveActionError ||
+    err instanceof InvalidCommentError ||
+    err instanceof InvalidReviewRequestError ||
+    err instanceof ReviewsPendingError ||
+    err instanceof NotARequestedReviewerError
   );
 }

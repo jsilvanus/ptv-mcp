@@ -91,7 +91,7 @@ describe('MCP HTTP transport', () => {
       .values({ id: tenantId, name: 'MCP Test Tenant', slug: `mcp-${tenantId}` });
     createdTenantIds.push(tenantId);
     await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role: 'reader' });
+      await tx.insert(memberships).values({ tenantId, userId, role: 'contributor' });
     });
 
     const token = await oauthService.issueAccessToken(
@@ -252,6 +252,58 @@ describe('MCP HTTP transport', () => {
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content[0]?.text).toContain('not_authorized');
     await client.close();
+  });
+
+  it('lets a user without an organisation read public PTV data but not propose', async () => {
+    const email = `mcp-${randomUUID()}@example.test`;
+    const { userId } = await authService.register(email, 'Public Reader', 'correct-password');
+    createdUserIds.push(userId);
+    const token = await oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      null,
+      'test',
+      'v11',
+      null,
+    );
+
+    const client = await connectedClient(token);
+    const search = await client.callTool({
+      name: 'ptv_search_services',
+      arguments: { query: 'service', pageSize: 1 },
+    });
+    expect(search.isError).not.toBe(true);
+
+    const propose = await client.callTool({
+      name: 'ptv_propose_changes',
+      arguments: { serviceId: randomUUID(), changes: { names: { fi: 'X' } } },
+    });
+    expect(propose.isError).toBe(true);
+    expect((propose.content as Array<{ text: string }>)[0]?.text).toContain(
+      'no organisation (public PTV data only)',
+    );
+    await client.close();
+  });
+
+  it('refuses a public (no organisation) authorization for v12 or with writes', async () => {
+    const base = {
+      clientId: 'urn:ptv-mcp:test-client',
+      redirectUri: 'https://example.test/cb',
+      codeChallenge: 'x',
+      scope: 'mcp',
+      environment: 'test' as const,
+    };
+    await expect(
+      oauthService.createAuthorizationCode(randomUUID(), { ...base, readApiVersion: 'v12' }),
+    ).rejects.toThrow('v11 read-only');
+    await expect(
+      oauthService.createAuthorizationCode(randomUUID(), {
+        ...base,
+        readApiVersion: 'v11',
+        writeApiVersion: 'v11',
+      }),
+    ).rejects.toThrow('v11 read-only');
   });
 
   it('lists get-by-id resource templates and reads one service resource', async () => {

@@ -14,12 +14,21 @@ declare module 'fastify' {
   }
 }
 
-/** Reader < Editor < Publisher < Tenant Admin, per docs/plan.md's role model. */
+/**
+ * Viewer < Contributor < Approver < Publisher < Tenant Admin
+ * (docs/roles-and-review-plan.md):
+ * - viewer: read the tenant's PTV data, drafts included
+ * - contributor: + view, comment on and create proposals
+ * - approver: + resolve proposals (approve + export, reject)
+ * - publisher: + approve + apply (write to PTV)
+ * - tenant_admin: + members, PTV credentials, tenant settings
+ */
 export const ROLE_RANK = {
-  reader: 0,
-  editor: 1,
-  publisher: 2,
-  tenant_admin: 3,
+  viewer: 0,
+  contributor: 1,
+  approver: 2,
+  publisher: 3,
+  tenant_admin: 4,
 } as const;
 
 export type MembershipRole = keyof typeof ROLE_RANK;

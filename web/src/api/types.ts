@@ -1,5 +1,5 @@
 /** Mirrors src/auth/rbac.ts's MembershipRole — kept in sync by hand since the web app has no shared package with the backend. */
-export type MembershipRole = 'reader' | 'editor' | 'publisher' | 'tenant_admin';
+export type MembershipRole = 'viewer' | 'contributor' | 'approver' | 'publisher' | 'tenant_admin';
 
 export type PtvEnvironment = 'test' | 'production';
 
@@ -81,9 +81,68 @@ export interface ProposalSummary {
   updatedAt: string;
 }
 
+/** Mirrors src/proposals/proposalService.ts's ProposalComment. */
+export interface ProposalComment {
+  id: string;
+  userId: string;
+  userName: string;
+  body: string;
+  createdAt: string;
+}
+
+export type ReviewDecision = 'pending' | 'approved' | 'changes_requested';
+
+/** Mirrors src/proposals/proposalService.ts's ProposalReviewer. */
+export interface ProposalReviewer {
+  userId: string;
+  userName: string;
+  requestedByUserId: string;
+  decision: ReviewDecision;
+  comment: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+}
+
+/** Mirrors src/mcp/proposalQueue.ts's ReviewCandidate. */
+export interface ReviewCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  role: MembershipRole;
+}
+
+/** Mirrors src/ptv/domain.ts's CodeListEntry. */
+export interface CodeListEntry {
+  code?: string;
+  uri?: string;
+  names: Record<string, string>;
+}
+
+/**
+ * The parts of a proposed service or channel (src/ptv/domain.ts) the
+ * review page previews; channels have no summaries or classifications.
+ */
+export interface PreviewEntity {
+  names?: Record<string, string>;
+  summaries?: Record<string, string>;
+  descriptions?: Record<string, string>;
+  languages?: string[];
+  serviceClasses?: CodeListEntry[];
+  ontologyTerms?: CodeListEntry[];
+  targetGroups?: CodeListEntry[];
+  lifeEvents?: CodeListEntry[];
+  industrialClasses?: CodeListEntry[];
+}
+
 export interface ProposalDetails extends ProposalSummary {
+  /** Merged result after approval; null when it can no longer be read. */
+  proposed: PreviewEntity | null;
   diff: ServiceDiffEntry[];
   queuedDiff: ServiceDiffEntry[];
+  /** Oldest first. */
+  comments: ProposalComment[];
+  /** Required reviewers; approving waits until all have approved. */
+  reviewers: ProposalReviewer[];
 }
 
 /** Tenant's PTV v11 organisation API user (IN-API write credential); the password is never returned. */
@@ -95,4 +154,8 @@ export interface PtvV11ApiUserStatus {
   organisationId: string | null;
   supportsRead: boolean;
   supportsWrite: boolean;
+}
+
+export interface TenantSettings {
+  requireFourEyes: boolean;
 }

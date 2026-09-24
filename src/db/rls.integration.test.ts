@@ -37,13 +37,13 @@ describe('Row-Level Security', () => {
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
       await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantA}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
-      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantA}, 'reader')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantA}, 'contributor')`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
       await tx`INSERT INTO audit_entries (tenant_id, correlation_id, action, resource_type, result) VALUES (${tenantB}, ${randomUUID()}, 'Test', 'Service', 'Success')`;
-      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantB}, 'editor')`;
-      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userB}, ${tenantB}, 'reader')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userA}, ${tenantB}, 'approver')`;
+      await tx`INSERT INTO memberships (user_id, tenant_id, role) VALUES (${userB}, ${tenantB}, 'contributor')`;
     });
     await admin.begin(async (tx) => {
       await tx`SELECT set_config('app.current_user_id', ${userA}, true)`;
@@ -134,5 +134,63 @@ describe('Row-Level Security', () => {
       return tx`SELECT user_id FROM memberships WHERE tenant_id = ${tenantB} ORDER BY user_id`;
     });
     expect(rows.map((r) => r.user_id).sort()).toEqual([userA, userB].sort());
+  });
+
+  it('scopes proposal_comments by tenant, and fails closed without context', async () => {
+    const proposalId = randomUUID();
+    await admin.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+      await tx`INSERT INTO proposals (id, tenant_id, service_id, environment, proposed_by_user_id, changes, queued_diff, correlation_id) VALUES (${proposalId}, ${tenantA}, 's', 'test', ${userA}, '{}', '[]', ${randomUUID()})`;
+      await tx`INSERT INTO proposal_comments (tenant_id, proposal_id, user_id, body) VALUES (${tenantA}, ${proposalId}, ${userA}, 'Tenant A comment')`;
+    });
+    try {
+      const withoutContext =
+        await asApp`SELECT body FROM proposal_comments WHERE proposal_id = ${proposalId}`;
+      const asTenantB = await asApp.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
+        return tx`SELECT body FROM proposal_comments WHERE proposal_id = ${proposalId}`;
+      });
+      const asTenantA = await asApp.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+        return tx`SELECT body FROM proposal_comments WHERE proposal_id = ${proposalId}`;
+      });
+      expect(withoutContext).toHaveLength(0);
+      expect(asTenantB).toHaveLength(0);
+      expect(asTenantA.map((row) => row.body)).toEqual(['Tenant A comment']);
+    } finally {
+      await admin.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+        await tx`DELETE FROM proposals WHERE id = ${proposalId}`;
+      });
+    }
+  });
+
+  it('scopes proposal_reviewers by tenant, and fails closed without context', async () => {
+    const proposalId = randomUUID();
+    await admin.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+      await tx`INSERT INTO proposals (id, tenant_id, service_id, environment, proposed_by_user_id, changes, queued_diff, correlation_id) VALUES (${proposalId}, ${tenantA}, 's', 'test', ${userA}, '{}', '[]', ${randomUUID()})`;
+      await tx`INSERT INTO proposal_reviewers (tenant_id, proposal_id, user_id, requested_by_user_id) VALUES (${tenantA}, ${proposalId}, ${userB}, ${userA})`;
+    });
+    try {
+      const withoutContext =
+        await asApp`SELECT user_id FROM proposal_reviewers WHERE proposal_id = ${proposalId}`;
+      const asTenantB = await asApp.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
+        return tx`SELECT user_id FROM proposal_reviewers WHERE proposal_id = ${proposalId}`;
+      });
+      const asTenantA = await asApp.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+        return tx`SELECT user_id, decision FROM proposal_reviewers WHERE proposal_id = ${proposalId}`;
+      });
+      expect(withoutContext).toHaveLength(0);
+      expect(asTenantB).toHaveLength(0);
+      expect(asTenantA).toEqual([{ user_id: userB, decision: 'pending' }]);
+    } finally {
+      await admin.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+        await tx`DELETE FROM proposals WHERE id = ${proposalId}`;
+      });
+    }
   });
 });

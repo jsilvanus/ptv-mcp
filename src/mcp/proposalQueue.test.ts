@@ -4,17 +4,23 @@ import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import type { Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import {
+  commentOnProposal,
   getProposal,
   listProposals,
   queueProposal,
+  requestReview,
   resolveProposal,
+  signOffProposal,
+  type MemberLister,
   type ResolveProposalAction,
 } from './proposalQueue.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import type {
-  ProposalRecord,
-  ProposalService,
-  ProposalStatus,
+import {
+  NotARequestedReviewerError,
+  type ProposalRecord,
+  type ProposalReviewer,
+  type ProposalService,
+  type ProposalStatus,
 } from '../proposals/proposalService.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
@@ -23,9 +29,16 @@ import { queueChannelProposal } from './channelProposal.js';
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
 const writeCtx = { ...ctx, writeApiVersion: 'v11' };
-const readerResolver: MembershipRoleResolver = async () => 'reader';
-const editorResolver: MembershipRoleResolver = async () => 'editor';
+const readerResolver: MembershipRoleResolver = async () => 'contributor';
+const editorResolver: MembershipRoleResolver = async () => 'approver';
 const publisherResolver: MembershipRoleResolver = async () => 'publisher';
+const noFourEyes = async () => false;
+const fourEyes = async () => true;
+const members: MemberLister = async () => [
+  { userId: 'user-1', name: 'Proposer', email: 'proposer@example.test', role: 'contributor' },
+  { userId: 'user-2', name: 'Kirkkoherra', email: 'Vicar@example.test', role: 'approver' },
+  { userId: 'user-3', name: 'Viewer', email: 'viewer@example.test', role: 'viewer' },
+];
 
 const service: Service = {
   id: 'svc-1',
@@ -68,6 +81,15 @@ function buildRegistry(supportsWrite = true): PtvAdapterRegistry {
 
 function fakeProposalService() {
   const rows: ProposalRecord[] = [];
+  const comments: Array<{
+    id: string;
+    proposalId: string;
+    userId: string;
+    userName: string;
+    body: string;
+    createdAt: Date;
+  }> = [];
+  const reviewers: Array<ProposalReviewer & { proposalId: string }> = [];
   const api = {
     createPending: vi.fn(async (input) => {
       const row: ProposalRecord = {
@@ -91,6 +113,68 @@ function fakeProposalService() {
     }),
     listForTenant: vi.fn(async (_tenantId: string, options?: { status?: ProposalStatus }) =>
       rows.filter((row) => (options?.status ? row.status === options.status : true)),
+    ),
+    addComment: vi.fn(
+      async (_tenantId: string, proposalId: string, userId: string, body: string) => {
+        const comment = {
+          id: `comment-${comments.length + 1}`,
+          proposalId,
+          userId,
+          userName: `User ${userId}`,
+          body,
+          createdAt: new Date(),
+        };
+        comments.push(comment);
+        return comment;
+      },
+    ),
+    listComments: vi.fn(async (_tenantId: string, proposalId: string) =>
+      comments.filter((comment) => comment.proposalId === proposalId),
+    ),
+    addReviewers: vi.fn(
+      async (_tenantId: string, proposalId: string, userIds: string[], requestedBy: string) => {
+        for (const userId of userIds) {
+          if (!reviewers.some((r) => r.proposalId === proposalId && r.userId === userId)) {
+            reviewers.push({
+              proposalId,
+              userId,
+              userName: `User ${userId}`,
+              requestedByUserId: requestedBy,
+              decision: 'pending',
+              comment: null,
+              requestedAt: new Date(),
+              decidedAt: null,
+            });
+          }
+        }
+        return reviewers.filter((r) => r.proposalId === proposalId);
+      },
+    ),
+    listReviewers: vi.fn(async (_tenantId: string, proposalId: string) =>
+      reviewers.filter((r) => r.proposalId === proposalId),
+    ),
+    recordDecision: vi.fn(
+      async (
+        _tenantId: string,
+        proposalId: string,
+        userId: string,
+        decision: 'approved' | 'changes_requested',
+        comment: string | null,
+      ) => {
+        const reviewer = reviewers.find((r) => r.proposalId === proposalId && r.userId === userId);
+        if (!reviewer) throw new NotARequestedReviewerError(proposalId);
+        Object.assign(reviewer, { decision, comment, decidedAt: new Date() });
+        return reviewers.filter((r) => r.proposalId === proposalId);
+      },
+    ),
+    listAwaitingReview: vi.fn(async (_tenantId: string, userId: string) =>
+      rows.filter(
+        (row) =>
+          row.status === 'pending' &&
+          reviewers.some(
+            (r) => r.proposalId === row.id && r.userId === userId && r.decision === 'pending',
+          ),
+      ),
     ),
     getById: vi.fn(async (_tenantId: string, proposalId: string) => {
       const row = rows.find((entry) => entry.id === proposalId);
@@ -157,6 +241,7 @@ describe('proposalQueue', () => {
       ctx,
       queued.proposalId,
       'reject' as ResolveProposalAction,
+      noFourEyes,
     );
     expect(resolved.status).toBe('rejected');
   });
@@ -179,10 +264,156 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       ),
     ).rejects.toMatchObject({ reason: 'not_authorized' });
 
     expect(rows[0]?.status).toBe('pending');
+  });
+
+  it('refuses approving your own proposal under four-eyes, but lets you reject it', async () => {
+    const registry = buildRegistry(true);
+    const audit = fakeAuditService();
+    const { rows, api } = fakeProposalService();
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Oma ehdotus' },
+    });
+
+    for (const action of ['approve_and_apply', 'approve_and_export'] as const) {
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          action,
+          fourEyes,
+        ),
+      ).rejects.toThrow(/Four-eyes/);
+    }
+    expect(rows[0]?.status).toBe('pending');
+
+    const otherUser = { ...writeCtx, actingUserId: 'user-2' };
+    const exported = await resolveProposal(
+      editorResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      otherUser,
+      queued.proposalId,
+      'approve_and_export',
+      fourEyes,
+    );
+    expect(exported.status).not.toBe('pending');
+
+    const second = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Peruttava' },
+    });
+    const rejected = await resolveProposal(
+      editorResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      ctx,
+      second.proposalId,
+      'reject',
+      fourEyes,
+    );
+    expect(rejected.status).toBe('rejected');
+  });
+
+  it('holds approval until every required reviewer approves, and lists it as waiting', async () => {
+    const registry = buildRegistry(true);
+    const audit = fakeAuditService();
+    const { rows, api } = fakeProposalService();
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Tarkistettava' },
+    });
+
+    // The proposer names the vicar by email (case-insensitive).
+    const requested = await requestReview(
+      readerResolver,
+      members,
+      api,
+      audit,
+      ctx,
+      queued.proposalId,
+      ['vicar@example.test'],
+    );
+    expect(requested).toEqual([expect.objectContaining({ userId: 'user-2', decision: 'pending' })]);
+    await expect(
+      requestReview(readerResolver, members, api, audit, ctx, queued.proposalId, [
+        'viewer@example.test',
+      ]),
+    ).rejects.toThrow(/not a Contributor.*Kirkkoherra <Vicar@example.test>/);
+    await expect(
+      requestReview(readerResolver, members, api, audit, ctx, queued.proposalId, ['user-1']),
+    ).rejects.toThrow(/proposer cannot review/);
+
+    const vicarCtx = { ...writeCtx, actingUserId: 'user-2' };
+    const waiting = await listProposals(editorResolver, api, vicarCtx, undefined, true);
+    expect(waiting.map((p) => p.id)).toEqual([queued.proposalId]);
+
+    const publisherCtx = { ...writeCtx, actingUserId: 'user-4' };
+    const approve = () =>
+      resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        publisherCtx,
+        queued.proposalId,
+        'approve_and_apply',
+        fourEyes,
+      );
+    await expect(approve()).rejects.toThrow(/Waiting for required reviewers: User user-2/);
+
+    await signOffProposal(
+      editorResolver,
+      api,
+      audit,
+      vicarCtx,
+      queued.proposalId,
+      'changes_requested',
+      'Lisää aukioloajat',
+    );
+    await expect(approve()).rejects.toThrow(/changes_requested/);
+    expect(await listProposals(editorResolver, api, vicarCtx, undefined, true)).toEqual([]);
+
+    await signOffProposal(editorResolver, api, audit, vicarCtx, queued.proposalId, 'approved');
+    const applied = await approve();
+    expect(applied.status).toBe('applied');
+    expect(applied.reviewers).toEqual([
+      expect.objectContaining({ userId: 'user-2', decision: 'approved' }),
+    ]);
+    expect(rows[0]?.status).toBe('applied');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'SignOffProposal', correlationId: queued.correlationId }),
+    );
+  });
+
+  it('refuses sign-off from a non-reviewer and review requests from other contributors', async () => {
+    const registry = buildRegistry(true);
+    const audit = fakeAuditService();
+    const { api } = fakeProposalService();
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Kenen tahansa' },
+    });
+    const otherContributor = { ...ctx, actingUserId: 'user-5' };
+    await expect(
+      signOffProposal(readerResolver, api, audit, otherContributor, queued.proposalId, 'approved'),
+    ).rejects.toBeInstanceOf(NotARequestedReviewerError);
+    await expect(
+      requestReview(readerResolver, members, api, audit, otherContributor, queued.proposalId, [
+        'vicar@example.test',
+      ]),
+    ).rejects.toThrow(/approver/);
   });
 
   it('allows publisher resolver to approve_and_apply', async () => {
@@ -202,9 +433,60 @@ describe('proposalQueue', () => {
       writeCtx,
       queued.proposalId,
       'approve_and_apply',
+      noFourEyes,
     );
     expect(resolved.status).toBe('applied');
     expect(rows[0]?.status).toBe('applied');
+  });
+
+  it('returns the applied proposal when the archived service can no longer be read', async () => {
+    const adapter = new InMemoryPtvAdapter({
+      services: [{ ...service }],
+      capabilities: {
+        apiVersion: 'v11',
+        environment: 'test',
+        credentialScope: 'user',
+        supportsRead: true,
+        supportsWrite: true,
+        supportsDraftRead: false,
+      },
+    });
+    // PTV answers 404 for an archived service, public and active reads alike.
+    let archived = false;
+    const getService = adapter.getService.bind(adapter);
+    vi.spyOn(adapter, 'getService').mockImplementation(async (id) =>
+      archived ? null : getService(id),
+    );
+    const applyServiceChange = adapter.applyServiceChange.bind(adapter);
+    vi.spyOn(adapter, 'applyServiceChange').mockImplementation(async (proposal) => {
+      const result = await applyServiceChange(proposal);
+      archived = true;
+      return result;
+    });
+    const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+    const audit = fakeAuditService();
+    const { rows, api } = fakeProposalService();
+
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, 'svc-1', {
+      publishingStatus: 'Archived',
+    });
+    const resolved = await resolveProposal(
+      publisherResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      writeCtx,
+      queued.proposalId,
+      'approve_and_apply',
+      noFourEyes,
+    );
+
+    expect(resolved).toMatchObject({ status: 'applied', current: null, proposed: null, diff: [] });
+    expect(resolved.queuedDiff).toEqual(queued.diff);
+    expect(rows[0]?.status).toBe('applied');
+    const details = await getProposal(editorResolver, registry, api, audit, ctx, queued.proposalId);
+    expect(details.status).toBe('applied');
   });
 
   describe('service_create proposals', () => {
@@ -250,6 +532,7 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       );
       expect(resolved.status).toBe('applied');
       expect(resolved.serviceId).not.toBe('');
@@ -280,6 +563,7 @@ describe('proposalQueue', () => {
           writeCtx,
           queued.proposalId,
           'approve_and_apply',
+          noFourEyes,
         ),
       ).rejects.toThrow(/failed validation/);
       expect(rows[0]?.status).toBe('failed');
@@ -329,6 +613,7 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       );
       expect(resolved.status).toBe('applied');
       expect(resolved.diff).toEqual([]);
@@ -344,6 +629,55 @@ describe('proposalQueue', () => {
           channelType: 'WebPage',
         }),
       ).rejects.toThrow(/can't be changed/);
+    });
+  });
+
+  describe('comments', () => {
+    it('lets a contributor comment, shows comments on the proposal, and audits them', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'Kommentoitava' },
+      });
+
+      await commentOnProposal(
+        readerResolver,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+        '  Hyvä muutos  ',
+      );
+      const details = await getProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+      );
+
+      expect(details.comments.map((comment) => comment.body)).toEqual(['Hyvä muutos']);
+      expect(audit.recordCalls.find((entry) => entry.action === 'CommentProposal')).toMatchObject({
+        correlationId: queued.correlationId,
+        result: 'Commented',
+      });
+    });
+
+    it('refuses an empty comment and a viewer', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'X' },
+      });
+      await expect(
+        commentOnProposal(readerResolver, api, audit, ctx, queued.proposalId, '   '),
+      ).rejects.toThrow('Comment is empty');
+      await expect(
+        commentOnProposal(async () => 'viewer', api, audit, ctx, queued.proposalId, 'Hei'),
+      ).rejects.toThrow("requires at least 'contributor' role");
     });
   });
 });

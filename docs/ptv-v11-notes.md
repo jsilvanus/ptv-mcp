@@ -157,6 +157,32 @@ descriptions, service hours, contact details). Removing everything is
 `deleteAllChannelRelations: true` with an empty list. Adding and removing
 were both verified.
 
+### Service POST (`POST /api/v11/Service`)
+
+- The service area can't be wider than the organisation's. With
+  `areaType: "Nationwide"` for Testiorganisaatio 15 (`LimitedType`,
+  wellbeing services county 16), PTV answers 400 *"Areas: Area
+  information type Nationwide is too wide."* The domain model carries no
+  area, so the adapter copies the organisation's `areaType` and `areas`
+  (as `{type, areaCodes}` per type) into the POST (#54).
+- Verified after #54: the new service is readable as Draft through
+  `Service/active` (the public read 404s until it is published), then
+  published and archived with the usual PUT. The public read shows the
+  copied area (`LimitedType`, WellbeingServiceCounties 16).
+- **An archived (`Deleted`) service 404s** on the public and `active`
+  reads alike. So anything that reads a service after archiving it must
+  treat "not found" as expected; the proposal response did not, and
+  failed after a successful archive (#56).
+
+### Channel PUT (`PUT /api/v11/ServiceChannel/{type}/{id}`)
+
+Verified for EChannel, Phone, ServiceLocation and WebPage (organisation 15
+has no PrintableForm). Changing only the `fi` Description and restoring it
+left every other field identical on the public read: Summaries, other
+languages, service hours, addresses, URLs, phone numbers. One quirk: PTV
+may return `serviceHours` in a different order after a save; the content
+is unchanged.
+
 ### Errors
 
 A rejected write is a 400 whose body maps fields to messages

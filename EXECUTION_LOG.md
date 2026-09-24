@@ -1450,6 +1450,75 @@ verification: the connector's tool list predates them, so it has to be
 reconnected.
 
 
+## 2026-09-24 — v11 channel updates and service creation verified live
+
+Through the reconnected PTV-MCP connector (test environment, organisation
+15):
+
+- Channel updates (`ptv_propose_channel_changes` → `approve_and_apply`)
+  work for EChannel, Phone, ServiceLocation and WebPage. Each `fi`
+  description got " (PTV-MCP testi)" and was restored. Compared with a
+  public-API snapshot, only `modified` differs afterwards; Summaries,
+  other languages, hours and addresses survived. PrintableForm is still
+  unverified (organisation 15 has none).
+- Service creation failed: PTV refused the hard-coded
+  `areaType: "Nationwide"` for a `LimitedType` organisation. #54 copies the
+  organisation's area into the POST, and the `ptv_propose_new_service`
+  description now says localized fields are keyed by language (an array
+  shape only failed validation on `names`).
+- After #54 was deployed, create → publish → archive passed live with
+  the test service *PTV-MCP testipalvelu (poistetaan)*
+  (`4678d0e0-ca3f-476c-8dfa-1630ebcfe378`, now archived). The proposal
+  recorded the new id, and the draft read back through `Service/active`.
+- The archive worked in PTV, but the tool call failed with "Service not
+  found": the proposal response re-diffs against the live service, which
+  404s once archived. #56 returns the stored proposal instead
+  (`current`/`proposed` null), for `ptv_get_proposal` too.
+- The first deploy attempt failed on the server's GitHub SSH key
+  (`Permission denied (publickey)`); fixed on the server, outside the repo.
+
+
+## 2026-09-24 — Roles step 4: four-eyes
+
+- `tenants.require_four_eyes` (migration 0020, default true, so every
+  existing tenant gets it on). `resolveProposal` refuses
+  `approve_and_export`/`approve_and_apply` when the resolver created the
+  proposal; reject stays allowed so a proposer can withdraw.
+- The direct `ptv_export_for_manual_publish`/`ptv_apply_changes` tools are
+  refused while four-eyes is on: they would let one person both write and
+  approve. Phase 4/6 sync tests create their tenant with it off; a new
+  Phase 6 test covers the refusal.
+- `GET/PUT /tenants/:id/settings` (Viewer reads, Tenant Admin writes,
+  audited as `UpdateTenantSettings`); checkbox on the members page.
+- Live testing with one account needs four-eyes switched off for that
+  tenant first, or a second account to resolve.
+
+## 2026-09-24 — Roles step 5: required reviewers
+
+- `proposal_reviewers` (migration 0021, RLS + grant, `review_decision`
+  enum). `resolveProposal` refuses `approve_*` until every reviewer has
+  `approved` (`ReviewsPendingError`, REST 409); reject stays allowed.
+- MCP: `ptv_request_review` names reviewers by email or user id (an agent
+  does not know UUIDs; without reviewers it lists the possible ones),
+  `ptv_sign_off_proposal` (approved / changes_requested + comment),
+  `ptv_list_proposals` `waitingForMe`. Only the proposer or an Approver+
+  may add reviewers; reviewers must be Contributor+ and not the proposer.
+- Web: reviewers panel with Hyväksyn / Pyydän muutoksia buttons and a
+  "waiting for my review" filter. The SPA reads its own user id from the
+  access token's `sub` to decide which buttons to show; the server still
+  checks everything.
+
+## 2026-09-24 — Roles step 6: readable diff and preview
+
+- `diffService` copies names of classifications the service already has
+  onto proposed entries given by uri or code only. New entries keep their
+  bare code: v11 has no standalone classification code lists
+  (`listCodes` refuses them), so there is nothing to look them up from.
+- Web: Finnish field labels (`Nimi (suomi)`), classification changes as
+  +/− lists, and a per-language "Preview after approval" from the
+  proposal's `proposed` (updates, new services and channels).
+- This completes docs/roles-and-review-plan.md steps 1–6.
+
 ## 2026-09-24 — Guides, skills and AI-compliance rules served over MCP
 
 The DVV content guidelines (kehittajille.suomi.fi, "Sisällön tuottaminen

@@ -6,7 +6,12 @@ import {
   type TenantService,
   UserNotFoundError,
 } from '../tenants/tenantService.js';
-import { createAuthenticate, createRequireRole, type MembershipRole } from '../auth/rbac.js';
+import {
+  createAuthenticate,
+  createRequireRole,
+  ROLE_RANK,
+  type MembershipRole,
+} from '../auth/rbac.js';
 
 export interface TenantRoutesOptions {
   tenantService: TenantService;
@@ -24,6 +29,10 @@ interface AddMemberBody {
   role: MembershipRole;
 }
 
+interface UpdateSettingsBody {
+  requireFourEyes?: unknown;
+}
+
 interface UpdateMemberRoleBody {
   role: MembershipRole;
 }
@@ -35,6 +44,7 @@ export async function tenantRoutes(
   const { tenantService, db } = options;
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireTenantAdmin = createRequireRole(db, 'tenant_admin');
+  const requireViewer = createRequireRole(db, 'viewer');
 
   app.post<{ Body: CreateTenantBody }>(
     '/tenants',
@@ -78,6 +88,7 @@ export async function tenantRoutes(
       if (!email || !role) {
         return reply.badRequest('email and role are required');
       }
+      if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
       try {
         await tenantService.addMember(tenantId, email, role, request.userId!);
         return reply.code(204).send();
@@ -99,6 +110,7 @@ export async function tenantRoutes(
       if (!role) {
         return reply.badRequest('role is required');
       }
+      if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
       try {
         await tenantService.updateMemberRole(tenantId, userId, role, request.userId!);
         return reply.code(204).send();
@@ -111,6 +123,30 @@ export async function tenantRoutes(
     },
   );
 
+  // Every member may read the settings (the proposal page shows whether
+  // four-eyes applies); only a Tenant Admin (Pääkäyttäjä) changes them.
+  app.get(
+    '/tenants/:tenantId/settings',
+    { preHandler: [authenticate, requireViewer] },
+    async (request) => {
+      const { tenantId } = request.params as { tenantId: string };
+      return tenantService.getSettings(tenantId);
+    },
+  );
+
+  app.put<{ Body: UpdateSettingsBody }>(
+    '/tenants/:tenantId/settings',
+    { preHandler: [authenticate, requireTenantAdmin] },
+    async (request, reply) => {
+      const { tenantId } = request.params as { tenantId: string };
+      const requireFourEyes = request.body?.requireFourEyes;
+      if (typeof requireFourEyes !== 'boolean') {
+        return reply.badRequest('requireFourEyes must be a boolean');
+      }
+      return tenantService.updateSettings(tenantId, { requireFourEyes }, request.userId!);
+    },
+  );
+
   app.delete(
     '/tenants/:tenantId/members/:userId',
     { preHandler: [authenticate, requireTenantAdmin] },
@@ -120,4 +156,10 @@ export async function tenantRoutes(
       return reply.code(204).send();
     },
   );
+}
+
+const INVALID_ROLE_MESSAGE = `role must be one of: ${Object.keys(ROLE_RANK).join(', ')}`;
+
+function isMembershipRole(value: unknown): value is MembershipRole {
+  return typeof value === 'string' && Object.hasOwn(ROLE_RANK, value);
 }

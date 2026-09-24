@@ -13,13 +13,14 @@ import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
-import { NotAuthorizedError } from './authorization.js';
+import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
 import type { ProposalService } from '../proposals/proposalService.js';
+import { TenantService, tenantRequiresFourEyes } from '../tenants/tenantService.js';
 import * as searchTools from './searchTools.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
-import type { ToolContext } from './toolContext.js';
+import type { ReadToolContext, ToolContext } from './toolContext.js';
 import { registerGuides, SERVER_INSTRUCTIONS } from './guides.js';
 import {
   getProposal,
@@ -27,6 +28,11 @@ import {
   listProposals,
   queueProposal,
   resolveProposal,
+  commentOnProposal,
+  MAX_COMMENT_LENGTH,
+  listReviewCandidates,
+  requestReview,
+  signOffProposal,
 } from './proposalQueue.js';
 
 export interface McpServerDeps {
@@ -74,6 +80,7 @@ function describeError(err: unknown): string {
     err instanceof ServiceNotFoundError ||
     err instanceof ValidationFailedError ||
     err instanceof NotAuthorizedError ||
+    err instanceof FourEyesError ||
     isProposalQueueError(err)
   ) {
     return err.message;
@@ -124,16 +131,25 @@ function withOAuthSecurity<T extends object>(
 }
 
 function toolContext(extra: Extra): ToolContext {
+  const { tenantId, ...rest } = readToolContext(extra);
+  if (!tenantId) {
+    throw new Error(
+      'This MCP connection has no organisation (public PTV data only). Proposals and writes need an organisation: reconnect and choose one.',
+    );
+  }
+  return { tenantId, ...rest };
+}
+
+/**
+ * Read tools also work on a public connection without an organisation:
+ * then the tenant is absent and only PTV v11's published data is read.
+ */
+function readToolContext(extra: Extra): ReadToolContext {
   const userId = actingUserId(extra);
   const activeTenantId = extra.authInfo?.extra?.tenantId;
   const environment = extra.authInfo?.extra?.environment;
   const readApiVersion = extra.authInfo?.extra?.readApiVersion;
   const writeApiVersion = extra.authInfo?.extra?.writeApiVersion;
-  if (typeof activeTenantId !== 'string' || activeTenantId === '') {
-    throw new Error(
-      'No active tenant for this MCP connection; reconnect and select an organisation',
-    );
-  }
   if (environment !== 'test' && environment !== 'production') {
     throw new Error(
       'No active PTV environment for this MCP connection; reconnect and select a connection',
@@ -145,7 +161,9 @@ function toolContext(extra: Extra): ToolContext {
     );
   }
   return {
-    tenantId: activeTenantId,
+    ...(typeof activeTenantId === 'string' && activeTenantId !== ''
+      ? { tenantId: activeTenantId }
+      : {}),
     environment,
     readApiVersion,
     ...(typeof writeApiVersion === 'string' ? { writeApiVersion } : {}),
@@ -213,6 +231,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const { db, registry, auditService, validator, proposalService } = deps;
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(db, tenantId, userId);
+  const requireFourEyes = (tenantId: string) => tenantRequiresFourEyes(db, tenantId);
+  const tenantService = new TenantService(db, auditService);
+  const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
   const server = new McpServer(
     { name: 'ptv-mcp', version: '0.1.0' },
     { instructions: SERVER_INSTRUCTIONS },
@@ -229,7 +250,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchServices(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchServices(registry, readToolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -246,7 +267,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getService(registry, toolContext(extra), args.id));
+        return textResult(await searchTools.getService(registry, readToolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -263,7 +284,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchChannels(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchChannels(registry, readToolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -280,7 +301,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getChannel(registry, toolContext(extra), args.id));
+        return textResult(await searchTools.getChannel(registry, readToolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -305,7 +326,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchOrganisations(registry, toolContext(extra), {
+          await searchTools.searchOrganisations(registry, readToolContext(extra), {
             ...(args.query !== undefined ? { query: args.query } : {}),
             ...(args.page !== undefined ? { page: args.page } : {}),
             ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
@@ -332,7 +353,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.findOrganisationAndChildren(registry, toolContext(extra), args.query),
+          await searchTools.findOrganisationAndChildren(
+            registry,
+            readToolContext(extra),
+            args.query,
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -349,7 +374,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getOrganisation(registry, toolContext(extra), args.id));
+        return textResult(
+          await searchTools.getOrganisation(registry, readToolContext(extra), args.id),
+        );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -366,7 +393,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getOrganisationHierarchy(registry, toolContext(extra), args.id),
+          await searchTools.getOrganisationHierarchy(registry, readToolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -386,7 +413,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchServiceCollections(
             registry,
-            toolContext(extra),
+            readToolContext(extra),
             searchParams(args),
           ),
         );
@@ -408,7 +435,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchGeneralDescriptions(
             registry,
-            toolContext(extra),
+            readToolContext(extra),
             searchParams(args),
           ),
         );
@@ -428,7 +455,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchConnections(registry, toolContext(extra), args.id),
+          await searchTools.searchConnections(registry, readToolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -454,7 +481,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchOntologyTerms(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchOntologyTerms(
+            registry,
+            readToolContext(extra),
+            searchParams(args),
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -473,7 +504,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.listCodes(registry, toolContext(extra), args.codeListName),
+          await searchTools.listCodes(registry, readToolContext(extra), args.codeListName),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -522,7 +553,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_new_service',
     withOAuthSecurity({
       description:
-        'Queue a proposal to create a new PTV service. Nothing is written until an Editor+ resolves it with approve_and_apply (which also needs Publisher-level write access); PTV then assigns the id, recorded on the proposal. `service` is a Service without id: organizationId, serviceType (default Service), publishingStatus (Draft by default, or Published), names, summaries, descriptions (each keyed by language, e.g. {"fi": "..."}), languages, serviceClasses (at least one subclass, e.g. P25.6), ontologyTerms (KOKO URIs), targetGroups, optionally lifeEvents, industrialClasses (needs target groups KR2 + KR2.x), generalDescriptionId, serviceChannelIds. Classification entries need a `uri` (or `code` for industrial classes). The service area is copied from the organisation. Returns the validation result right away.',
+        'Queue a proposal to create a new PTV service. Needs the Contributor role (Ehdottaja). Nothing is written until an Approver+ resolves it with approve_and_apply (which also needs Publisher-level write access); PTV then assigns the id, recorded on the proposal. `service` is a Service without id: organizationId, serviceType (default Service), publishingStatus (Draft by default, or Published), names, summaries, descriptions (each keyed by language, e.g. {"fi": "..."}), languages, serviceClasses (at least one subclass, e.g. P25.6), ontologyTerms (KOKO URIs), targetGroups, optionally lifeEvents, industrialClasses (needs target groups KR2 + KR2.x), generalDescriptionId, serviceChannelIds. Classification entries need a `uri` (or `code` for industrial classes). The service area is copied from the organisation. Returns the validation result right away.',
       inputSchema: {
         service: z
           .record(z.string(), z.unknown())
@@ -553,7 +584,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_channel_changes',
     withOAuthSecurity({
       description:
-        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Never writes anything; an Editor+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
+        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
       inputSchema: {
         channelId: z.string(),
         changes: z
@@ -588,15 +619,22 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_proposals',
     withOAuthSecurity({
       description:
-        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). Requires Editor+ role.',
+        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). waitingForMe: true lists only pending proposals waiting for your sign-off as a required reviewer. Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
+        waitingForMe: z.boolean().optional(),
       },
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await listProposals(resolveRole, proposalService, toolContext(extra), args.status),
+          await listProposals(
+            resolveRole,
+            proposalService,
+            toolContext(extra),
+            args.status,
+            args.waitingForMe ?? false,
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -608,7 +646,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_get_proposal',
     withOAuthSecurity({
       description:
-        'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
+        'Read one proposal and re-diff it against the current service state for review. Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
         proposalId: z.string(),
       },
@@ -632,10 +670,103 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
+    'ptv_comment_proposal',
+    withOAuthSecurity({
+      description:
+        'Add a comment to a proposal, e.g. a review note or the reason for a change. Requires the Contributor role (Ehdottaja) or above. Comments show up in ptv_get_proposal and the web review page.',
+      inputSchema: {
+        proposalId: z.string(),
+        comment: z.string().min(1).max(MAX_COMMENT_LENGTH),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await commentOnProposal(
+            resolveRole,
+            proposalService,
+            auditService,
+            toolContext(extra),
+            args.proposalId,
+            args.comment,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_request_review',
+    withOAuthSecurity({
+      description:
+        'Name required reviewers (emails or user ids of Contributor+ members) for a pending proposal. Approving then waits until every reviewer has signed off with ptv_sign_off_proposal. The proposer or an Approver (Hyväksyjä) may ask. Without reviewers, lists the possible ones.',
+      inputSchema: {
+        proposalId: z.string(),
+        reviewers: z.array(z.string().min(1)).max(20).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        const ctx = toolContext(extra);
+        if (!args.reviewers || args.reviewers.length === 0) {
+          return textResult({
+            possibleReviewers: await listReviewCandidates(resolveRole, listMembers, ctx),
+          });
+        }
+        return textResult(
+          await requestReview(
+            resolveRole,
+            listMembers,
+            proposalService,
+            auditService,
+            ctx,
+            args.proposalId,
+            args.reviewers,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_sign_off_proposal',
+    withOAuthSecurity({
+      description:
+        'Sign off a pending proposal you were asked to review: approved (Hyväksyn) or changes_requested (Pyydän muutoksia), with an optional comment. You can change your sign-off until the proposal is resolved.',
+      inputSchema: {
+        proposalId: z.string(),
+        decision: z.enum(['approved', 'changes_requested']),
+        comment: z.string().max(MAX_COMMENT_LENGTH).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await signOffProposal(
+            resolveRole,
+            proposalService,
+            auditService,
+            toolContext(extra),
+            args.proposalId,
+            args.decision,
+            args.comment,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
     'ptv_resolve_proposal',
     withOAuthSecurity({
       description:
-        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
+        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it. Approving also waits for every required reviewer to sign off.',
       inputSchema: {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
@@ -653,6 +784,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             toolContext(extra),
             args.proposalId,
             args.action,
+            requireFourEyes,
           ),
         );
       } catch (err) {
@@ -692,7 +824,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_export_for_manual_publish',
     withOAuthSecurity({
       description:
-        "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish.",
+        "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish. Refused when the organisation requires four-eyes review (the default): use ptv_propose_changes instead.",
       inputSchema: {
         serviceId: z.string(),
         changes: changesSchema,
@@ -701,12 +833,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
+        const ctx = toolContext(extra);
+        await requireNoFourEyes(requireFourEyes, ctx.tenantId);
         return textResult(
           await exportForManualPublish(
             resolveRole,
             registry,
             auditService,
-            toolContext(extra),
+            ctx,
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
@@ -722,7 +856,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_apply_changes',
     withOAuthSecurity({
       description:
-        'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection.',
+        'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection. Refused when the organisation requires four-eyes review (the default): use ptv_propose_changes instead.',
       inputSchema: {
         serviceId: z.string(),
         changes: changesSchema,
@@ -731,13 +865,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
+        const ctx = toolContext(extra);
+        await requireNoFourEyes(requireFourEyes, ctx.tenantId);
         return textResult(
           await applyChanges(
             resolveRole,
             registry,
             auditService,
             validator,
-            toolContext(extra),
+            ctx,
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,

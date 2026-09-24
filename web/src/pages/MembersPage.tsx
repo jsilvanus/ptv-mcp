@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { apiFetch, ApiError } from '../api/client';
 import type { Member, MembershipRole } from '../api/types';
-
-const ROLES: MembershipRole[] = ['reader', 'editor', 'publisher', 'tenant_admin'];
+import { ROLE_LABELS, ROLES } from '../auth/roles';
+import { TenantSettingsPanel } from './TenantSettingsPanel';
 
 export function MembersPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
@@ -13,7 +13,7 @@ export function MembersPage() {
   const [forbidden, setForbidden] = useState(false);
 
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<MembershipRole>('reader');
+  const [role, setRole] = useState<MembershipRole>('viewer');
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -54,7 +54,7 @@ export function MembersPage() {
         body: JSON.stringify({ email, role }),
       });
       setEmail('');
-      setRole('reader');
+      setRole('viewer');
       await loadMembers();
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
@@ -69,7 +69,11 @@ export function MembersPage() {
 
   async function handleRoleChange(member: Member, newRole: MembershipRole): Promise<void> {
     if (!tenantId || newRole === member.role) return;
-    if (!window.confirm(`Change ${member.name}'s role from ${member.role} to ${newRole}?`)) {
+    if (
+      !window.confirm(
+        `Change ${member.name}'s role from ${ROLE_LABELS[member.role]} to ${ROLE_LABELS[newRole]}?`,
+      )
+    ) {
       return;
     }
     setRowError(null);
@@ -146,7 +150,7 @@ export function MembersPage() {
                   >
                     {ROLES.map((r) => (
                       <option key={r} value={r}>
-                        {r}
+                        {ROLE_LABELS[r]}
                       </option>
                     ))}
                   </select>
@@ -186,7 +190,7 @@ export function MembersPage() {
         <select value={role} onChange={(e) => setRole(e.target.value as MembershipRole)}>
           {ROLES.map((r) => (
             <option key={r} value={r}>
-              {r}
+              {ROLE_LABELS[r]}
             </option>
           ))}
         </select>
@@ -195,6 +199,8 @@ export function MembersPage() {
         </button>
       </form>
       {addError && <p className="error">{addError}</p>}
+
+      {tenantId && <TenantSettingsPanel tenantId={tenantId} />}
     </div>
   );
 }

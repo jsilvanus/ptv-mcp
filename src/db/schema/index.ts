@@ -12,3 +12,5 @@ export * from './proposal.js';
 export * from './refreshToken.js';
 export * from './emailVerificationToken.js';
 export * from './passwordResetToken.js';
+export * from './proposalComment.js';
+export * from './proposalReviewer.js';

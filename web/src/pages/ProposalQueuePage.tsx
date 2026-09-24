@@ -10,13 +10,20 @@ import type {
 } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 import { DiffView } from './DiffView';
+import { ProposalComments } from './ProposalComments';
+import { ProposalReviewers } from './ProposalReviewers';
+import { ProposalPreview } from './ProposalPreview';
+import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
+/** Filter value for pending proposals waiting for the user's own sign-off. */
+const WAITING_FOR_ME = 'waiting';
+type StatusFilter = ProposalStatus | typeof WAITING_FOR_ME;
 
 export function ProposalQueuePage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const { currentTenant } = useTenants();
-  const [status, setStatus] = useState<ProposalStatus>('pending');
+  const [status, setStatus] = useState<StatusFilter>('pending');
   const [items, setItems] = useState<ProposalSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<ProposalDetails | null>(null);
@@ -31,10 +38,10 @@ export function ProposalQueuePage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const canReview = useMemo(() => {
-    if (!currentTenant) return false;
-    return ['editor', 'publisher', 'tenant_admin'].includes(currentTenant.role);
-  }, [currentTenant]);
+  // Contributors view proposals; resolving needs Approver, applying Publisher.
+  const canReview = useMemo(() => roleAtLeast(currentTenant?.role, 'contributor'), [currentTenant]);
+  const canResolve = roleAtLeast(currentTenant?.role, 'approver');
+  const canApply = roleAtLeast(currentTenant?.role, 'publisher');
 
   const loadList = useCallback(async () => {
     if (!tenantId || !canReview) return;
@@ -43,7 +50,9 @@ export function ProposalQueuePage() {
     setForbidden(false);
     try {
       const list = await apiFetch<ProposalSummary[]>(
-        `/tenants/${tenantId}/proposals?status=${status}`,
+        status === WAITING_FOR_ME
+          ? `/tenants/${tenantId}/proposals?waitingForMe=true`
+          : `/tenants/${tenantId}/proposals?status=${status}`,
       );
       setItems(list);
       if (list.length === 0) {
@@ -142,8 +151,9 @@ export function ProposalQueuePage() {
       <select
         id="proposal-status"
         value={status}
-        onChange={(e) => setStatus(e.target.value as ProposalStatus)}
+        onChange={(e) => setStatus(e.target.value as StatusFilter)}
       >
+        <option value={WAITING_FOR_ME}>waiting for my review</option>
         {STATUSES.map((value) => (
           <option key={value} value={value}>
             {value}
@@ -159,7 +169,11 @@ export function ProposalQueuePage() {
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Proposals</h2>
             {items.length === 0 ? (
-              <p className="muted">No proposals with status "{status}".</p>
+              <p className="muted">
+                {status === WAITING_FOR_ME
+                  ? 'Nothing is waiting for your review.'
+                  : `No proposals with status "${status}".`}
+              </p>
             ) : (
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
                 {items.map((proposal) => (
@@ -196,7 +210,26 @@ export function ProposalQueuePage() {
                   <strong>Correlation:</strong> {selected.correlationId}
                 </p>
                 <DiffView diff={selected.diff} />
-                {selected.status === 'pending' && (
+                {selected.proposed && (
+                  <ProposalPreview key={selected.id} entity={selected.proposed} />
+                )}
+                {tenantId && (
+                  <ProposalReviewers
+                    tenantId={tenantId}
+                    proposal={selected}
+                    canResolve={canResolve}
+                    onChanged={loadSelected}
+                  />
+                )}
+                {tenantId && (
+                  <ProposalComments
+                    tenantId={tenantId}
+                    proposalId={selected.id}
+                    comments={selected.comments ?? []}
+                    onAdded={loadSelected}
+                  />
+                )}
+                {selected.status === 'pending' && canResolve && (
                   <p style={{ display: 'flex', gap: 8 }}>
                     <button
                       className="primary"
@@ -205,13 +238,15 @@ export function ProposalQueuePage() {
                     >
                       {resolvingAction === 'approve_and_export' ? 'Resolving…' : 'Approve + export'}
                     </button>
-                    <button
-                      className="primary"
-                      disabled={resolvingAction !== null}
-                      onClick={() => void resolve('approve_and_apply')}
-                    >
-                      {resolvingAction === 'approve_and_apply' ? 'Resolving…' : 'Approve + apply'}
-                    </button>
+                    {canApply && (
+                      <button
+                        className="primary"
+                        disabled={resolvingAction !== null}
+                        onClick={() => void resolve('approve_and_apply')}
+                      >
+                        {resolvingAction === 'approve_and_apply' ? 'Resolving…' : 'Approve + apply'}
+                      </button>
+                    )}
                     <button
                       disabled={resolvingAction !== null}
                       onClick={() => void resolve('reject')}

@@ -254,8 +254,11 @@ export class OAuthService {
   }
 
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
-    if (!request.tenantId || !request.environment || !request.readApiVersion)
+    if (!request.environment || !request.readApiVersion)
       throw new Error('Invalid authorization selection');
+    // A connection without an organisation reads public PTV data only.
+    if (!request.tenantId && (request.readApiVersion !== 'v11' || request.writeApiVersion))
+      throw new Error('A connection without an organisation is v11 read-only');
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
       throw new Error('Invalid client or redirect_uri');
     }
@@ -265,7 +268,7 @@ export class OAuthService {
         (code_hash, client_id, redirect_uri, code_challenge, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
       VALUES
         (${hashToken(code)}, ${request.clientId}, ${request.redirectUri}, ${request.codeChallenge},
-         ${userId}, ${request.scope}, ${request.tenantId}, ${request.environment}, ${request.readApiVersion}, ${request.readApiVersion}, ${request.writeApiVersion ?? null}, now() + interval '60 seconds')
+         ${userId}, ${request.scope}, ${request.tenantId ?? null}, ${request.environment}, ${request.readApiVersion}, ${request.readApiVersion}, ${request.writeApiVersion ?? null}, now() + interval '60 seconds')
     `);
     return code;
   }
@@ -299,7 +302,9 @@ export class OAuthService {
     await this.db.execute(
       sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`,
     );
-    if (!row.tenant_id) throw new Error('invalid_grant');
+    if (!row.tenant_id && (row.read_api_version !== 'v11' || row.write_api_version)) {
+      throw new Error('invalid_grant');
+    }
     const accessToken = await this.issueAccessToken(
       row.user_id,
       clientId,
@@ -345,7 +350,9 @@ export class OAuthService {
     ) {
       throw new Error('invalid_grant');
     }
-    if (!row.tenant_id) throw new Error('invalid_grant');
+    if (!row.tenant_id && (row.read_api_version !== 'v11' || row.write_api_version)) {
+      throw new Error('invalid_grant');
+    }
     const accessToken = await this.issueAccessToken(
       row.user_id,
       clientId,
@@ -395,7 +402,8 @@ export class OAuthService {
     userId: string,
     clientId: string,
     scope: string,
-    tenantId: string,
+    /** `null` for a public connection: PTV v11 published data only. */
+    tenantId: string | null,
     environment: 'test' | 'production',
     readApiVersion: string,
     writeApiVersion: string | null,
@@ -403,7 +411,7 @@ export class OAuthService {
     return new SignJWT({
       client_id: clientId,
       scope,
-      tenant_id: tenantId,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       environment,
       read_api_version: readApiVersion,
       ...(writeApiVersion ? { write_api_version: writeApiVersion } : {}),

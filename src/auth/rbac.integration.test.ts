@@ -34,7 +34,7 @@ describe('RBAC middleware', () => {
     ]);
     await withContext(db, { tenantId }, async (tx) => {
       await tx.insert(memberships).values([
-        { userId: readerId, tenantId, role: 'reader' },
+        { userId: readerId, tenantId, role: 'contributor' },
         { userId: publisherId, tenantId, role: 'publisher' },
       ]);
     });

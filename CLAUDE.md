@@ -128,8 +128,10 @@ still fail closed. RLS session context is set per-request
 (`src/db/context.ts`); `src/db/rls.integration.test.ts` is the place to
 add coverage for any new tenant-scoped table.
 
-Roles (`src/auth/rbac.ts`) are Reader < Editor < Publisher < Tenant Admin,
-scoped per `(user, tenant)` via `Membership`. Role gates live close to the
+Roles (`src/auth/rbac.ts`) are Viewer < Contributor < Approver < Publisher <
+Tenant Admin (UI: Katselija, Ehdottaja, Hyväksyjä, Julkaisija, Pääkäyttäjä;
+see `docs/roles-and-review-plan.md`), scoped per `(user, tenant)` via
+`Membership`. Role gates live close to the
 operation they guard (e.g. `src/mcp/authorization.ts` for MCP tools) —
 grep for `NotAuthorizedError` and `PtvAdapterResolutionError` before adding
 a new gated action, since both already-established shapes are checked by
@@ -138,15 +140,21 @@ existing tests and mixing them up has caused bugs before (see
 
 ### Two-phase writes: proposals
 
-`ptv_propose_changes` (`src/mcp/proposalQueue.ts`, Reader+) persists a
+`ptv_propose_changes` (`src/mcp/proposalQueue.ts`, Contributor+) persists a
 `pending` proposal (`src/db/schema/proposal.ts`) rather than writing
-anything. `ptv_resolve_proposal` (Editor+) re-diffs against *current* PTV
+anything. `ptv_resolve_proposal` (Approver+) re-diffs against *current* PTV
 state at resolve time — it never trusts the diff stored at queue time
 (`queued_diff` is kept only for audit/historical display). Resolving with
-`approve_and_export` only needs Editor; `approve_and_apply` additionally
+`approve_and_export` only needs Approver; `approve_and_apply` additionally
 requires the registry to hand back a write-capable adapter for that
 tenant/environment (Publisher-only, enforced by `PtvAdapterRegistry`, not
-by the proposal code itself).
+by the proposal code itself). Four-eyes (`tenants.require_four_eyes`, on by
+default) additionally refuses approving your own proposal and the direct
+`ptv_export_for_manual_publish`/`ptv_apply_changes` tools; integration tests
+that exercise those direct tools create their tenant with it off. Required
+reviewers (`proposal_reviewers`, `ptv_request_review`/`ptv_sign_off_proposal`)
+must all have `approved` before either approve action; reject is always
+allowed.
 
 ### MCP layer
 

@@ -40,7 +40,7 @@ describe('DbPtvAdapterRegistry', () => {
     createdUserIds.length = 0;
   });
 
-  async function setUp(role: 'reader' | 'editor' | 'publisher' | 'tenant_admin') {
+  async function setUp(role: 'contributor' | 'approver' | 'publisher' | 'tenant_admin') {
     const tenantId = randomUUID();
     const userId = randomUUID();
     await db
@@ -70,7 +70,7 @@ describe('DbPtvAdapterRegistry', () => {
   }
 
   it('rejects a reader attempting a write (not_authorized before any credential lookup)', async () => {
-    const { tenantId, userId } = await setUp('reader');
+    const { tenantId, userId } = await setUp('contributor');
     await configService.upsert(tenantId, 'production', 'v11', {
       authMode: 'oauth2',
       credentialScope: 'user',
@@ -197,7 +197,7 @@ describe('DbPtvAdapterRegistry', () => {
   });
 
   it('resolves a real PtvV11Adapter for a read with no connection stored, and it can make a real live call', async () => {
-    const { tenantId, userId } = await setUp('reader');
+    const { tenantId, userId } = await setUp('contributor');
     await configService.upsert(tenantId, 'test', 'v11', {
       authMode: 'oauth2',
       credentialScope: 'user',

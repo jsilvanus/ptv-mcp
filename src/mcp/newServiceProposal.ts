@@ -55,7 +55,7 @@ export interface QueuedNewServiceResult {
 
 /**
  * `ptv_propose_new_service`: queues a `service_create` proposal. Nothing
- * is written to PTV until an Editor+ approves it with approve_and_apply
+ * is written to PTV until an Approver+ approves it with approve_and_apply
  * (which also needs a write-capable adapter, i.e. Publisher).
  */
 export async function queueNewServiceProposal(
@@ -67,7 +67,7 @@ export async function queueNewServiceProposal(
   input: Partial<Service>,
   correlationId?: string,
 ): Promise<QueuedNewServiceResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'reader');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposed = normalizeNewService(input);
   const diff = diffService(EMPTY_SERVICE, proposed);
   const validation = validator.validate(asService(proposed));

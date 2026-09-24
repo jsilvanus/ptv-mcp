@@ -153,7 +153,7 @@ describe('Phase 8 sync point', () => {
   async function addMembership(
     tenantId: string,
     userId: string,
-    role: 'reader' | 'editor' | 'publisher' | 'tenant_admin',
+    role: 'contributor' | 'approver' | 'publisher' | 'tenant_admin',
   ): Promise<void> {
     await withContext(db, { tenantId }, async (tx) => {
       await tx.insert(memberships).values({ tenantId, userId, role });
@@ -178,15 +178,15 @@ describe('Phase 8 sync point', () => {
     return JSON.parse(first.text) as T;
   }
 
-  it('queues, reviews, and resolves proposals with reader/editor split and one correlationId', async () => {
+  it('queues, reviews, and resolves proposals with the contributor/approver split and one correlationId', async () => {
     const tenantId = await createTenant('Phase 8 queue tenant');
     const [readerUser, editorUser] = await Promise.all([
       registerUser('Reader'),
       registerUser('Editor'),
     ]);
     await Promise.all([
-      addMembership(tenantId, readerUser.userId, 'reader'),
-      addMembership(tenantId, editorUser.userId, 'editor'),
+      addMembership(tenantId, readerUser.userId, 'contributor'),
+      addMembership(tenantId, editorUser.userId, 'approver'),
     ]);
     const [reader, editor] = await Promise.all([
       mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
@@ -206,13 +206,19 @@ describe('Phase 8 sync point', () => {
     expect(queued.isError).not.toBe(true);
     const queuedPayload = parseToolResult<{ proposalId: string; correlationId: string }>(queued);
 
+    // A contributor (Ehdottaja) can view the queue but not resolve.
     const readerList = await readerClient.callTool({
       name: 'ptv_list_proposals',
       arguments: { tenantId, environment: 'test', status: 'pending' },
     });
-    expect(readerList.isError).toBe(true);
-    expect((readerList.content as Array<{ text: string }>)[0]?.text).toContain(
-      "requires at least 'editor' role",
+    expect(readerList.isError).not.toBe(true);
+    const readerResolve = await readerClient.callTool({
+      name: 'ptv_resolve_proposal',
+      arguments: { proposalId: queuedPayload.proposalId, action: 'reject' },
+    });
+    expect(readerResolve.isError).toBe(true);
+    expect((readerResolve.content as Array<{ text: string }>)[0]?.text).toContain(
+      "requires at least 'approver' role",
     );
     await readerClient.close();
 
@@ -278,8 +284,8 @@ describe('Phase 8 sync point', () => {
       registerUser('Editor'),
     ]);
     await Promise.all([
-      addMembership(tenantId, readerUser.userId, 'reader'),
-      addMembership(tenantId, editorUser.userId, 'editor'),
+      addMembership(tenantId, readerUser.userId, 'contributor'),
+      addMembership(tenantId, editorUser.userId, 'approver'),
     ]);
     const [reader, editor] = await Promise.all([
       mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),

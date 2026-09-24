@@ -69,6 +69,25 @@ function codeListKey(value: unknown): string {
 }
 
 /**
+ * A proposal usually names classification entries by uri or code only;
+ * copies the names of entries the service already has, so the diff reads
+ * "P11.6 Seurakunnat ja uskonnolliset yhteisöt" rather than a bare code.
+ */
+function withKnownNames(before: unknown, after: unknown): unknown {
+  if (!Array.isArray(before) || !Array.isArray(after)) return after;
+  const known = before as CodeListEntry[];
+  return (after as CodeListEntry[]).map((entry) => {
+    if (Object.keys(entry.names ?? {}).length > 0) return entry;
+    const match = known.find(
+      (candidate) =>
+        (entry.uri !== undefined && candidate.uri === entry.uri) ||
+        (entry.code !== undefined && candidate.code === entry.code),
+    );
+    return match ? { ...entry, names: match.names } : entry;
+  });
+}
+
+/**
  * Merges `changes` onto `current` using the same "field presence, not
  * truthiness" semantics as the write model (src/ptv/v11/writeMapping.ts):
  * a key present in `changes` fully replaces that field (even with an
@@ -129,7 +148,7 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
     }
     if (CODE_LIST_FIELDS.includes(field as (typeof CODE_LIST_FIELDS)[number])) {
       if (codeListKey(before) !== codeListKey(after)) {
-        entries.push({ field, before, after });
+        entries.push({ field, before, after: withKnownNames(before, after) });
       }
       continue;
     }
@@ -175,11 +194,11 @@ export async function prepareProposal(
  * Originally *was* `ptv_propose_changes` itself (Phase 4 Stream B), gated
  * at Editor+ per docs/plan.md's original role model. Since Phase 8 (the
  * proposal queue), the `ptv_propose_changes` **tool** is `queueProposal`
- * (mcp/proposalQueue.ts), gated at Reader+ — a Reader can queue a proposal
- * without being able to approve one. This function now only runs
+ * (mcp/proposalQueue.ts), gated at Contributor+ — a Contributor can queue a
+ * proposal without being able to approve one. This function now only runs
  * internally, as the re-diff step `exportForManualPublish`/`applyChanges`
  * use when resolving an already-queued proposal — both of those are
- * already gated Editor+ by `resolveProposal`, so the Editor check here is
+ * already gated Approver+ by `resolveProposal`, so the Approver check here is
  * a redundant-but-harmless double-check, not a second authorization gate.
  */
 export async function proposeChanges(
@@ -191,7 +210,7 @@ export async function proposeChanges(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<ProposeChangesResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const { current, proposed, diff } = await prepareProposal(registry, ctx, serviceId, changes);
 
   const entry = await auditService.record({
