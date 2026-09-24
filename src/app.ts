@@ -5,6 +5,8 @@ import { AuthService } from './auth/authService.js';
 import { LoggingMailer, type Mailer } from './auth/mailer.js';
 import { createDatabase, type Database } from './db/client.js';
 import { PtvOrganizationCacheService } from './db/ptvOrganizationCacheService.js';
+import { PtvCodeNameCacheService } from './db/ptvCodeNameCacheService.js';
+import { CodeNameCache, DEFAULT_CODE_NAME_TTL_MS } from './ptv/v12/codeNameCache.js';
 import { UserPtvConnectionService } from './credentials/userPtvConnectionService.js';
 import { TenantEnvironmentService } from './credentials/tenantEnvironmentService.js';
 import { PtvAdapterConfigService } from './credentials/ptvAdapterConfigService.js';
@@ -68,6 +70,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
   const adapterConfigService = new PtvAdapterConfigService(db);
   const organizationCache = new PtvOrganizationCacheService(db);
+  const codeNameCache = new CodeNameCache(
+    DEFAULT_CODE_NAME_TTL_MS,
+    Date.now,
+    new PtvCodeNameCacheService(db),
+  );
   const registry = new DbPtvAdapterRegistry(
     db,
     adapterConfigService,
@@ -75,6 +82,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     connectionService,
     options.adapterFactories,
     organizationCache,
+    codeNameCache,
   );
   const validator = new V11ChangeValidator();
   const proposalService = new ProposalService(db);

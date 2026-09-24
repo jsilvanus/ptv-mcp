@@ -921,6 +921,69 @@ describe('PTV v12 classification code names', () => {
     expect(lookups()).toBe(2);
   });
 
+  it('persists resolved names to the store, so a fresh process skips PTV lookups', async () => {
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    type Store = import('./codeNameCache.js').CodeNameStore;
+    type Row = import('./codeNameCache.js').StoredCodeName;
+    const rows = new Map<string, Row>();
+    const store: Store = {
+      load: async (environment, kind, keys) =>
+        keys.flatMap((key) => rows.get(`${environment}|${kind}|${key}`) ?? []),
+      save: async (saved) => {
+        for (const row of saved) rows.set(`${row.environment}|${row.kind}|${row.key}`, row);
+      },
+    };
+
+    const firstRequests: URL[] = [];
+    await new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl: serviceFetch(firstRequests, ['P25.6', 'P99.9']),
+      codeNameCache: new CodeNameCache(undefined, undefined, store),
+    }).getService('service-1');
+    expect(rows.get(`test|ontologyTerms|${ontologyUri}`)?.entry).toEqual({
+      uri: ontologyUri,
+      names: { fi: 'kaste' },
+    });
+    // The unknown code is persisted as a miss too.
+    expect(rows.get('test|serviceClasses|P99.9')?.entry).toEqual({ names: {} });
+
+    const secondRequests: URL[] = [];
+    const service = await new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl: serviceFetch(secondRequests, ['P25.6', 'P99.9']),
+      codeNameCache: new CodeNameCache(undefined, undefined, store),
+    }).getService('service-1');
+    expect(
+      secondRequests.filter((url) => /service-classes|ontology-terms/.test(url.pathname)),
+    ).toEqual([]);
+    expect(service?.serviceClasses[0]?.names.fi).toBe('Uskonnot ja vakaumukset');
+    expect(service?.ontologyTerms).toEqual([{ uri: ontologyUri, names: { fi: 'kaste' } }]);
+  });
+
+  it('falls back to PTV when the store fails', async () => {
+    const requested: URL[] = [];
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    const failing = {
+      load: async () => {
+        throw new Error('db down');
+      },
+      save: async () => {
+        throw new Error('db down');
+      },
+    };
+    const service = await new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl: serviceFetch(requested, ['P25.6']),
+      codeNameCache: new CodeNameCache(undefined, undefined, failing),
+    }).getService('service-1');
+    expect(service?.serviceClasses[0]?.names.fi).toBe('Uskonnot ja vakaumukset');
+  });
+
   it('batches code lookups to 20 per request', async () => {
     const requested: URL[] = [];
     const codes = Array.from({ length: 25 }, (_, i) => `P${i + 1}`);
