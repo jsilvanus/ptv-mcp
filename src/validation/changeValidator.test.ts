@@ -444,4 +444,16 @@ describe('V11ChangeValidator', () => {
       expect(result.errors.filter((e) => e.field === 'ontologyTerms[0]')).toHaveLength(1);
     });
   });
+
+  describe('writable publishing status (Rule 12)', () => {
+    it.each(['Modified', 'Withdrawn'] as const)('fails for %s', (publishingStatus) => {
+      const result = validator.validate({ ...validService(), publishingStatus });
+      expect(result.errors.some((e) => e.field === 'publishingStatus')).toBe(true);
+    });
+
+    it.each(['Draft', 'Published', 'Archived'] as const)('passes for %s', (publishingStatus) => {
+      const result = validator.validate({ ...validService(), publishingStatus });
+      expect(result.valid).toBe(true);
+    });
+  });
 });

@@ -163,3 +163,24 @@ describe('PtvV11Adapter.applyServiceChange', () => {
     );
   });
 });
+
+describe('PtvV11Adapter Modified lock', () => {
+  it('refuses to PUT when the latest version is Modified, before calling PTV', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () =>
+        Response.json(serviceWire({ publishingStatus: 'Modified' })),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    await expect(
+      adapter.applyServiceChange({ serviceId: SERVICE_ID, changes: { names: { fi: 'X' } } }),
+    ).rejects.toThrow(/Publish or discard that version in PTV's web UI/);
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false);
+  });
+});

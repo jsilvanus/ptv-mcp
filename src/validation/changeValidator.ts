@@ -48,6 +48,7 @@ export class V11ChangeValidator implements ChangeValidator {
     this.validateOntologyTermUris(proposed, errors);
     this.validateRequiredClassifications(proposed, errors);
     this.validateNotOnlyMainServiceClasses(proposed, errors);
+    this.validateWritablePublishingStatus(proposed, errors);
 
     return {
       valid: errors.length === 0,
@@ -225,6 +226,27 @@ export class V11ChangeValidator implements ChangeValidator {
         field: 'serviceClasses',
         message:
           'At least one service class must be a subclass (e.g. P11.6), not only main classes (e.g. P11)',
+      });
+    }
+  }
+
+  /**
+   * Rule 12: only Draft, Published and Archived can be written through the
+   * v11 API. A Modified version locks the service against API updates until
+   * it is published or discarded in PTV's UI (live 400: "You cannot update
+   * entity with status Modified"), and Withdrawn has no v11 write value.
+   */
+  private validateWritablePublishingStatus(proposed: Service, errors: ValidationError[]): void {
+    if (proposed.publishingStatus === 'Modified') {
+      errors.push({
+        field: 'publishingStatus',
+        message:
+          "PTV has an unpublished modified version of this service; the v11 API can't update it. Publish or discard it in PTV's web UI first, or propose publishingStatus Published.",
+      });
+    } else if (proposed.publishingStatus === 'Withdrawn') {
+      errors.push({
+        field: 'publishingStatus',
+        message: 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
       });
     }
   }

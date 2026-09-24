@@ -30,6 +30,7 @@ import {
   fetchOrganizationServiceWindow,
 } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
+import { V11ModifiedVersionLockedError } from './mappers/common.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
 import { generalDescriptionWireToDomain } from './mappers/generalDescription.js';
@@ -445,6 +446,9 @@ export class PtvV11Adapter implements PtvAdapter {
     // Built on the latest version, so a PUT never reverts a newer draft.
     const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
     if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
+    if (current.publishingStatus === 'Modified') {
+      throw new V11ModifiedVersionLockedError(proposal.serviceId);
+    }
     const body = serviceChangesToV11Body(proposal.changes, current);
     const updated = await this.client.put<V11ServiceWire>(
       `/api/v11/Service/${proposal.serviceId}`,
