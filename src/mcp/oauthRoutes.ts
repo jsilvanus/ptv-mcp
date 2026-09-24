@@ -169,7 +169,7 @@ export async function mcpOAuthRoutes(
     // independent ChatGPT/Claude connections for different tenants.
     if (
       request.body.selection_token &&
-      request.body.tenant_id &&
+      request.body.tenant_id !== undefined &&
       request.body.environment &&
       request.body.read_api_version
     ) {
@@ -183,6 +183,29 @@ export async function mcpOAuthRoutes(
         const writeApiVersion = request.body.write_api_version || null;
         if (environment !== 'test' && environment !== 'production')
           return reply.badRequest('Invalid PTV environment');
+
+        // No organisation: public, published PTV data through v11, read-only.
+        if (tenantId === '') {
+          if (readApiVersion !== 'v11' || writeApiVersion) {
+            return reply.badRequest(
+              'Without an organisation only v11 reads are available (no writes)',
+            );
+          }
+          const code = await options.oauthService.createAuthorizationCode(selection.userId, {
+            clientId: selection.clientId,
+            redirectUri: selection.redirectUri,
+            codeChallenge: selection.codeChallenge,
+            scope: selection.scope,
+            environment,
+            readApiVersion,
+            writeApiVersion: null,
+          });
+          const redirect = new URL(selection.redirectUri);
+          redirect.searchParams.set('code', code);
+          if (selection.state) redirect.searchParams.set('state', selection.state);
+          redirect.searchParams.set('iss', options.publicUrl);
+          return reply.redirect(redirect.toString());
+        }
 
         const memberships = await options.tenantService.listTenantsForUser(selection.userId);
         const membership = memberships.find((item) => item.tenantId === tenantId);
@@ -268,16 +291,8 @@ export async function mcpOAuthRoutes(
 
       const session = await options.authService.login(request.body.email, request.body.password);
       const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
+      // Users without a membership can still read public PTV data.
       const memberships = await options.tenantService.listTenantsForUser(userId);
-      if (memberships.length === 0) {
-        return reply
-          .type('text/html')
-          .send(
-            html(
-              '<h1>No organisation access</h1><p class="error">Your account is not a member of any PTV organisation.</p>',
-            ),
-          );
-      }
 
       const selectionToken = await options.oauthService.createTenantSelectionToken(userId, {
         clientId,
@@ -287,12 +302,15 @@ export async function mcpOAuthRoutes(
         scope: q.scope ?? 'mcp',
       });
 
-      const tenantOptions = memberships
-        .map(
-          (membership) =>
-            `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
-        )
-        .join('');
+      const tenantOptions =
+        memberships
+          .map(
+            (membership) =>
+              `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
+          )
+          .join('') +
+        // Value '' = no organisation: public, published data via v11, read-only.
+        '<option value="">No organisation: public PTV data only (v11, read-only)</option>';
 
       return reply.type('text/html').send(
         html(`
@@ -301,7 +319,7 @@ export async function mcpOAuthRoutes(
         <form method="post" action="/oauth/authorize">
           <input type="hidden" name="selection_token" value="${selectionToken}">
           <label>Organisation</label>
-          <select name="tenant_id" id="tenant_id" required>${tenantOptions}</select>
+          <select name="tenant_id" id="tenant_id">${tenantOptions}</select>
           <label>Environment</label>
           <select name="environment" required>
             <option value="test">Test</option>

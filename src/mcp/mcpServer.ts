@@ -19,7 +19,7 @@ import * as searchTools from './searchTools.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
-import type { ToolContext } from './toolContext.js';
+import type { ReadToolContext, ToolContext } from './toolContext.js';
 import {
   getProposal,
   isProposalQueueError,
@@ -123,16 +123,25 @@ function withOAuthSecurity<T extends object>(
 }
 
 function toolContext(extra: Extra): ToolContext {
+  const { tenantId, ...rest } = readToolContext(extra);
+  if (!tenantId) {
+    throw new Error(
+      'This MCP connection has no organisation (public PTV data only). Proposals and writes need an organisation: reconnect and choose one.',
+    );
+  }
+  return { tenantId, ...rest };
+}
+
+/**
+ * Read tools also work on a public connection without an organisation:
+ * then the tenant is absent and only PTV v11's published data is read.
+ */
+function readToolContext(extra: Extra): ReadToolContext {
   const userId = actingUserId(extra);
   const activeTenantId = extra.authInfo?.extra?.tenantId;
   const environment = extra.authInfo?.extra?.environment;
   const readApiVersion = extra.authInfo?.extra?.readApiVersion;
   const writeApiVersion = extra.authInfo?.extra?.writeApiVersion;
-  if (typeof activeTenantId !== 'string' || activeTenantId === '') {
-    throw new Error(
-      'No active tenant for this MCP connection; reconnect and select an organisation',
-    );
-  }
   if (environment !== 'test' && environment !== 'production') {
     throw new Error(
       'No active PTV environment for this MCP connection; reconnect and select a connection',
@@ -144,7 +153,9 @@ function toolContext(extra: Extra): ToolContext {
     );
   }
   return {
-    tenantId: activeTenantId,
+    ...(typeof activeTenantId === 'string' && activeTenantId !== ''
+      ? { tenantId: activeTenantId }
+      : {}),
     environment,
     readApiVersion,
     ...(typeof writeApiVersion === 'string' ? { writeApiVersion } : {}),
@@ -224,7 +235,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchServices(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchServices(registry, readToolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -241,7 +252,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getService(registry, toolContext(extra), args.id));
+        return textResult(await searchTools.getService(registry, readToolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -258,7 +269,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchChannels(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchChannels(registry, readToolContext(extra), searchParams(args)),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -275,7 +286,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getChannel(registry, toolContext(extra), args.id));
+        return textResult(await searchTools.getChannel(registry, readToolContext(extra), args.id));
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -300,7 +311,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchOrganisations(registry, toolContext(extra), {
+          await searchTools.searchOrganisations(registry, readToolContext(extra), {
             ...(args.query !== undefined ? { query: args.query } : {}),
             ...(args.page !== undefined ? { page: args.page } : {}),
             ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
@@ -327,7 +338,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.findOrganisationAndChildren(registry, toolContext(extra), args.query),
+          await searchTools.findOrganisationAndChildren(
+            registry,
+            readToolContext(extra),
+            args.query,
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -344,7 +359,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
-        return textResult(await searchTools.getOrganisation(registry, toolContext(extra), args.id));
+        return textResult(
+          await searchTools.getOrganisation(registry, readToolContext(extra), args.id),
+        );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -361,7 +378,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.getOrganisationHierarchy(registry, toolContext(extra), args.id),
+          await searchTools.getOrganisationHierarchy(registry, readToolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -381,7 +398,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchServiceCollections(
             registry,
-            toolContext(extra),
+            readToolContext(extra),
             searchParams(args),
           ),
         );
@@ -403,7 +420,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return textResult(
           await searchTools.searchGeneralDescriptions(
             registry,
-            toolContext(extra),
+            readToolContext(extra),
             searchParams(args),
           ),
         );
@@ -423,7 +440,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchConnections(registry, toolContext(extra), args.id),
+          await searchTools.searchConnections(registry, readToolContext(extra), args.id),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -449,7 +466,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.searchOntologyTerms(registry, toolContext(extra), searchParams(args)),
+          await searchTools.searchOntologyTerms(
+            registry,
+            readToolContext(extra),
+            searchParams(args),
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -468,7 +489,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         return textResult(
-          await searchTools.listCodes(registry, toolContext(extra), args.codeListName),
+          await searchTools.listCodes(registry, readToolContext(extra), args.codeListName),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
