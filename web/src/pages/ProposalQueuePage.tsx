@@ -10,6 +10,7 @@ import type {
 } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 import { DiffView } from './DiffView';
+import { ProposalComments } from './ProposalComments';
 import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
@@ -197,6 +198,14 @@ export function ProposalQueuePage() {
                   <strong>Correlation:</strong> {selected.correlationId}
                 </p>
                 <DiffView diff={selected.diff} />
+                {tenantId && (
+                  <ProposalComments
+                    tenantId={tenantId}
+                    proposalId={selected.id}
+                    comments={selected.comments ?? []}
+                    onAdded={loadSelected}
+                  />
+                )}
                 {selected.status === 'pending' && canResolve && (
                   <p style={{ display: 'flex', gap: 8 }}>
                     <button

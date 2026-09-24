@@ -81,9 +81,20 @@ export interface ProposalSummary {
   updatedAt: string;
 }
 
+/** Mirrors src/proposals/proposalService.ts's ProposalComment. */
+export interface ProposalComment {
+  id: string;
+  userId: string;
+  userName: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface ProposalDetails extends ProposalSummary {
   diff: ServiceDiffEntry[];
   queuedDiff: ServiceDiffEntry[];
+  /** Oldest first. */
+  comments: ProposalComment[];
 }
 
 /** Tenant's PTV v11 organisation API user (IN-API write credential); the password is never returned. */

@@ -231,6 +231,29 @@ describe('proposal routes', () => {
     });
     expect(getAsEditor.statusCode).toBe(200);
 
+    const commentAsContributor = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/comments`,
+      headers: { authorization: 'Bearer ' + readerToken },
+      payload: { comment: 'Tarkistin tekstin.' },
+    });
+    expect(commentAsContributor.statusCode).toBe(201);
+    const withComment = await app.inject({
+      method: 'GET',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}`,
+      headers: { authorization: 'Bearer ' + editor.token },
+    });
+    expect(
+      (withComment.json() as { comments: Array<{ body: string; userName: string }> }).comments,
+    ).toEqual([expect.objectContaining({ body: 'Tarkistin tekstin.', userName: 'Reader' })]);
+    const emptyComment = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/comments`,
+      headers: { authorization: 'Bearer ' + readerToken },
+      payload: { comment: '  ' },
+    });
+    expect(emptyComment.statusCode).toBe(400);
+
     const resolveAsContributor = await app.inject({
       method: 'POST',
       url: `/tenants/${editor.tenantId}/proposals/${first!.id}/resolve`,

@@ -5,7 +5,9 @@ import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import { createAuthenticate, createRequireRole, resolveMembershipRole } from '../auth/rbac.js';
 import {
+  commentOnProposal,
   getProposal,
+  InvalidCommentError,
   listProposals,
   resolveProposal,
   type ResolveProposalAction,
@@ -118,6 +120,29 @@ export async function proposalRoutes(
         if (err instanceof ProposalAlreadyResolvedError) {
           return reply.conflict(err.message);
         }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Body: { comment?: string }; Querystring: ProposalRequestQuery }>(
+    '/tenants/:tenantId/proposals/:proposalId/comments',
+    { preHandler: [authenticate, requireContributor] },
+    async (request, reply) => {
+      const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
+      try {
+        const comment = await commentOnProposal(
+          resolveRole,
+          options.proposalService,
+          options.auditService,
+          contextFrom(tenantId, request.userId!, request.query),
+          proposalId,
+          request.body?.comment ?? '',
+        );
+        return reply.code(201).send(comment);
+      } catch (err) {
+        if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
+        if (err instanceof InvalidCommentError) return reply.badRequest(err.message);
         throw err;
       }
     },

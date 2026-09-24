@@ -26,6 +26,8 @@ import {
   listProposals,
   queueProposal,
   resolveProposal,
+  commentOnProposal,
+  MAX_COMMENT_LENGTH,
 } from './proposalQueue.js';
 
 export interface McpServerDeps {
@@ -639,6 +641,34 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             auditService,
             toolContext(extra),
             args.proposalId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_comment_proposal',
+    withOAuthSecurity({
+      description:
+        'Add a comment to a proposal, e.g. a review note or the reason for a change. Requires the Contributor role (Ehdottaja) or above. Comments show up in ptv_get_proposal and the web review page.',
+      inputSchema: {
+        proposalId: z.string(),
+        comment: z.string().min(1).max(MAX_COMMENT_LENGTH),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await commentOnProposal(
+            resolveRole,
+            proposalService,
+            auditService,
+            toolContext(extra),
+            args.proposalId,
+            args.comment,
           ),
         );
       } catch (err) {
