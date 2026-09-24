@@ -299,3 +299,25 @@ describe('PTV v11 organization general-description pagination', () => {
     ]);
   });
 });
+
+describe('PTV v11 empty pages', () => {
+  // Seen live: an organisation without services or channels gets itemList: null.
+  const empty = fakeClient(async () => ({
+    pageNumber: 1,
+    pageSize: 1000,
+    pageCount: 0,
+    itemList: null,
+  }));
+
+  it('reads a null itemList as an empty list', async () => {
+    await expect(fetchOrganizationServiceWindow(empty, ORGANIZATION_ID)).resolves.toEqual({
+      items: [],
+      totalCount: 0,
+    });
+    await expect(fetchOrganizationServiceChannelWindow(empty, ORGANIZATION_ID)).resolves.toEqual({
+      items: [],
+      totalCount: 0,
+    });
+    await expect(fetchAllIdNamePairs(empty, '/api/v11/Organization')).resolves.toEqual([]);
+  });
+});

@@ -123,7 +123,7 @@ export async function queueNewChannelProposal(
     proposed,
     diff,
     validation,
-    quality: checkChannel(channel),
+    quality: checkChannel(channel, { connectedServiceCount: proposed.serviceIds?.length ?? 0 }),
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,

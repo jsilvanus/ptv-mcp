@@ -457,6 +457,16 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
         );
       }
     }
+    for (const phone of phones) {
+      if (!phone.isFinnishServiceNumber && phone.number.replace(/\D/g, '').length < 5) {
+        warn(
+          'Q-CONTACT-1',
+          field,
+          `${phone.number}: too short to be a phone number; check it.`,
+          phone.language,
+        );
+      }
+    }
     const byLanguage = new Map<string, number>();
     for (const phone of phones)
       byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
@@ -486,12 +496,26 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
 
   const hours = channel.serviceHours ?? [];
   for (const hour of hours) {
-    if (hour.validTo && hour.validTo < today) {
+    // A single-day exceptional hour has only validFrom: it ends that day.
+    const ends = hour.validTo ?? (hour.type === 'Exceptional' ? hour.validFrom : undefined);
+    if (ends && ends < today) {
       warn(
         'Q-HOURS-1',
         'serviceHours',
-        `A ${hour.type} service hour ended on ${hour.validTo}; remove it or update it.`,
+        `A ${hour.type} service hour ended on ${ends}; remove it or update it.`,
       );
+    }
+    if (hour.type === 'Exceptional') {
+      if (!hour.validFrom) {
+        warn('Q-HOURS-1', 'serviceHours', 'An exceptional service hour has no date (validFrom).');
+      }
+      if (!Object.values(hour.additionalInformation ?? {}).some(Boolean)) {
+        warn(
+          'Q-HOURS-1',
+          'serviceHours',
+          `An exceptional service hour${hour.validFrom ? ` (${hour.validFrom})` : ''} has no title; name it (e.g. "Jouluaatto") so customers know why the hours differ.`,
+        );
+      }
     }
   }
   const weekly = hours.filter((hour) => hour.type === 'DaysOfTheWeek');
