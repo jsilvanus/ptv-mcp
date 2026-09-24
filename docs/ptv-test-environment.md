@@ -13,7 +13,7 @@ is upgraded**, so never keep anything there you want to keep.
 | UI (login) | https://palvelutietovaranto.trn.suomi.fi/ |
 | v11 API | https://api.palvelutietovaranto.trn.suomi.fi (`V11_BASE_URLS.test`) |
 | v11 Swagger | https://api.palvelutietovaranto.trn.suomi.fi/swagger/ui/index.html |
-| v11 API login | `POST https://palvelutietovaranto.trn.suomi.fi/connect/token` |
+| v11 API login | `POST https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login` |
 | v12 API | https://api-gw.palvelutietovaranto.trn.suomi.fi (`V12_BASE_URLS.test`) |
 
 ## Test accounts

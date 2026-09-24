@@ -28,7 +28,7 @@ describe('fetchV11ApiToken', () => {
     );
     expect(calls).toEqual([
       {
-        url: 'https://palvelutietovaranto.trn.suomi.fi/connect/token',
+        url: 'https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login',
         body: { username: 'API1@testi.fi', password: 'pw' },
       },
     ]);

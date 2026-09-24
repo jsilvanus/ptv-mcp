@@ -49,7 +49,7 @@ verify a write against v11's own view of the entity.
 > | | Login | Body | Response |
 > |---|---|---|---|
 > | production | `POST https://palveluhallinta.suomi.fi/api/auth/api-login` | `{username, password, apiUserOrganisation?}` | `{serviceToken}` |
-> | test | `POST https://palvelutietovaranto.trn.suomi.fi/connect/token` | `{username, password}` | `{ptvToken}` |
+> | test | `POST https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login` | `{username, password}` | `{ptvToken}` |
 >
 > - The credential is **tenant-scoped** (like v12's API key), stored in
 >   `TenantEnvironment` and configured by a tenant admin
