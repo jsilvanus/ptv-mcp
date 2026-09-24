@@ -1085,6 +1085,7 @@ function normalizeServiceType(value: string | undefined): Service['serviceType']
 }
 
 function normalizePublishingStatus(value: string | undefined): Service['publishingStatus'] {
-  if (value === 'Draft' || value === 'Archived' || value === 'Withdrawn') return value;
+  if (value === 'Draft' || value === 'Modified' || value === 'Archived' || value === 'Withdrawn')
+    return value;
   return 'Published';
 }

@@ -19,8 +19,12 @@ export type LocalizedText = Partial<Record<LanguageCode, string>>;
  * see docs/ptv-v11-notes.md. Modeled here regardless so the domain model
  * doesn't need to change shape once v12 write ships and its equivalent
  * becomes visible too.
+ *
+ * `Modified` is v11's state for a published entity with a newer, unpublished
+ * version on top of it: the public read still returns the published
+ * version, the restricted `active` read returns the modified one.
  */
-export type PublishingStatus = 'Draft' | 'Published' | 'Archived' | 'Withdrawn';
+export type PublishingStatus = 'Draft' | 'Published' | 'Modified' | 'Archived' | 'Withdrawn';
 
 /** PTV's own identifier for an entity (its `contentId` / `id`), not our DB's primary key. */
 export type PtvContentId = string;
