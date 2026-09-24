@@ -78,7 +78,9 @@ export interface PtvTestApiAccount {
  * Example entry:
  *   'ae788356-6950-48fc-b3ff-63243f74fe53': { username: 'API…@testi.fi', password: '…' },
  */
-export const PTV_TEST_API_ACCOUNTS: Readonly<Record<string, PtvTestApiAccount>> = {};
+export const PTV_TEST_API_ACCOUNTS: Readonly<Record<string, PtvTestApiAccount>> = {
+  'ae788356-6950-48fc-b3ff-63243f74fe53': { username: 'API27@testi.fi', password: 'qGbfHwVcd2-' },
+};
 
 export function testOrganisationLabel(id: string | null | undefined): string | undefined {
   const organisation = PTV_TEST_ORGANISATIONS.find((item) => item.id === id);
