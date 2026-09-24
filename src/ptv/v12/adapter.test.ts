@@ -1059,7 +1059,11 @@ describe('PTV v12 classifications are writable through v11', () => {
     const base = 'http://uri.suomi.fi/codelist';
     const lists: Record<string, Array<{ code?: string; uri: string }>> = {
       '/api/v12/service-classes': [{ code: 'P25.6', uri: `${base}/ptv/ptvserclass2/code/P25.6` }],
-      '/api/v12/target-groups': [{ code: 'KR1', uri: `${base}/ptv/ptvkohderyhmat/code/KR1` }],
+      '/api/v12/target-groups': [
+        { code: 'KR1', uri: `${base}/ptv/ptvkohderyhmat/code/KR1` },
+        { code: 'KR2', uri: `${base}/ptv/ptvkohderyhmat/code/KR2` },
+        { code: 'KR2.3', uri: `${base}/ptv/ptvkohderyhmat/code/KR2.3` },
+      ],
       '/api/v12/life-events': [{ code: 'KE4', uri: `${base}/ptv/ptvelamantilanteet/code/KE4` }],
       '/api/v12/industrial-classes': [
         { code: '55109', uri: `${base}/jhs/toimiala_1_20080101/code/55109` },
@@ -1089,7 +1093,8 @@ describe('PTV v12 classifications are writable through v11', () => {
               fi: { name: 'Kodin siunaaminen', summary: 'Tiivistelmä', description: 'Kuvaus' },
             },
             serviceClasses: ['P25.6'],
-            targetGroups: ['KR1'],
+            // Industrial classes need KR2 and a subgroup (validator rule 13).
+            targetGroups: ['KR1', 'KR2', 'KR2.3'],
             lifeEvents: ['KE4'],
             industrialClasses: [`${base}/jhs/toimiala_1_20080101/code/55109`],
             ontologyTerms: ['http://www.yso.fi/onto/koko/p76271'],

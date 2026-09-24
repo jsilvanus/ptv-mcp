@@ -30,11 +30,21 @@ describe('serviceChangesToV11Body', () => {
     expect(body.serviceClasses).toEqual(['http://example/P1']);
   });
 
-  it('writes industrialClasses as codes, not URIs', () => {
+  it('writes industrialClasses as TOL 2008 URIs (a plain code makes PTV answer 500)', () => {
     const body = serviceChangesToV11Body({
-      industrialClasses: [{ code: '12345', uri: 'http://example/12345', names: {} }],
+      industrialClasses: [
+        { code: '94910', names: {} },
+        {
+          code: '36000',
+          uri: 'http://www.stat.fi/meta/luokitukset/toimiala/001-2008/36000',
+          names: {},
+        },
+      ],
     });
-    expect(body.industrialClasses).toEqual(['12345']);
+    expect(body.industrialClasses).toEqual([
+      'http://www.stat.fi/meta/luokitukset/toimiala/001-2008/94910',
+      'http://www.stat.fi/meta/luokitukset/toimiala/001-2008/36000',
+    ]);
   });
 
   it('sets the delete flag when clearing a field that has one (lifeEvents)', () => {
