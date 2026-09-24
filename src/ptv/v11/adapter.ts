@@ -3,6 +3,7 @@ import type {
   ApplyChannelChangeResult,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
+  NewChannel,
   NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
@@ -45,7 +46,11 @@ import {
   organizationAreaToV11,
   serviceChangesToV11Body,
 } from './writeMapping.js';
-import { channelChangesToV11Body, V11_CHANNEL_WRITE_TYPES } from './channelWriteMapping.js';
+import {
+  channelChangesToV11Body,
+  newChannelToV11Body,
+  V11_CHANNEL_WRITE_TYPES,
+} from './channelWriteMapping.js';
 import { planServiceConnections } from './connectionWrite.js';
 import {
   sharedV11ApiTokenCache,
@@ -518,6 +523,23 @@ export class PtvV11Adapter implements PtvAdapter {
     return {
       channelId: updated.id,
       publishingStatus: toPublishingStatus(updated.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const type = V11_CHANNEL_WRITE_TYPES.find((t) => t === channel.channelType);
+    if (!type) throw new Error(`Unknown service channel type: ${channel.channelType}`);
+    const created = await this.client.post<V11ServiceChannelWire>(
+      `/api/v11/ServiceChannel/${type}`,
+      newChannelToV11Body(channel),
+    );
+    return {
+      channelId: created.id,
+      publishingStatus: toPublishingStatus(created.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
   }

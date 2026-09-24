@@ -47,6 +47,14 @@ export interface ServiceChangeProposal {
  */
 export type NewService = Omit<Service, 'id' | 'modifiedAt'>;
 
+/**
+ * A channel to create. PTV assigns `id` and `modifiedAt`; `serviceIds`
+ * connects it to existing services in the same request.
+ */
+export type NewChannel = Omit<ServiceChannel, 'id' | 'modifiedAt'> & {
+  serviceIds?: PtvContentId[];
+};
+
 /** A proposed change to an existing service channel. */
 export interface ChannelChangeProposal {
   channelId: PtvContentId;
@@ -124,4 +132,7 @@ export interface PtvAdapter {
 
   /** Writes an approved change to an existing service channel; same rules as applyServiceChange. */
   applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult>;
+
+  /** Creates a new service channel; same write-capability rules as applyServiceChange. */
+  createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult>;
 }

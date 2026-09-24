@@ -74,6 +74,24 @@ Organisation sub-units come from filtering the tenant's cached
 organisation catalogue on `parentOrganizationId`. The adapter has no
 children query.
 
+### Publisher drafts for reviewers (added 2026-09-25)
+
+A Publisher can draft the change themselves (a new channel or service, a
+connection, a fix) and send it to the item's reviewer:
+
+- Propose with `reviewItemId`, or attach an existing pending proposal
+  (`ptv_review_attach_proposal`, `POST /tenants/:id/review-items/:itemId/attach`,
+  web: the item's Attach field).
+- A finished item reopens.
+- When the link is made by someone other than the item's reviewer, the
+  reviewer becomes a required reviewer of the proposal, so it can't be
+  approved before they sign off. It shows in their `ptv_my_tasks`.
+- What fits an item: its own service or channel; a service change that
+  edits `serviceChannelIds` fits a channel's item; a new service or channel
+  fits any item.
+- Audited as `LinkProposal` (campaign correlation id) and `RequestReview`
+  (the proposal's).
+
 ## 3. "Waiting for you" (pull, not push)
 
 MCP notifications don't fit here:

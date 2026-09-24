@@ -25,10 +25,11 @@ results come back:
 
 The same text always gives the same result, whichever AI (if any) is
 used. Errors break a DVV rule. Warnings are heuristics (e.g. Finnish
-passive voice) for a person to judge. Only the fields the MCP reads are
-checked: names, summaries, descriptions, classifications, languages and
-connections. Instructions, contact fields and opening hours are not read,
-so check them by hand.
+passive voice) for a person to judge. The MCP reads names, summaries,
+descriptions, classifications, languages and connections, and for
+channels also their addresses, phone numbers, emails, web addresses,
+service hours, form files and accessibility. A service's instructions
+(toimintaohjeet) are not read yet, so check them by hand.
 
 Checks marked *manual* need judgement (the service test, tone, facts). The
 writer, the AI assistant and in the end the human approver own them.
@@ -440,12 +441,18 @@ field, language and a suggested fix) or `N/A` for each item.
   serve in.
 - `Q-LANG-2` (*auto: every language version has name, summary and description*): The language versions match each other in content, and all
   of them are published or intentionally drafted.
-- `Q-CONTACT-1` (*manual*): Phone numbers have no leading 0, include a price type and
-  any extra cost in words, and have no personal names in additional info.
+- `Q-CONTACT-1` (*mostly auto*: number and URL formats are validation
+  errors; extra-charge numbers without a price, several numbers without
+  additional info, a service location without a street address and an
+  e-service without accessibility info are warnings; personal names stay
+  manual): phone numbers have no leading 0, include a price type and any
+  extra cost in words, and have no personal names in additional info.
   URLs start with http(s):// and aren't `tunnistautuminen.suomi.fi`.
-- `Q-HOURS-1` (*manual*): Times use the `12.00` format. Holiday hours are checked for
-  the current church and calendar year. Exceptional hours have a clear
-  title.
+- `Q-HOURS-1` (*partly auto*: the time format is a validation error; ended
+  exceptional hours and untitled parallel weekly schedules are warnings):
+  the times are right, holiday hours are checked for the current church
+  and calendar year, and exceptional hours have a clear title. In the MCP,
+  times are written `HH:mm` (PTV's UI shows `12.00`).
 
 ### Style
 

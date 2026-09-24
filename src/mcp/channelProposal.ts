@@ -10,13 +10,51 @@ import { requireTenantRole, type MembershipRoleResolver } from './authorization.
 import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
-/** Only these channel fields are written (see src/ptv/v11/channelWriteMapping.ts). */
-export const WRITABLE_CHANNEL_FIELDS = [
+const COMMON_CHANNEL_FIELDS = [
   'names',
+  'summaries',
   'descriptions',
   'languages',
   'publishingStatus',
+  'isVisibleForAll',
+  'serviceHours',
 ] as const;
+
+/**
+ * The fields each channel type carries and PTV-MCP writes (see
+ * src/ptv/v11/channelWriteMapping.ts). Service locations have no support
+ * contacts (käytön tuki); their own phone numbers and emails are the
+ * contacts.
+ */
+export const CHANNEL_TYPE_FIELDS: Record<ServiceChannel['channelType'], readonly string[]> = {
+  EChannel: [
+    ...COMMON_CHANNEL_FIELDS,
+    'supportPhones',
+    'supportEmails',
+    'urls',
+    'requiresAuthentication',
+    'requiresSignature',
+    'signatureQuantity',
+    'accessibility',
+  ],
+  WebPage: [...COMMON_CHANNEL_FIELDS, 'supportPhones', 'supportEmails', 'urls', 'accessibility'],
+  Phone: [...COMMON_CHANNEL_FIELDS, 'supportPhones', 'supportEmails', 'urls', 'phoneNumbers'],
+  PrintableForm: [
+    ...COMMON_CHANNEL_FIELDS,
+    'supportPhones',
+    'supportEmails',
+    'webPages',
+    'formIdentifiers',
+    'formFiles',
+    'deliveryAddresses',
+  ],
+  ServiceLocation: [...COMMON_CHANNEL_FIELDS, 'webPages', 'phoneNumbers', 'emails', 'addresses'],
+};
+
+/** Every writable channel field of some type. */
+export const WRITABLE_CHANNEL_FIELDS = [
+  ...new Set(Object.values(CHANNEL_TYPE_FIELDS).flat()),
+] as readonly string[];
 
 export class ChannelNotFoundError extends Error {
   constructor(channelId: string) {
@@ -26,10 +64,10 @@ export class ChannelNotFoundError extends Error {
 }
 
 export class UnsupportedChannelFieldError extends Error {
-  constructor(fields: string[]) {
+  constructor(fields: string[], type?: ServiceChannel['channelType']) {
     super(
-      `These channel fields can't be changed through PTV-MCP: ${fields.join(', ')}. ` +
-        `Writable fields: ${WRITABLE_CHANNEL_FIELDS.join(', ')}.`,
+      `These channel fields can't be changed through PTV-MCP${type ? ` on a ${type} channel` : ''}: ${fields.join(', ')}. ` +
+        `Writable fields: ${(type ? CHANNEL_TYPE_FIELDS[type] : WRITABLE_CHANNEL_FIELDS).join(', ')}.`,
     );
     this.name = 'UnsupportedChannelFieldError';
   }
@@ -63,6 +101,10 @@ export async function prepareChannelProposal(
   });
   const current = await adapter.getChannel(channelId);
   if (!current) throw new ChannelNotFoundError(channelId);
+  const wrongType = Object.keys(changes).filter(
+    (field) => !CHANNEL_TYPE_FIELDS[current.channelType].includes(field),
+  );
+  if (wrongType.length > 0) throw new UnsupportedChannelFieldError(wrongType, current.channelType);
   const proposed: ServiceChannel = { ...current, ...changes };
   // Same field semantics as a service's names/descriptions/languages.
   const diff = diffService(current as unknown as Service, changes as unknown as Partial<Service>);

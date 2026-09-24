@@ -18,7 +18,11 @@ import type {
   ServiceChannel,
 } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalKind } from '../proposals/proposalService.js';
+import type {
+  ProposalKind,
+  ProposalRecord,
+  ProposalService,
+} from '../proposals/proposalService.js';
 import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
 import type {
   CampaignProgress,
@@ -75,6 +79,7 @@ export interface ReviewItemDetails extends ReviewItemWithProposals {
 }
 
 export interface ReviewDeps {
+  proposalService: ProposalService;
   resolveRole: MembershipRoleResolver;
   registry: PtvAdapterRegistry;
   auditService: AuditService;
@@ -510,10 +515,11 @@ export async function requireLinkableReviewItem(
   deps: ReviewDeps,
   ctx: ToolContext,
   itemId: string,
-  proposal: { kind: ProposalKind; targetId?: string },
+  proposal: { kind: ProposalKind; targetId?: string; changes?: Record<string, unknown> },
 ): Promise<ReviewItemView> {
   const item = await deps.reviewService.getItem(ctx.tenantId, itemId);
   await requireReviewerOf(deps, ctx, item);
+  const isPublisher = await hasRole(deps, ctx, 'publisher');
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, item.campaignId);
   requireOpen(campaign);
   if (campaign.environment !== ctx.environment) {
@@ -521,10 +527,21 @@ export async function requireLinkableReviewItem(
       `Review item belongs to the ${campaign.environment} environment; this connection uses ${ctx.environment}.`,
     );
   }
-  if (item.status !== 'open') {
+  // A Publisher may attach a draft to a finished item; linkProposalToReviewItem reopens it.
+  if (item.status !== 'open' && !isPublisher) {
     throw new ReviewCampaignError(
       `Review item "${item.targetName}" is already ${item.status}; ask a Publisher to reopen it.`,
     );
+  }
+  // A service change that edits connections may answer a channel's item
+  // ("this channel should be linked to service X").
+  if (
+    proposal.kind === 'service_update' &&
+    item.targetKind === 'channel' &&
+    proposal.changes &&
+    'serviceChannelIds' in proposal.changes
+  ) {
+    return item;
   }
   const expectedKind =
     proposal.kind === 'service_update'
@@ -538,6 +555,111 @@ export async function requireLinkableReviewItem(
     );
   }
   return item;
+}
+
+/**
+ * After a proposal is linked to a review item: a finished item is reopened
+ * (a Publisher attached a draft to it), and when someone other than the
+ * item's reviewer made the proposal or the link, the reviewer becomes a
+ * required reviewer of it. So a Publisher's draft goes to the reviewer,
+ * who signs it off (or asks for changes) before anyone can approve it.
+ */
+export async function linkProposalToReviewItem(
+  deps: ReviewDeps,
+  ctx: ToolContext,
+  item: ReviewItemView,
+  proposal: ProposalRecord,
+): Promise<void> {
+  const campaign = await deps.reviewService.getCampaign(ctx.tenantId, item.campaignId);
+  if (item.status !== 'open') {
+    await deps.reviewService.setItemStatus(
+      ctx.tenantId,
+      item.id,
+      'open',
+      null,
+      `Reopened: proposal ${proposal.id} was attached for review.`,
+    );
+    await audit(
+      deps,
+      ctx,
+      'ReopenReviewItem',
+      'ReviewItem',
+      item.id,
+      campaign.correlationId,
+      'Reopened',
+      {
+        campaignId: campaign.id,
+        proposalId: proposal.id,
+      },
+    );
+  }
+  const reviewer = item.assigneeUserId;
+  const sentToReviewer =
+    reviewer !== null && reviewer !== ctx.actingUserId && reviewer !== proposal.proposedByUserId;
+  if (sentToReviewer) {
+    await deps.proposalService.addReviewers(
+      ctx.tenantId,
+      proposal.id,
+      [reviewer],
+      ctx.actingUserId,
+    );
+    await deps.auditService.record({
+      tenantId: ctx.tenantId,
+      userId: ctx.actingUserId,
+      action: 'RequestReview',
+      resourceType: 'Proposal',
+      resourceId: proposal.id,
+      afterState: { reviewerUserIds: [reviewer], reviewItemId: item.id },
+      result: 'Requested',
+      correlationId: proposal.correlationId,
+    });
+  }
+  await audit(deps, ctx, 'LinkProposal', 'ReviewItem', item.id, campaign.correlationId, 'Linked', {
+    campaignId: campaign.id,
+    proposalId: proposal.id,
+    sentToReviewer,
+  });
+}
+
+/**
+ * Attaches an existing pending proposal to a review item, e.g. a draft a
+ * Publisher made before deciding who should check it. Same rules as
+ * proposing with reviewItemId.
+ */
+export async function attachProposalToReviewItem(
+  deps: ReviewDeps,
+  ctx: ToolContext,
+  itemId: string,
+  proposalId: string,
+): Promise<ReviewItemWithProposals> {
+  const proposal = await deps.proposalService.getById(ctx.tenantId, proposalId);
+  if (proposal.status !== 'pending') {
+    throw new ReviewCampaignError(`Proposal ${proposalId} is already ${proposal.status}`);
+  }
+  if (proposal.reviewItemId && proposal.reviewItemId !== itemId) {
+    throw new ReviewCampaignError(
+      `Proposal ${proposalId} already belongs to review item ${proposal.reviewItemId}`,
+    );
+  }
+  if (proposal.proposedByUserId !== ctx.actingUserId) {
+    await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'publisher');
+  }
+  const item = await requireLinkableReviewItem(
+    deps,
+    { ...ctx, environment: proposal.environment },
+    itemId,
+    {
+      kind: proposal.kind,
+      targetId: proposal.serviceId,
+      changes: proposal.changes as Record<string, unknown>,
+    },
+  );
+  await deps.proposalService.setReviewItem(ctx.tenantId, proposal.id, item.id);
+  await linkProposalToReviewItem(deps, ctx, item, proposal);
+  const [result] = await withProposals(deps, ctx.tenantId, [
+    await deps.reviewService.getItem(ctx.tenantId, item.id),
+  ]);
+  return result!;
 }
 
 /**

@@ -216,6 +216,17 @@ proposals linked by `proposals.review_item_id`. `ptv_my_tasks`
 (`src/mcp/myTasks.ts`) is the pull-style inbox: the stateless MCP
 transport has no channel for push notifications.
 
+### Service channels
+
+`ServiceChannel` (`src/ptv/domain.ts`) carries each type's structured
+fields (addresses, phone numbers, emails, URLs, service hours, form files,
+accessibility). `CHANNEL_TYPE_FIELDS` (`src/mcp/channelProposal.ts`) says
+which type writes which. v11 maps them in `src/ptv/v11/channelFields.ts`;
+the GET and In shapes differ (see `docs/ptv-v11-notes.md`, "Channel
+fields"). `validateChannel` (`src/validation/channelRules.ts`) holds PTV's
+hard rules, and `checkChannel` the guideline warnings. New channels are
+`channel_create` proposals (`src/mcp/newChannelProposal.ts`).
+
 ### Everything else
 
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —

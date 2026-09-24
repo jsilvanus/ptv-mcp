@@ -207,6 +207,51 @@ describe('checkChannel', () => {
   });
 });
 
+describe('checkChannel: channel fields', () => {
+  it('checks channel summaries like service summaries', () => {
+    const result = checkChannel(channel({ summaries: { fi: 'Seurakuntakeskus' } }));
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ checkId: 'Q-SUM-1', severity: 'error' }),
+    );
+  });
+
+  it('warns about phones, hours and a missing street address', () => {
+    const result = checkChannel(
+      channel({
+        summaries: { fi: 'Kerhotilat ja virasto samassa talossa.' },
+        phoneNumbers: [
+          { language: 'fi', prefixNumber: '+358', number: '19 123 4567' },
+          { language: 'fi', prefixNumber: '+358', number: '19 123 4568', chargeType: 'Other' },
+        ],
+        addresses: [{ kind: 'Other', latitude: '1', longitude: '2' }],
+        serviceHours: [
+          { type: 'Exceptional', validFrom: '2025-12-24', validTo: '2025-12-26', isClosed: true },
+          {
+            type: 'DaysOfTheWeek',
+            openingTimes: [{ dayFrom: 'Monday', from: '09:00', to: '12:00' }],
+          },
+          {
+            type: 'DaysOfTheWeek',
+            openingTimes: [{ dayFrom: 'Monday', from: '13:00', to: '15:00' }],
+          },
+        ],
+      }),
+      { today: '2026-09-24' },
+    );
+    const messages = result.findings.map((f) => `${f.checkId} ${f.message}`);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('extra-charge number'),
+        expect.stringContaining('Several numbers'),
+        expect.stringContaining('No street visiting address'),
+        expect.stringContaining('ended on 2025-12-26'),
+        expect.stringContaining('Several weekly schedules'),
+      ]),
+    );
+    expect(result.findings.every((f) => f.severity === 'warning')).toBe(true);
+  });
+});
+
 describe('classificationCode', () => {
   it('reads the code from `code` or the uri', () => {
     expect(classificationCode({ code: 'KR1', names: {} })).toBe('KR1');

@@ -181,6 +181,16 @@ export class ProposalService {
     return row as ProposalRecord;
   }
 
+  /** Links a proposal to a review campaign item. */
+  async setReviewItem(tenantId: string, proposalId: string, reviewItemId: string): Promise<void> {
+    await withContext(this.db, { tenantId }, async (tx) =>
+      tx
+        .update(proposals)
+        .set({ reviewItemId, updatedAt: new Date() })
+        .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId))),
+    );
+  }
+
   async addComment(
     tenantId: string,
     proposalId: string,

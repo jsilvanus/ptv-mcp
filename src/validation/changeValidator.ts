@@ -1,4 +1,5 @@
 import type { Service, ServiceChannel, ServiceType } from '../ptv/domain.js';
+import { validateChannelDetails } from './channelRules.js';
 
 /** Dot-path validation error for a field in the Service shape. */
 export interface ValidationError {
@@ -278,7 +279,7 @@ const KOKO_URI = /^http:\/\/www\.yso\.fi\/onto\/koko\/p\d+$/;
  * Rules for a proposed (merged) service channel: a name, at least one
  * language, and a publishing status the v11 API can write (see rule 12).
  */
-export function validateChannel(proposed: ServiceChannel): ValidationResult {
+export function validateChannel(proposed: ServiceChannel, creating = false): ValidationResult {
   const errors: ValidationError[] = [];
   const hasName = Object.values(proposed.names ?? {}).some(
     (value) => typeof value === 'string' && value.trim().length > 0,
@@ -298,5 +299,21 @@ export function validateChannel(proposed: ServiceChannel): ValidationResult {
           : 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
     });
   }
+  if (creating) {
+    // Language versions are the languages the channel is described in (its
+    // names); `languages` lists the languages it serves customers in.
+    for (const language of Object.keys(proposed.names ?? {})) {
+      if (!proposed.descriptions?.[language]) {
+        errors.push({
+          field: `descriptions.${language}`,
+          message: 'Missing the description in this language',
+        });
+      }
+    }
+    if (!proposed.organizationId) {
+      errors.push({ field: 'organizationId', message: 'Required' });
+    }
+  }
+  validateChannelDetails(proposed, errors, creating);
   return { valid: errors.length === 0, errors };
 }

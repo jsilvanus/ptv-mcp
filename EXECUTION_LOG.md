@@ -1601,3 +1601,64 @@ Known gaps:
 - Campaign start reads everything synchronously, which can be slow for
   very large organisations.
 - The in-memory test adapter ignores `organizationId` filters.
+
+## 2026-09-25 — Full service channels, and Publisher drafts sent to reviewers
+
+- **Channel fields.** The domain `ServiceChannel` now carries:
+  - summaries and `isVisibleForAll`
+  - urls, web pages, phone numbers (Phone/Sms/Fax), emails, support
+    contacts
+  - service hours, visiting and postal addresses, delivery addresses
+  - form files and identifiers
+  - e-service authentication and signatures, and accessibility
+
+  All optional, so v12 and the fakes are unaffected. v11 reads and writes
+  them (`src/ptv/v11/channelFields.ts`). PUTs send only the changed lists,
+  and emptied lists go as `deleteAll*`. `CHANNEL_TYPE_FIELDS` limits each
+  type to its own fields.
+- **New channels.**
+  - `ptv_propose_new_channel` queues a `channel_create` proposal
+    (migration 0023). approve_and_apply POSTs `/ServiceChannel/{type}`
+    through the new `PtvAdapter.createChannel` and records the id;
+    approve_and_export leaves it for manual entry.
+  - `serviceIds` connects the new channel on create.
+  - `CreateChannel` is audited.
+- **Validation and checks.**
+  - `src/validation/channelRules.ts` adds PTV's hard rules: phone
+    format, URLs (and `tunnistautuminen.suomi.fi`), service hours,
+    addresses, the required fields per type, and summary length.
+  - `checkChannel` adds channel summaries and guideline warnings: prices
+    of extra-charge numbers, several numbers without additional info, a
+    service location without a street address, ended exceptional hours,
+    untitled parallel schedules, and e-service accessibility.
+  - The guide's Q-CONTACT-1 and Q-HOURS-1 are now marked mostly/partly
+    auto.
+- **Publisher drafts in review campaigns.**
+  - `ptv_review_attach_proposal` (and REST `…/review-items/:id/attach`,
+    plus an Attach field in the web UI) attaches a pending proposal to an
+    item.
+  - Proposing with `reviewItemId` does the same.
+  - A finished item reopens, and the item's reviewer becomes a required
+    reviewer of the draft.
+  - A service change that edits connections can answer a channel's item.
+- **Web.** The proposal preview shows channel fields (`ChannelDetails`),
+  and there is a "New channel" proposal kind.
+- **Tests.**
+  - Unit: v11 channel read/write mapping, the channel validation rules,
+    the channel checks.
+  - Integration: a Publisher's draft channel goes to the reviewer, waits
+    for their sign-off, and a second Publisher applies it (four-eyes); an
+    existing proposal is attached over REST; a wrong-type field is
+    refused.
+
+Known gaps:
+
+- The channel mapping follows the v11 schema and is **not verified
+  live**. `docs/ptv-v11-notes.md` lists what to check.
+- Not yet written:
+  - channel areas (they inherit from the services)
+  - e-service attachments
+  - accessibility statement links
+  - a service location's alternative name and entrances
+- A service's instructions (toimintaohjeet) are still not in the domain
+  model.

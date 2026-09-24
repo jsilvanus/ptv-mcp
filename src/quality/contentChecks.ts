@@ -56,6 +56,8 @@ export interface ChannelCheckContext {
    * unknown; 0 raises Q-STRUCT-5.
    */
   connectedServiceCount?: number;
+  /** Today (YYYY-MM-DD) for date checks; defaults to the current date. */
+  today?: string;
 }
 
 function report(findings: QualityFinding[]): QualityReport {
@@ -426,12 +428,103 @@ export function checkService(
   return report(findings);
 }
 
+/**
+ * The structured channel fields: contacts (Q-CONTACT-1) and service hours
+ * (Q-HOURS-1). PTV's hard rules on the same fields (formats, required
+ * fields) are validation errors (src/validation/channelRules.ts); these are
+ * the guideline checks on top.
+ */
+function channelDetailFindings(channel: ServiceChannel, today: string): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  const warn = (checkId: string, field: string, message: string, language?: string) =>
+    findings.push({
+      checkId,
+      severity: 'warning',
+      field,
+      message,
+      ...(language ? { language } : {}),
+    });
+
+  for (const field of ['phoneNumbers', 'supportPhones'] as const) {
+    const phones = channel[field] ?? [];
+    for (const phone of phones) {
+      if (phone.chargeType === 'Other' && !phone.chargeDescription) {
+        warn(
+          'Q-CONTACT-1',
+          field,
+          `${phone.number}: an extra-charge number needs the price in chargeDescription.`,
+          phone.language,
+        );
+      }
+    }
+    const byLanguage = new Map<string, number>();
+    for (const phone of phones)
+      byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
+    for (const [language, count] of byLanguage) {
+      if (count > 1 && phones.some((p) => p.language === language && !p.additionalInformation)) {
+        warn(
+          'Q-CONTACT-1',
+          field,
+          'Several numbers: give each one additional information (e.g. "Vaihde") so customers know which to call.',
+          language,
+        );
+      }
+    }
+  }
+
+  if (
+    channel.channelType === 'ServiceLocation' &&
+    channel.addresses !== undefined &&
+    !channel.addresses.some((a) => a.kind === 'Street' && a.purpose !== 'Postal')
+  ) {
+    warn(
+      'Q-CONTACT-1',
+      'addresses',
+      'No street visiting address: Suomi.fi does not show service locations without one.',
+    );
+  }
+
+  const hours = channel.serviceHours ?? [];
+  for (const hour of hours) {
+    if (hour.validTo && hour.validTo < today) {
+      warn(
+        'Q-HOURS-1',
+        'serviceHours',
+        `A ${hour.type} service hour ended on ${hour.validTo}; remove it or update it.`,
+      );
+    }
+  }
+  const weekly = hours.filter((hour) => hour.type === 'DaysOfTheWeek');
+  if (
+    weekly.length > 1 &&
+    weekly.some((hour) => !Object.values(hour.additionalInformation ?? {}).some(Boolean))
+  ) {
+    warn(
+      'Q-HOURS-1',
+      'serviceHours',
+      'Several weekly schedules: give each a title (e.g. "Kesäaika") so customers can tell them apart.',
+    );
+  }
+  if (channel.channelType === 'EChannel' && channel.accessibility === undefined) {
+    warn(
+      'Q-CONTACT-1',
+      'accessibility',
+      'Accessibility is not given; use Unknown ("Ei tietoa") unless it has been assessed.',
+    );
+  }
+  return findings;
+}
+
 /** Checks a service channel against the deterministic rules. */
 export function checkChannel(
   channel: ServiceChannel,
   context: ChannelCheckContext = {},
 ): QualityReport {
-  const findings = textFieldFindings(channel.names, undefined, channel.descriptions);
+  // Channels read without summaries (e.g. v12 today) skip the summary checks.
+  const findings = textFieldFindings(channel.names, channel.summaries, channel.descriptions);
+  findings.push(
+    ...channelDetailFindings(channel, context.today ?? new Date().toISOString().slice(0, 10)),
+  );
   if (channel.languages.length === 0) {
     findings.push({
       checkId: 'Q-LANG-1',

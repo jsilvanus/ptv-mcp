@@ -281,6 +281,7 @@ const KIND_LABELS: Record<ProposalKind, string> = {
   service_update: 'Service update',
   service_create: 'New service',
   channel_update: 'Channel update',
+  channel_create: 'New channel',
 };
 
 function proposalTarget(proposal: ProposalSummary): string {

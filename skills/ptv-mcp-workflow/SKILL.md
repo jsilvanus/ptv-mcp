@@ -42,8 +42,15 @@ Before drafting, load the `content-quality` guide
     channels it is delivered through.
   - Make sure the organisation is already published in every language the
     service will have.
-- **Change a channel** (names, descriptions, languages, publishing status):
-  `ptv_propose_channel_changes`.
+- **Change a channel**: `ptv_propose_channel_changes`. The type's
+  structured fields (address, phone numbers, web address, service hours
+  and so on) can be changed too; see "Channel fields" below.
+- **Create a channel**: `ptv_propose_new_channel`. First check that the
+  channel doesn't already exist, and that no other organisation has
+  described a shared channel you should connect instead. Give
+  `serviceIds` to connect it to its services in the same step.
+- **Connect or disconnect a channel**: `ptv_propose_changes` on the
+  service, with its full `serviceChannelIds` list.
 - Optional pre-check: `ptv_validate_changes` validates the merged
   `proposed` object against PTV's mandatory-field and limit rules.
 
@@ -159,6 +166,43 @@ has the proper channels linked.
    correlation id.
 
 The same flow is available in the web UI under **Content review**.
+
+### A Publisher's draft for a reviewer
+
+A Publisher can draft a change themselves (a new channel, a new
+connection, a fix) and send it to the item's reviewer:
+
+- Propose it with `reviewItemId`, or attach an existing proposal with
+  `ptv_review_attach_proposal` (web UI: the item's **Attach** field).
+- The item reopens if it was already finished.
+- The item's reviewer becomes a **required reviewer** of the draft. It
+  shows up in their `ptv_my_tasks`, and nobody can approve it before
+  they sign off with `ptv_sign_off_proposal`.
+- The reviewer then sends the item on as usual.
+
+## Channel fields
+
+A channel's structured fields, by type (the domain model's
+`ServiceChannel`). A field in `changes` replaces **all** of its values,
+every language and every list entry. Read the channel first and send the
+complete list.
+
+| Field | Types | Shape and rules |
+|---|---|---|
+| `names`, `summaries` (max 150), `descriptions` | all | `{ "fi": "…", "sv": "…" }`. These keys are the language versions. |
+| `languages` | all | The languages the channel **serves customers in** (e.g. `["fi","sv","ar"]`). |
+| `isVisibleForAll` | all | Other organisations may connect it (recommended: `true`). |
+| `serviceHours` | all | `[{ "type": "DaysOfTheWeek", "openingTimes": [{ "dayFrom": "Monday", "dayTo": "Friday", "from": "09:00", "to": "15:00" }], "additionalInformation": { "fi": "Syyskausi" } }]`. `Exceptional` hours need `validFrom` (plus `validTo`, and `isClosed` for closures). `OverMidnight` hours can end on another day. Without times, use `isAlwaysOpen` or `isReservation`. Dates are `YYYY-MM-DD`, times `HH:mm`. |
+| `urls` | EChannel, WebPage (required for every language version), Phone (optional) | `{ "fi": "https://…" }`. The exact page for each language, never `tunnistautuminen.suomi.fi`. |
+| `phoneNumbers` | Phone (required), ServiceLocation | `[{ "language": "fi", "type": "Phone" \| "Sms" \| "Fax", "prefixNumber": "+358", "number": "19 123 4567", "additionalInformation": "Vaihde", "chargeType": "Chargeable" \| "FreeOfCharge" \| "Other", "chargeDescription": "…" }]`. No leading 0. For a national service number (e.g. 020…), set `"isFinnishServiceNumber": true` and no prefix. Languages fi, sv or en only. |
+| `addresses` | ServiceLocation (a visiting street address is required) | `[{ "kind": "Street", "street": { "fi": "Kirkkokatu" }, "streetNumber": "5", "postalCode": "11100", "additionalInformation": { "fi": "Sisäänkäynti pihalta" } }]`. `kind` can also be `Other` (latitude and longitude plus additionalInformation, for places without an address; not shown on Suomi.fi) or `Foreign` (`text`). `"purpose": "Postal"` marks a postal address. |
+| `emails`, `webPages` | ServiceLocation | `[{ "language": "fi", "value": "…@…" }]`; `[{ "language": "fi", "url": "https://…", "name": "…" }]`. |
+| `supportPhones`, `supportEmails` | all but ServiceLocation | Käytön tuki: direct support for using the channel, not the switchboard. |
+| `requiresAuthentication`, `requiresSignature`, `signatureQuantity`, `accessibility` | EChannel (accessibility also WebPage) | `accessibility` is `FullyCompliant`, `PartiallyCompliant`, `NonCompliant` or `Unknown` ("Ei tietoa", the default unless assessed). |
+| `formFiles` (required), `formIdentifiers`, `deliveryAddresses`, `webPages` | PrintableForm | `[{ "language": "fi", "format": "PDF", "url": "https://…" }]`. A delivery address has `kind` `Street`, `PostOfficeBox` or `NoAddress` (`text`: instructions), and optionally a `receiver`. |
+
+Validation (`validation` in the propose result) checks PTV's hard rules
+on these fields. `quality` adds the guideline warnings.
 
 ## What is waiting for me?
 

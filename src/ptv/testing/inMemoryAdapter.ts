@@ -3,6 +3,7 @@ import type {
   ApplyChannelChangeResult,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
+  NewChannel,
   NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
@@ -186,6 +187,27 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     this.services.push(created);
     return {
       serviceId: created.id,
+      publishingStatus: created.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
+    const { serviceIds, ...fields } = channel;
+    const created: ServiceChannel = { ...fields, id: randomUUID() };
+    this.channels.push(created);
+    for (const serviceId of serviceIds ?? []) {
+      this.connections.push({ serviceId, channelId: created.id });
+      const service = this.services.find((s) => s.id === serviceId);
+      if (service) service.serviceChannelIds = [...service.serviceChannelIds, created.id];
+    }
+    return {
+      channelId: created.id,
       publishingStatus: created.publishingStatus,
       appliedAt: new Date().toISOString(),
     };

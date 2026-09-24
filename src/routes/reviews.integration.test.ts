@@ -17,6 +17,7 @@ import {
 import { signAccessToken } from '../auth/jwt.js';
 import type { MembershipRole } from '../auth/rbac.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
+import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import { OAuthService } from '../mcp/oauthService.js';
 import type { Organization, Service, ServiceChannel } from '../ptv/domain.js';
@@ -82,6 +83,7 @@ describe('review campaign routes and tools', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
   const configService = new PtvAdapterConfigService(db);
+  const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
   // Same issuer/resource as src/app.ts, see proposals.integration.test.ts.
   const oauthService = new OAuthService(
     db,
@@ -486,6 +488,175 @@ describe('review campaign routes and tools', () => {
         'CloseReviewCampaign',
       ]),
     );
+  });
+
+  it("sends a Publisher's draft channel to the item's reviewer, then creates it", async () => {
+    const tenantId = await createTenant();
+    // Writes go through the tenant's API user (tenant-scoped credentials).
+    await tenantEnvironmentService.storeCredentials(tenantId, 'test', 'v11', {
+      username: 'api-user',
+      password: 'secret',
+    });
+    await configService.upsert(tenantId, 'test', 'v11', {
+      authMode: 'api_login',
+      credentialScope: 'tenant',
+      supportsRead: true,
+      supportsWrite: true,
+      supportsDraftRead: false,
+    });
+    const publisher = await createMember(tenantId, 'publisher', 'Julkaisija');
+    const secondPublisher = await createMember(tenantId, 'publisher', 'Toinen julkaisija');
+    const reviewer = await createMember(tenantId, 'contributor', 'Tarkistaja');
+
+    const started = await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/review-campaigns`,
+      headers: auth(publisher.token),
+      payload: { name: 'Kanavat', organizationId: ROOT_ORG, environment: 'test' },
+    });
+    const campaign = started.json() as { id: string };
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/review-campaigns/${campaign.id}`,
+      headers: auth(publisher.token),
+    });
+    const items = (detail.json() as { items: { id: string; targetId: string }[] }).items;
+    const orgItem = items.find((item) => item.targetId === SUB_ORG)!;
+    const serviceItem = items.find((item) => item.targetId === GOOD_SERVICE.id)!;
+    await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/review-campaigns/${campaign.id}/assign`,
+      headers: auth(publisher.token),
+      payload: { reviewer: reviewer.email, itemIds: [orgItem.id, serviceItem.id] },
+    });
+    // The reviewer confirms the service; a Publisher's draft reopens it below.
+    await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/review-items/${serviceItem.id}/complete`,
+      headers: auth(reviewer.token),
+      payload: { decision: 'confirmed' },
+    });
+
+    // An invalid channel is still queued, with its validation and checks.
+    const invalid = await callTool(publisher.mcpToken, 'ptv_propose_new_channel', {
+      channel: {
+        channelType: 'Phone',
+        organizationId: SUB_ORG,
+        names: { fi: 'Diakoniatyön puhelin' },
+        descriptions: { fi: 'Soita diakoniatyöntekijälle.' },
+        languages: ['fi'],
+        phoneNumbers: [{ language: 'fi', number: '040 123 4567' }],
+      },
+    });
+    expect(invalid.data).toMatchObject({ validation: { valid: false } });
+    const unsupported = await callTool(publisher.mcpToken, 'ptv_propose_new_channel', {
+      channel: { channelType: 'Phone', organizationId: SUB_ORG, addresses: [] },
+    });
+    expect(unsupported.result.isError).toBe(true);
+    // A field another channel type has is refused on this type.
+    const wrongType = await callTool(publisher.mcpToken, 'ptv_propose_channel_changes', {
+      channelId: 'review-channel-1',
+      changes: { addresses: [] },
+    });
+    expect(wrongType.result.content[0]?.text).toContain('on a Phone channel');
+
+    const drafted = await callTool(publisher.mcpToken, 'ptv_propose_new_channel', {
+      channel: {
+        channelType: 'Phone',
+        organizationId: SUB_ORG,
+        names: { fi: 'Diakoniatyön puhelin' },
+        summaries: { fi: 'Soita, kun tarvitset keskusteluapua tai taloudellista neuvontaa.' },
+        descriptions: { fi: 'Diakoniatyöntekijä vastaa arkisin. Voit myös jättää soittopyynnön.' },
+        languages: ['fi'],
+        phoneNumbers: [
+          {
+            language: 'fi',
+            prefixNumber: '+358',
+            number: '40 123 4567',
+            additionalInformation: 'Diakonia',
+          },
+        ],
+        serviceHours: [
+          {
+            type: 'DaysOfTheWeek',
+            openingTimes: [{ dayFrom: 'Monday', dayTo: 'Friday', from: '09:00', to: '12:00' }],
+          },
+        ],
+        serviceIds: [GOOD_SERVICE.id],
+      },
+      reviewItemId: orgItem.id,
+    });
+    expect(drafted.result.isError).toBeFalsy();
+    const draft = drafted.data as {
+      proposalId: string;
+      validation: { valid: boolean };
+      quality: { errors: number };
+    };
+    expect(draft.validation.valid).toBe(true);
+    expect(draft.quality.errors).toBe(0);
+
+    // A draft service change attached afterwards reopens the confirmed item.
+    const serviceDraft = await callTool(publisher.mcpToken, 'ptv_propose_changes', {
+      serviceId: GOOD_SERVICE.id,
+      changes: { serviceChannelIds: ['review-channel-1', 'review-channel-2'] },
+    });
+    const serviceDraftId = (serviceDraft.data as { proposalId: string }).proposalId;
+    const attached = await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/review-items/${serviceItem.id}/attach`,
+      headers: auth(publisher.token),
+      payload: { proposalId: serviceDraftId },
+    });
+    expect(attached.statusCode).toBe(200);
+    expect(attached.json()).toMatchObject({
+      status: 'open',
+      proposals: [{ id: serviceDraftId, status: 'pending' }],
+    });
+
+    // Both drafts wait for the reviewer's sign-off.
+    const tasks = await callTool(reviewer.mcpToken, 'ptv_my_tasks', {});
+    expect(
+      (tasks.data as { proposalsAwaitingMySignOff: { id: string }[] }).proposalsAwaitingMySignOff
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual([draft.proposalId, serviceDraftId].sort());
+    const tooEarly = await callTool(secondPublisher.mcpToken, 'ptv_resolve_proposal', {
+      proposalId: draft.proposalId,
+      action: 'approve_and_apply',
+    });
+    expect(tooEarly.result.isError).toBe(true);
+
+    const signed = await callTool(reviewer.mcpToken, 'ptv_sign_off_proposal', {
+      proposalId: draft.proposalId,
+      decision: 'approved',
+    });
+    expect(signed.result.isError).toBeFalsy();
+    const applied = await callTool(secondPublisher.mcpToken, 'ptv_resolve_proposal', {
+      proposalId: draft.proposalId,
+      action: 'approve_and_apply',
+    });
+    expect(applied.result.isError).toBeFalsy();
+    const created = applied.data as { status: string; serviceId: string };
+    expect(created.status).toBe('applied');
+    expect(created.serviceId).not.toBe('');
+
+    // The test adapter is rebuilt per call, so check what was written in the audit log.
+    const writes = await withContext(db, { tenantId }, async (tx) =>
+      tx
+        .select({ result: auditEntries.result, afterState: auditEntries.afterState })
+        .from(auditEntries)
+        .where(eq(auditEntries.action, 'CreateChannel')),
+    );
+    expect(writes).toEqual([
+      {
+        result: 'Success',
+        afterState: expect.objectContaining({
+          channelType: 'Phone',
+          serviceIds: [GOOD_SERVICE.id],
+          phoneNumbers: [expect.objectContaining({ number: '40 123 4567' })],
+        }),
+      },
+    ]);
   });
 
   it('checks a published service with ptv_check_quality', async () => {

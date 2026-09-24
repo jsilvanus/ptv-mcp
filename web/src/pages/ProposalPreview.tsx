@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { PreviewEntity } from '../api/types';
+import { ChannelDetails } from './ChannelDetails';
 import {
   CODE_LIST_FIELDS,
   codeEntryKey,
@@ -51,6 +52,7 @@ export function ProposalPreview({
       </h4>
       {text('summaries') && <p style={{ fontStyle: 'italic' }}>{text('summaries')}</p>}
       {text('descriptions') && <p style={{ whiteSpace: 'pre-wrap' }}>{text('descriptions')}</p>}
+      <ChannelDetails entity={entity} language={language} />
       {CODE_LIST_FIELDS.filter((field) => (entity[field]?.length ?? 0) > 0).map((field) => (
         <div key={field}>
           <strong>{FIELD_LABELS[field]}</strong>

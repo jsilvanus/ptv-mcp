@@ -151,5 +151,20 @@ export function runPtvAdapterContractTests(
         }),
       ).rejects.toThrow();
     });
+
+    it('createChannel refuses to write when the adapter declares no write capability', async () => {
+      if (adapter.getCapabilities().supportsWrite) return;
+      await expect(
+        adapter.createChannel({
+          organizationId: 'org',
+          channelType: 'WebPage',
+          publishingStatus: 'Draft',
+          names: { fi: 'x' },
+          descriptions: { fi: 'x' },
+          languages: ['fi'],
+          urls: { fi: 'https://example.fi' },
+        }),
+      ).rejects.toThrow();
+    });
   });
 }

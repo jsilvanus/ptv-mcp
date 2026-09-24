@@ -140,6 +140,8 @@ describe('MCP HTTP transport', () => {
         'ptv_propose_changes',
         'ptv_get_guide',
         'ptv_check_quality',
+        'ptv_propose_new_channel',
+        'ptv_review_attach_proposal',
         'ptv_my_tasks',
         'ptv_review_start_campaign',
         'ptv_review_assign',

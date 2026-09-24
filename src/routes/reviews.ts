@@ -8,7 +8,7 @@ import { NotAuthorizedError } from '../mcp/authorization.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import { TenantService, tenantRequiresFourEyes } from '../tenants/tenantService.js';
 import { listMyTasks } from '../mcp/myTasks.js';
-import { ProposalService } from '../proposals/proposalService.js';
+import { ProposalNotFoundError, ProposalService } from '../proposals/proposalService.js';
 import {
   ReviewCampaignNotFoundError,
   ReviewItemNotFoundError,
@@ -18,6 +18,7 @@ import {
 } from '../reviews/reviewService.js';
 import {
   assignReviewItems,
+  attachProposalToReviewItem,
   closeReviewCampaign,
   completeReviewItem,
   getReviewCampaign,
@@ -81,7 +82,9 @@ export async function reviewRoutes(
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireContributor = createRequireRole(options.db, 'contributor');
   const tenantService = new TenantService(options.db, options.auditService);
+  const proposalService = new ProposalService(options.db);
   const deps: ReviewDeps = {
+    proposalService,
     resolveRole: (tenantId, userId) => resolveMembershipRole(options.db, tenantId, userId),
     registry: options.registry,
     auditService: options.auditService,
@@ -219,7 +222,6 @@ export async function reviewRoutes(
     },
   );
 
-  const proposalService = new ProposalService(options.db);
   app.get<{ Querystring: ContextQuery }>(
     '/tenants/:tenantId/my-tasks',
     { preHandler },
@@ -285,6 +287,27 @@ export async function reviewRoutes(
           note,
         );
       } catch (err) {
+        return fail(reply, err);
+      }
+    },
+  );
+
+  app.post<{ Body: { proposalId?: string } }>(
+    '/tenants/:tenantId/review-items/:itemId/attach',
+    { preHandler },
+    async (request, reply) => {
+      const { tenantId, itemId } = request.params as { tenantId: string; itemId: string };
+      const proposalId = request.body?.proposalId;
+      if (!proposalId) return reply.badRequest('proposalId is required');
+      try {
+        return await attachProposalToReviewItem(
+          deps,
+          contextFrom(tenantId, request.userId!, {}),
+          itemId,
+          proposalId,
+        );
+      } catch (err) {
+        if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
         return fail(reply, err);
       }
     },

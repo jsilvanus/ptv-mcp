@@ -64,7 +64,8 @@ export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied' | '
 export type ProposalResolveAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 
 /** Mirrors src/db/schema/enums.ts's proposalKindEnum. */
-export type ProposalKind = 'service_update' | 'service_create' | 'channel_update';
+export type ProposalKind =
+  'service_update' | 'service_create' | 'channel_update' | 'channel_create';
 
 export interface ProposalSummary {
   id: string;
@@ -134,6 +135,60 @@ export interface PreviewEntity {
   targetGroups?: CodeListEntry[];
   lifeEvents?: CodeListEntry[];
   industrialClasses?: CodeListEntry[];
+  /** Channels (mirrors src/ptv/domain.ts's ServiceChannel). */
+  channelType?: string;
+  urls?: Record<string, string>;
+  webPages?: { language: string; url: string; name?: string }[];
+  phoneNumbers?: PreviewPhone[];
+  supportPhones?: PreviewPhone[];
+  emails?: { language: string; value: string }[];
+  supportEmails?: { language: string; value: string }[];
+  serviceHours?: PreviewServiceHour[];
+  addresses?: PreviewAddress[];
+  deliveryAddresses?: PreviewAddress[];
+  formIdentifiers?: Record<string, string>;
+  formFiles?: { language: string; format: string; url: string }[];
+  requiresAuthentication?: boolean;
+  requiresSignature?: boolean;
+  signatureQuantity?: number;
+  accessibility?: string;
+  isVisibleForAll?: boolean;
+}
+
+export interface PreviewPhone {
+  language: string;
+  type?: string;
+  prefixNumber?: string;
+  number: string;
+  isFinnishServiceNumber?: boolean;
+  additionalInformation?: string;
+  chargeType?: string;
+  chargeDescription?: string;
+}
+
+export interface PreviewServiceHour {
+  type: string;
+  validFrom?: string;
+  validTo?: string;
+  isClosed?: boolean;
+  isAlwaysOpen?: boolean;
+  isReservation?: boolean;
+  additionalInformation?: Record<string, string>;
+  openingTimes?: { dayFrom: string; dayTo?: string; from: string; to: string }[];
+}
+
+export interface PreviewAddress {
+  kind: string;
+  purpose?: string;
+  street?: Record<string, string>;
+  streetNumber?: string;
+  postalCode?: string;
+  postOfficeBox?: Record<string, string>;
+  latitude?: string;
+  longitude?: string;
+  additionalInformation?: Record<string, string>;
+  text?: Record<string, string>;
+  receiver?: Record<string, string>;
 }
 
 export interface ProposalDetails extends ProposalSummary {

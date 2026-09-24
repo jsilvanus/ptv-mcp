@@ -11,6 +11,7 @@ import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
+import type { NewChannel } from '../ptv/adapter.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
@@ -24,7 +25,8 @@ import type { ReadToolContext, ToolContext } from './toolContext.js';
 import { registerGuides, SERVER_INSTRUCTIONS } from './guides.js';
 import { checkQuality } from './qualityTools.js';
 import { listMyTasks } from './myTasks.js';
-import { ReviewService } from '../reviews/reviewService.js';
+import { ReviewService, type ReviewItemView } from '../reviews/reviewService.js';
+import { queueNewChannelProposal } from './newChannelProposal.js';
 import {
   assignReviewItems,
   closeReviewCampaign,
@@ -33,6 +35,8 @@ import {
   getReviewItem,
   listMyReviewItems,
   listReviewCampaigns,
+  attachProposalToReviewItem,
+  linkProposalToReviewItem,
   reopenReviewItem,
   requireLinkableReviewItem,
   startReviewCampaign,
@@ -251,6 +255,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const tenantService = new TenantService(db, auditService);
   const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
   const reviewDeps: ReviewDeps = {
+    proposalService,
     resolveRole,
     registry,
     auditService,
@@ -263,6 +268,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     .optional()
     .describe(
       'Review item this proposal answers (from ptv_review_my_items). Links the proposal to the review campaign; the item must be open and assigned to you.',
+    );
+  const linkQueued = async (ctx: ToolContext, item: ReviewItemView, proposalId: string) =>
+    linkProposalToReviewItem(
+      reviewDeps,
+      ctx,
+      item,
+      await proposalService.getById(ctx.tenantId, proposalId),
     );
   const server = new McpServer(
     { name: 'ptv-mcp', version: '0.1.0' },
@@ -563,25 +575,26 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         const ctx = toolContext(extra);
-        if (args.reviewItemId) {
-          await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
-            kind: 'service_update',
-            targetId: args.serviceId,
-          });
-        }
-        return textResult(
-          await queueProposal(
-            resolveRole,
-            registry,
-            auditService,
-            proposalService,
-            ctx,
-            args.serviceId,
-            args.changes as Partial<Service>,
-            args.correlationId,
-            args.reviewItemId,
-          ),
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'service_update',
+              targetId: args.serviceId,
+              changes: args.changes as Record<string, unknown>,
+            })
+          : null;
+        const result = await queueProposal(
+          resolveRole,
+          registry,
+          auditService,
+          proposalService,
+          ctx,
+          args.serviceId,
+          args.changes as Partial<Service>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -604,23 +617,23 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         const ctx = toolContext(extra);
-        if (args.reviewItemId) {
-          await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
-            kind: 'service_create',
-          });
-        }
-        return textResult(
-          await queueNewServiceProposal(
-            resolveRole,
-            auditService,
-            proposalService,
-            validator,
-            ctx,
-            args.service as Partial<Service>,
-            args.correlationId,
-            args.reviewItemId,
-          ),
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'service_create',
+            })
+          : null;
+        const result = await queueNewServiceProposal(
+          resolveRole,
+          auditService,
+          proposalService,
+          validator,
+          ctx,
+          args.service as Partial<Service>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -631,13 +644,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_channel_changes',
     withOAuthSecurity({
       description:
-        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
+        'Diff a proposed change against a service channel and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields by type (see ServiceChannel in the guides): all types names, summaries (max 150), descriptions, languages (languages it serves in), publishingStatus (Published, Draft for a never-published channel, or Archived), isVisibleForAll, serviceHours; EChannel urls, requiresAuthentication, requiresSignature, signatureQuantity, accessibility, supportPhones, supportEmails; WebPage urls, accessibility, supportPhones, supportEmails; Phone phoneNumbers (type Phone/Sms/Fax), urls, supportPhones, supportEmails; PrintableForm formFiles, formIdentifiers, deliveryAddresses, webPages, supportPhones, supportEmails; ServiceLocation addresses, phoneNumbers (Fax as type), emails, webPages. A field present in `changes` replaces all its values (every language, every list entry): read the channel first and send the full list. Phone numbers: number without the leading 0 plus prefixNumber +358, or isFinnishServiceNumber; times HH:mm; dates YYYY-MM-DD.',
       inputSchema: {
         channelId: z.string(),
         changes: z
           .record(z.string(), z.unknown())
           .describe(
-            'Partial<ServiceChannel>: only names, descriptions, languages, publishingStatus.',
+            "Partial<ServiceChannel>: only the channel type's writable fields (see the description).",
           ),
         correlationId: z.string().optional(),
         reviewItemId: reviewItemIdSchema,
@@ -646,25 +659,63 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (args, extra) => {
       try {
         const ctx = toolContext(extra);
-        if (args.reviewItemId) {
-          await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
-            kind: 'channel_update',
-            targetId: args.channelId,
-          });
-        }
-        return textResult(
-          await queueChannelProposal(
-            resolveRole,
-            registry,
-            auditService,
-            proposalService,
-            ctx,
-            args.channelId,
-            args.changes as Partial<ServiceChannel>,
-            args.correlationId,
-            args.reviewItemId,
-          ),
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'channel_update',
+              targetId: args.channelId,
+            })
+          : null;
+        const result = await queueChannelProposal(
+          resolveRole,
+          registry,
+          auditService,
+          proposalService,
+          ctx,
+          args.channelId,
+          args.changes as Partial<ServiceChannel>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_new_channel',
+    withOAuthSecurity({
+      description:
+        'Queue a proposal to create a new service channel. Needs the Contributor role (Ehdottaja). Nothing is written until an Approver+ resolves it with approve_and_apply (Publisher-level write access); PTV then assigns the id, recorded on the proposal. `channel` needs channelType (EChannel, WebPage, Phone, PrintableForm, ServiceLocation) and organizationId, then names, summaries and descriptions (keyed by language, e.g. {"fi": "..."}) for every language version, languages (the languages it serves customers in), and the type\'s fields (see ptv_propose_channel_changes): EChannel and WebPage need urls for every language version; Phone needs phoneNumbers; ServiceLocation needs a street address in addresses; PrintableForm needs formFiles. Optional serviceIds connects it to existing services. Starts as Draft and shared (isVisibleForAll) unless set. Returns validation and automated quality checks right away. Do not describe another organisation\'s channel: connect their shared channel instead.',
+      inputSchema: {
+        channel: z
+          .record(z.string(), z.unknown())
+          .describe('The new channel: a ServiceChannel without id, plus optional serviceIds.'),
+        correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
+      },
+    }),
+    async (args, extra) => {
+      try {
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'channel_create',
+            })
+          : null;
+        const result = await queueNewChannelProposal(
+          resolveRole,
+          auditService,
+          proposalService,
+          ctx,
+          args.channel as Partial<NewChannel>,
+          args.correlationId,
+          args.reviewItemId,
+        );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -1158,6 +1209,29 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       try {
         return textResult(
           await reopenReviewItem(reviewDeps, toolContext(extra), args.itemId, args.note),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_attach_proposal',
+    withOAuthSecurity({
+      description:
+        "Attach an existing pending proposal to a review campaign item, e.g. a draft a Publisher made for a reviewer to check. The proposal must fit the item (its own service or channel; a service change that edits connections fits a channel's item; a new service or channel fits any item). A finished item is reopened, and the item's reviewer becomes a required reviewer of the proposal, so it can't be approved before they sign off. Your own proposal, or any as a Publisher (Julkaisija) or above. Proposing with reviewItemId does the same in one step.",
+      inputSchema: { itemId: z.string().uuid(), proposalId: z.string().uuid() },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await attachProposalToReviewItem(
+            reviewDeps,
+            toolContext(extra),
+            args.itemId,
+            args.proposalId,
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);

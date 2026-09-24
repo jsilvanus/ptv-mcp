@@ -1,3 +1,5 @@
+import { asChannel, createNewChannel, normalizeNewChannel } from './newChannelProposal.js';
+import type { NewChannel } from '../ptv/adapter.js';
 import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
@@ -56,7 +58,7 @@ export function proposedQuality(
   proposed: Service | NewService | ServiceChannel | null,
 ): QualityReport | null {
   if (!proposed) return null;
-  return kind === 'channel_update'
+  return kind === 'channel_update' || kind === 'channel_create'
     ? checkChannel(proposed as ServiceChannel)
     : checkService(proposed as Service | NewService);
 }
@@ -169,6 +171,16 @@ async function liveProposalDetails(
   proposal: ProposalRecord,
   ctx: ToolContext,
 ): Promise<Omit<ProposalDetails, 'comments' | 'reviewers' | 'quality'>> {
+  if (proposal.kind === 'channel_create') {
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: proposal.queuedDiff,
+      current: null,
+      proposed: asChannel(normalizeNewChannel(proposal.changes as Partial<NewChannel>)),
+    };
+  }
   if (proposal.kind === 'service_create') {
     return {
       ...toSummary(proposal),
@@ -553,6 +565,17 @@ export async function resolveProposal(
     return resolveChannelProposal(registry, proposalService, auditService, ctx, proposal, action);
   }
 
+  if (proposal.kind === 'channel_create') {
+    return resolveNewChannelProposal(
+      registry,
+      proposalService,
+      auditService,
+      ctx,
+      proposal,
+      action,
+    );
+  }
+
   if (proposal.kind === 'service_create') {
     return resolveNewServiceProposal(
       registry,
@@ -727,6 +750,74 @@ async function resolveNewServiceProposal(
     result: 'Applied',
     correlationId: proposal.correlationId,
   });
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
+}
+
+/**
+ * Like resolveNewServiceProposal: approve_and_export leaves the channel for
+ * manual entry in PTV's UI; approve_and_apply creates it and records PTV's
+ * new id on the proposal.
+ */
+async function resolveNewChannelProposal(
+  registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+  action: Exclude<ResolveProposalAction, 'reject'>,
+): Promise<ProposalDetails> {
+  const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+  const channel = normalizeNewChannel(proposal.changes as Partial<NewChannel>);
+  const record = (result: string, afterState?: Record<string, unknown>) =>
+    auditService.record({
+      tenantId: ctx.tenantId,
+      userId: ctx.actingUserId,
+      action: 'ResolveProposal',
+      resourceType: 'Proposal',
+      resourceId: proposal.id,
+      ...(afterState ? { afterState } : {}),
+      result,
+      correlationId: proposal.correlationId,
+    });
+
+  if (action === 'approve_and_export') {
+    const approved = await proposalService.markResolved(
+      ctx.tenantId,
+      proposal.id,
+      'approved',
+      ctx.actingUserId,
+    );
+    await record('ApprovedForManualPublish');
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
+  }
+  if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
+
+  let createdId: string;
+  try {
+    const result = await createNewChannel(
+      registry,
+      auditService,
+      proposalCtx,
+      channel,
+      proposal.correlationId,
+    );
+    createdId = result.channelId;
+  } catch (err) {
+    if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
+      throw err;
+    }
+    await proposalService.markResolved(ctx.tenantId, proposal.id, 'failed', ctx.actingUserId);
+    await record('Failed');
+    throw err;
+  }
+  const applied = await proposalService.markResolved(
+    ctx.tenantId,
+    proposal.id,
+    'applied',
+    ctx.actingUserId,
+    createdId,
+  );
+  await record('Applied', { channelId: createdId });
   return proposalDetails(registry, proposalService, applied, proposalCtx);
 }
 
