@@ -1,5 +1,5 @@
-import { access, readdir } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { access, stat } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
 
@@ -9,21 +9,20 @@ export interface WebUiRoutesOptions {
 
 const API_PREFIXES = ['auth', 'tenants', 'ptv-connections', 'health', 'mcp'];
 
-async function listStaticFiles(root: string, currentDir = root): Promise<string[]> {
-  const entries = await readdir(currentDir, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(async (entry) => {
-      const fullPath = resolve(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        return listStaticFiles(root, fullPath);
-      }
-      if (!entry.isFile()) {
-        return [] as string[];
-      }
-      return [relative(root, fullPath).replaceAll('\\', '/')];
-    }),
-  );
-  return files.flat();
+/**
+ * Whether `path` is a file inside `root`. Checked per request rather than
+ * listed once at startup, because a redeploy rebuilds web/dist (new hashed
+ * asset names) without necessarily restarting the server.
+ */
+async function isStaticFile(root: string, path: string): Promise<boolean> {
+  const fullPath = resolve(root, path);
+  const rel = relative(root, fullPath);
+  if (rel.startsWith('..') || isAbsolute(rel)) return false;
+  try {
+    return (await stat(fullPath)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export async function webUiRoutes(
@@ -47,7 +46,6 @@ export async function webUiRoutes(
     wildcard: false,
     index: false,
   });
-  const staticFiles = new Set(await listStaticFiles(webDistRoot));
 
   app.get('/', async (_request, reply) =>
     reply.type('text/html; charset=utf-8').sendFile('index.html'),
@@ -64,7 +62,7 @@ export async function webUiRoutes(
       return reply.notFound();
     }
 
-    if (path.includes('.') && staticFiles.has(path)) {
+    if (path.includes('.') && (await isStaticFile(webDistRoot, path))) {
       return reply.sendFile(path);
     }
 
