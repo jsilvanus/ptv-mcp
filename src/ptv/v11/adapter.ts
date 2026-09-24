@@ -1,6 +1,8 @@
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
+  ApplyChannelChangeResult,
   ApplyServiceChangeResult,
+  ChannelChangeProposal,
   NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
@@ -39,6 +41,7 @@ import { serviceCollectionWireToDomain } from './mappers/serviceCollection.js';
 import { connectionsFromChannel, connectionsFromService } from './mappers/connection.js';
 import { referenceCodeWireToDomain, V11_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
 import { newServiceToV11Body, serviceChangesToV11Body } from './writeMapping.js';
+import { channelChangesToV11Body, V11_CHANNEL_WRITE_TYPES } from './channelWriteMapping.js';
 import { planServiceConnections } from './connectionWrite.js';
 import {
   sharedV11ApiTokenCache,
@@ -481,6 +484,33 @@ export class PtvV11Adapter implements PtvAdapter {
     return {
       serviceId: created.id,
       publishingStatus: toPublishingStatus(created.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const current = await this.getLatestOrNull<V11ServiceChannelWire>(
+      'ServiceChannel',
+      proposal.channelId,
+    );
+    if (!current) throw new Error(`PTV service channel ${proposal.channelId} not found`);
+    if (current.publishingStatus === 'Modified') {
+      throw new V11ModifiedVersionLockedError(proposal.channelId);
+    }
+    const type = V11_CHANNEL_WRITE_TYPES.find((t) => t === current.serviceChannelType);
+    if (!type) {
+      throw new Error(`Unknown v11 service channel type: ${current.serviceChannelType}`);
+    }
+    const updated = await this.client.put<V11ServiceChannelWire>(
+      `/api/v11/ServiceChannel/${type}/${proposal.channelId}`,
+      channelChangesToV11Body(proposal.changes, current),
+    );
+    return {
+      channelId: updated.id,
+      publishingStatus: toPublishingStatus(updated.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
   }

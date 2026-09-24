@@ -47,6 +47,19 @@ export interface ServiceChangeProposal {
  */
 export type NewService = Omit<Service, 'id' | 'modifiedAt'>;
 
+/** A proposed change to an existing service channel. */
+export interface ChannelChangeProposal {
+  channelId: PtvContentId;
+  /** Partial: names, descriptions, languages, publishingStatus. */
+  changes: Partial<ServiceChannel>;
+}
+
+export interface ApplyChannelChangeResult {
+  channelId: PtvContentId;
+  publishingStatus: ServiceChannel['publishingStatus'];
+  appliedAt: string;
+}
+
 export interface ApplyServiceChangeResult {
   serviceId: PtvContentId;
   publishingStatus: Service['publishingStatus'];
@@ -108,4 +121,7 @@ export interface PtvAdapter {
 
   /** Creates a new service; same write-capability rules as applyServiceChange. */
   createService(service: NewService): Promise<ApplyServiceChangeResult>;
+
+  /** Writes an approved change to an existing service channel; same rules as applyServiceChange. */
+  applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult>;
 }

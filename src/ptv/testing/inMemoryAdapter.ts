@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  ApplyChannelChangeResult,
   ApplyServiceChangeResult,
+  ChannelChangeProposal,
   NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
@@ -151,6 +153,24 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     this.services[index] = updated;
     return {
       serviceId: updated.id,
+      publishingStatus: updated.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
+    const index = this.channels.findIndex((c) => c.id === proposal.channelId);
+    const existing = this.channels[index];
+    if (!existing) throw new Error(`Unknown channel id: ${proposal.channelId}`);
+    const updated: ServiceChannel = { ...existing, ...proposal.changes };
+    this.channels[index] = updated;
+    return {
+      channelId: updated.id,
       publishingStatus: updated.publishingStatus,
       appliedAt: new Date().toISOString(),
     };

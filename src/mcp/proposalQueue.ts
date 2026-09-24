@@ -1,7 +1,7 @@
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { PtvContentId, Service } from '../ptv/domain.js';
+import type { PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import {
   ProposalAlreadyResolvedError,
@@ -13,6 +13,7 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
+import { applyChannelChanges, prepareChannelProposal } from './channelProposal.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { applyChanges, exportForManualPublish } from './applyOrExport.js';
@@ -44,8 +45,8 @@ export interface ProposalDetails extends ProposalSummary {
   queuedDiff: ProposeChangesResult['diff'];
   diff: ProposeChangesResult['diff'];
   /** `null` for a service_create proposal: there is nothing to diff against. */
-  current: Service | null;
-  proposed: Service | NewService;
+  current: Service | ServiceChannel | null;
+  proposed: Service | NewService | ServiceChannel;
 }
 
 export class InvalidResolveActionError extends Error {
@@ -86,6 +87,22 @@ async function proposalDetails(
       diff: proposal.queuedDiff,
       current: null,
       proposed: normalizeNewService(proposal.changes),
+    };
+  }
+  if (proposal.kind === 'channel_update') {
+    const prepared = await prepareChannelProposal(
+      registry,
+      ctx,
+      proposal.serviceId,
+      proposal.changes as Partial<ServiceChannel>,
+    );
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: prepared.diff,
+      current: prepared.current,
+      proposed: prepared.proposed,
     };
   }
   const prepared = await prepareProposal(
@@ -210,6 +227,10 @@ export async function resolveProposal(
       correlationId: proposal.correlationId,
     });
     return proposalDetails(registry, rejected, proposalCtx);
+  }
+
+  if (proposal.kind === 'channel_update') {
+    return resolveChannelProposal(registry, proposalService, auditService, ctx, proposal, action);
   }
 
   if (proposal.kind === 'service_create') {
@@ -386,6 +407,71 @@ async function resolveNewServiceProposal(
     result: 'Applied',
     correlationId: proposal.correlationId,
   });
+  return proposalDetails(registry, applied, proposalCtx);
+}
+
+/**
+ * approve_and_export marks a channel change approved for manual entry in
+ * PTV's UI; approve_and_apply re-diffs against the channel's current state
+ * and writes it.
+ */
+async function resolveChannelProposal(
+  registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+  action: Exclude<ResolveProposalAction, 'reject'>,
+): Promise<ProposalDetails> {
+  const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+  const changes = proposal.changes as Partial<ServiceChannel>;
+  const record = (result: string) =>
+    auditService.record({
+      tenantId: ctx.tenantId,
+      userId: ctx.actingUserId,
+      action: 'ResolveProposal',
+      resourceType: 'Proposal',
+      resourceId: proposal.id,
+      result,
+      correlationId: proposal.correlationId,
+    });
+
+  if (action === 'approve_and_export') {
+    const approved = await proposalService.markResolved(
+      ctx.tenantId,
+      proposal.id,
+      'approved',
+      ctx.actingUserId,
+    );
+    await record('ApprovedForManualPublish');
+    return proposalDetails(registry, approved, proposalCtx);
+  }
+  if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
+
+  try {
+    await applyChannelChanges(
+      registry,
+      auditService,
+      proposalCtx,
+      proposal.serviceId,
+      changes,
+      proposal.correlationId,
+    );
+  } catch (err) {
+    if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
+      throw err;
+    }
+    await proposalService.markResolved(ctx.tenantId, proposal.id, 'failed', ctx.actingUserId);
+    await record('Failed');
+    throw err;
+  }
+  const applied = await proposalService.markResolved(
+    ctx.tenantId,
+    proposal.id,
+    'applied',
+    ctx.actingUserId,
+  );
+  await record('Applied');
   return proposalDetails(registry, applied, proposalCtx);
 }
 

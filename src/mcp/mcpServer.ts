@@ -1,3 +1,4 @@
+import { queueChannelProposal } from './channelProposal.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -9,7 +10,7 @@ import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
-import type { SearchParams, Service } from '../ptv/domain.js';
+import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { NotAuthorizedError } from './authorization.js';
@@ -534,6 +535,41 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             validator,
             toolContext(extra),
             args.service as Partial<Service>,
+            args.correlationId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_channel_changes',
+    withOAuthSecurity({
+      description:
+        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Never writes anything; an Editor+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
+      inputSchema: {
+        channelId: z.string(),
+        changes: z
+          .record(z.string(), z.unknown())
+          .describe(
+            'Partial<ServiceChannel>: only names, descriptions, languages, publishingStatus.',
+          ),
+        correlationId: z.string().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await queueChannelProposal(
+            resolveRole,
+            registry,
+            auditService,
+            proposalService,
+            toolContext(extra),
+            args.channelId,
+            args.changes as Partial<ServiceChannel>,
             args.correlationId,
           ),
         );

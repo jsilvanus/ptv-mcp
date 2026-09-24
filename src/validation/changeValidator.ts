@@ -1,4 +1,4 @@
-import type { Service, ServiceType } from '../ptv/domain.js';
+import type { Service, ServiceChannel, ServiceType } from '../ptv/domain.js';
 
 /** Dot-path validation error for a field in the Service shape. */
 export interface ValidationError {
@@ -273,3 +273,30 @@ export class V11ChangeValidator implements ChangeValidator {
 }
 
 const KOKO_URI = /^http:\/\/www\.yso\.fi\/onto\/koko\/p\d+$/;
+
+/**
+ * Rules for a proposed (merged) service channel: a name, at least one
+ * language, and a publishing status the v11 API can write (see rule 12).
+ */
+export function validateChannel(proposed: ServiceChannel): ValidationResult {
+  const errors: ValidationError[] = [];
+  const hasName = Object.values(proposed.names ?? {}).some(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  );
+  if (!hasName) {
+    errors.push({ field: 'names', message: 'Must have at least one non-empty language version' });
+  }
+  if (!Array.isArray(proposed.languages) || proposed.languages.length === 0) {
+    errors.push({ field: 'languages', message: 'Must be a non-empty array' });
+  }
+  if (proposed.publishingStatus === 'Modified' || proposed.publishingStatus === 'Withdrawn') {
+    errors.push({
+      field: 'publishingStatus',
+      message:
+        proposed.publishingStatus === 'Modified'
+          ? "PTV has an unpublished modified version of this channel; the v11 API can't update it. Publish or discard it in PTV's web UI first."
+          : 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
+    });
+  }
+  return { valid: errors.length === 0, errors };
+}
