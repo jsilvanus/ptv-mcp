@@ -61,7 +61,12 @@ keep their meaning). `viewer` is new.
    reviewer.
 6. **Diff view.** Classification names instead of raw JSON, a per-language
    export preview on the proposal page, and a readable preview of a new
-   service.
+   service. Done: the diff copies names of classifications
+   the service already has onto proposed entries (v11 has no standalone
+   code lists to look up new ones, so those show their code); the web diff
+   has Finnish field labels and +/− classification lists, and a
+   per-language "Preview after approval" covers updates, new services and
+   channels.
 
 Exit criteria per step: unit and integration tests for the rule, RLS
 coverage for new tables (`src/db/rls.integration.test.ts`), audit entries,

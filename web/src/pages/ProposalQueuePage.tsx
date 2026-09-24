@@ -12,6 +12,7 @@ import { useTenants } from '../tenants/TenantContext';
 import { DiffView } from './DiffView';
 import { ProposalComments } from './ProposalComments';
 import { ProposalReviewers } from './ProposalReviewers';
+import { ProposalPreview } from './ProposalPreview';
 import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
@@ -209,6 +210,9 @@ export function ProposalQueuePage() {
                   <strong>Correlation:</strong> {selected.correlationId}
                 </p>
                 <DiffView diff={selected.diff} />
+                {selected.proposed && (
+                  <ProposalPreview key={selected.id} entity={selected.proposed} />
+                )}
                 {tenantId && (
                   <ProposalReviewers
                     tenantId={tenantId}

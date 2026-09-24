@@ -75,6 +75,25 @@ describe('diffService', () => {
     ).toHaveLength(1);
   });
 
+  it('copies known classification names onto proposed entries given by uri or code', () => {
+    const current: Service = {
+      ...baseService,
+      serviceClasses: [
+        { code: 'P11.6', uri: 'http://example/class/p11.6', names: { fi: 'Seurakunnat' } },
+      ],
+    };
+    const [entry] = diffService(current, {
+      serviceClasses: [
+        { uri: 'http://example/class/p11.6', names: {} },
+        { code: 'P27', names: {} },
+      ],
+    });
+    expect(entry?.after).toEqual([
+      { uri: 'http://example/class/p11.6', names: { fi: 'Seurakunnat' } },
+      { code: 'P27', names: {} },
+    ]);
+  });
+
   it('expands a localized field into one entry per changed language', () => {
     const diff = diffService(baseService, { names: { fi: 'Uusi nimi', sv: 'Gammalt namn' } });
     expect(diff).toEqual([{ field: 'names.fi', before: 'Vanha nimi', after: 'Uusi nimi' }]);

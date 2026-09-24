@@ -69,6 +69,25 @@ function codeListKey(value: unknown): string {
 }
 
 /**
+ * A proposal usually names classification entries by uri or code only;
+ * copies the names of entries the service already has, so the diff reads
+ * "P11.6 Seurakunnat ja uskonnolliset yhteisöt" rather than a bare code.
+ */
+function withKnownNames(before: unknown, after: unknown): unknown {
+  if (!Array.isArray(before) || !Array.isArray(after)) return after;
+  const known = before as CodeListEntry[];
+  return (after as CodeListEntry[]).map((entry) => {
+    if (Object.keys(entry.names ?? {}).length > 0) return entry;
+    const match = known.find(
+      (candidate) =>
+        (entry.uri !== undefined && candidate.uri === entry.uri) ||
+        (entry.code !== undefined && candidate.code === entry.code),
+    );
+    return match ? { ...entry, names: match.names } : entry;
+  });
+}
+
+/**
  * Merges `changes` onto `current` using the same "field presence, not
  * truthiness" semantics as the write model (src/ptv/v11/writeMapping.ts):
  * a key present in `changes` fully replaces that field (even with an
@@ -129,7 +148,7 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
     }
     if (CODE_LIST_FIELDS.includes(field as (typeof CODE_LIST_FIELDS)[number])) {
       if (codeListKey(before) !== codeListKey(after)) {
-        entries.push({ field, before, after });
+        entries.push({ field, before, after: withKnownNames(before, after) });
       }
       continue;
     }

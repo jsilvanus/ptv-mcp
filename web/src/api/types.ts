@@ -111,7 +111,32 @@ export interface ReviewCandidate {
   role: MembershipRole;
 }
 
+/** Mirrors src/ptv/domain.ts's CodeListEntry. */
+export interface CodeListEntry {
+  code?: string;
+  uri?: string;
+  names: Record<string, string>;
+}
+
+/**
+ * The parts of a proposed service or channel (src/ptv/domain.ts) the
+ * review page previews; channels have no summaries or classifications.
+ */
+export interface PreviewEntity {
+  names?: Record<string, string>;
+  summaries?: Record<string, string>;
+  descriptions?: Record<string, string>;
+  languages?: string[];
+  serviceClasses?: CodeListEntry[];
+  ontologyTerms?: CodeListEntry[];
+  targetGroups?: CodeListEntry[];
+  lifeEvents?: CodeListEntry[];
+  industrialClasses?: CodeListEntry[];
+}
+
 export interface ProposalDetails extends ProposalSummary {
+  /** Merged result after approval; null when it can no longer be read. */
+  proposed: PreviewEntity | null;
   diff: ServiceDiffEntry[];
   queuedDiff: ServiceDiffEntry[];
   /** Oldest first. */
