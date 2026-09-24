@@ -77,6 +77,11 @@ export function Layout() {
               <NavLink to={`/tenants/${currentTenantId}/proposals`}>Proposal queue</NavLink>
             </li>
           )}
+          {canReviewProposals && (
+            <li>
+              <NavLink to={`/tenants/${currentTenantId}/reviews`}>Content review</NavLink>
+            </li>
+          )}
         </ul>
 
         <button type="button" onClick={handleLogout}>

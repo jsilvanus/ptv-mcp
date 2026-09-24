@@ -1554,3 +1554,50 @@ Known gaps:
 - Approval in chat still depends on the AI following the instructions.
   The server can't tell whether a human or the model issued
   `ptv_resolve_proposal`.
+
+## 2026-09-24 — Automated quality checks, review campaigns, "waiting for you"
+
+Plan: `docs/review-campaigns-plan.md`.
+
+- `src/quality/contentChecks.ts` makes the checkable `Q-*` rules of
+  `guides/content-quality.md` deterministic (errors vs heuristic
+  warnings). Its results appear:
+  - in `quality` on every propose result and on `ptv_get_proposal`
+    (shown on the web proposal page)
+  - from the new `ptv_check_quality` tool
+  - on each review item
+
+  The guide's section 9 now marks every check *auto* or *manual*, and the
+  workflow skill tells the AI to report the automated results as they are
+  and to hand-check only the manual items. The Finnish passive and
+  participial heuristics exclude common case-form false positives
+  (asioitaan, itsellään, tilanteessasi).
+- Review campaigns: migration `0022_review_campaigns` adds the
+  `review_campaigns` and `review_items` tables (RLS, grant), plus
+  `proposals.review_item_id`.
+  - Code: `src/reviews/reviewService.ts` (persistence) and
+    `src/reviews/reviewCampaigns.ts` (roles and rules).
+  - Nine `ptv_review_*` MCP tools and REST under
+    `/tenants/:id/review-campaigns` and `/review-items`.
+  - `reviewItemId` on the three propose tools.
+  - Web: a "Content review" page.
+- `ptv_my_tasks` / `GET /tenants/:id/my-tasks`: the pull-style inbox, also
+  shown as "Waiting for you" on the Content review page. MCP notifications
+  were considered and not used: the transport is stateless and clients
+  don't show notifications to users.
+- The skills now use the new role names.
+- Tests:
+  - `src/quality/contentChecks.test.ts`
+  - `src/routes/reviews.integration.test.ts`: the full campaign through
+    REST and MCP, and the inbox
+  - RLS coverage for both new tables
+
+Known gaps:
+
+- Checks cover only what the domain model maps: no instructions, channel
+  contact fields or opening hours yet.
+- The v11 adapter has no children query, so sub-organisations come from
+  the cached organisation catalogue.
+- Campaign start reads everything synchronously, which can be slow for
+  very large organisations.
+- The in-memory test adapter ignores `organizationId` filters.

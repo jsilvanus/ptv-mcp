@@ -1,3 +1,4 @@
+import { checkChannel, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult } from '../ptv/adapter.js';
 import type { PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
@@ -73,6 +74,8 @@ export interface QueuedChannelProposalResult extends PreparedChannelProposal {
   correlationId: string;
   proposalId: string;
   status: ProposalStatus;
+  /** Automated content checks on the proposed channel. */
+  quality: QualityReport;
 }
 
 /** `ptv_propose_channel_changes`: queues a `channel_update` proposal (Contributor+). */
@@ -85,6 +88,7 @@ export async function queueChannelProposal(
   channelId: PtvContentId,
   changes: Partial<ServiceChannel>,
   correlationId?: string,
+  reviewItemId?: string,
 ): Promise<QueuedChannelProposalResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const prepared = await prepareChannelProposal(registry, ctx, channelId, changes);
@@ -108,6 +112,7 @@ export async function queueChannelProposal(
     changes: changes as Partial<Service>,
     queuedDiff: prepared.diff,
     correlationId: auditEntry.correlationId,
+    ...(reviewItemId ? { reviewItemId } : {}),
   });
   return {
     ...prepared,
@@ -115,6 +120,7 @@ export async function queueChannelProposal(
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
+    quality: checkChannel(prepared.proposed),
   };
 }
 

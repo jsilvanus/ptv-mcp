@@ -77,6 +77,8 @@ export interface ProposalSummary {
   correlationId: string;
   resolvedByUserId: string | null;
   resolvedAt: string | null;
+  /** Set when the proposal answers a review campaign item. */
+  reviewItemId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -143,6 +145,83 @@ export interface ProposalDetails extends ProposalSummary {
   comments: ProposalComment[];
   /** Required reviewers; approving waits until all have approved. */
   reviewers: ProposalReviewer[];
+  /** Automated content checks on `proposed`; null without it. */
+  quality: QualityReport | null;
+}
+
+/** Mirrors src/quality/contentChecks.ts. */
+export interface QualityFinding {
+  checkId: string;
+  severity: 'error' | 'warning';
+  field: string;
+  language?: string;
+  message: string;
+  excerpt?: string;
+}
+
+export interface QualityReport {
+  findings: QualityFinding[];
+  errors: number;
+  warnings: number;
+}
+
+/** Mirrors src/reviews/reviewService.ts. */
+export type ReviewItemStatus = 'open' | 'confirmed' | 'changes_proposed';
+export type ReviewTargetKind = 'organisation' | 'service' | 'channel';
+
+export interface CampaignProgress {
+  total: number;
+  open: number;
+  confirmed: number;
+  changesProposed: number;
+  unassigned: number;
+}
+
+/** Mirrors src/reviews/reviewCampaigns.ts's ReviewCampaignSummary. */
+export interface ReviewCampaignSummary {
+  id: string;
+  environment: PtvEnvironment;
+  name: string;
+  organizationId: string;
+  status: 'open' | 'closed';
+  dueDate: string | null;
+  createdByUserId: string;
+  createdByName: string | null;
+  correlationId: string;
+  createdAt: string;
+  closedAt: string | null;
+  progress: CampaignProgress;
+}
+
+export interface LinkedProposal {
+  id: string;
+  reviewItemId: string;
+  kind: ProposalKind;
+  status: ProposalStatus;
+  createdAt: string;
+}
+
+export interface ReviewItem {
+  id: string;
+  campaignId: string;
+  targetKind: ReviewTargetKind;
+  targetId: string;
+  targetName: string;
+  channelType: string | null;
+  organizationId: string;
+  assigneeUserId: string | null;
+  assigneeName: string | null;
+  status: ReviewItemStatus;
+  findings: QualityFinding[];
+  note: string | null;
+  reviewedByUserId: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  proposals: LinkedProposal[];
+}
+
+export interface ReviewCampaignDetails extends ReviewCampaignSummary {
+  items: ReviewItem[];
 }
 
 /** Tenant's PTV v11 organisation API user (IN-API write credential); the password is never returned. */
@@ -158,4 +237,24 @@ export interface PtvV11ApiUserStatus {
 
 export interface TenantSettings {
   requireFourEyes: boolean;
+}
+
+/** Mirrors src/mcp/myTasks.ts. */
+export type ChangeReadiness =
+  | 'waiting_for_reviewers'
+  | 'ready_to_resolve'
+  | 'needs_another_resolver'
+  | 'approved_for_manual_publish';
+
+export interface ChangeToHandle extends ProposalSummary {
+  readiness: ChangeReadiness;
+  reviewers: { userName: string; decision: ReviewDecision }[];
+}
+
+export interface MyTasks {
+  reviewItems: ReviewItem[];
+  proposalsAwaitingMySignOff: ProposalSummary[];
+  changesToHandle: ChangeToHandle[];
+  openCampaigns: ReviewCampaignSummary[];
+  summary: string[];
 }

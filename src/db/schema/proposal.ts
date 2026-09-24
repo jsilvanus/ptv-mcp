@@ -2,6 +2,7 @@ import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { proposalKindEnum, proposalStatusEnum, ptvEnvironmentEnum } from './enums.js';
 import { tenants } from './tenant.js';
 import { users } from './user.js';
+import { reviewItems } from './reviewCampaign.js';
 
 /**
  * Persisted proposal queue (Phase 8): Readers can queue changes; Editor+
@@ -27,6 +28,10 @@ export const proposals = pgTable('proposals', {
     onDelete: 'restrict',
   }),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  /** The review item this proposal came from, when made during a review campaign. */
+  reviewItemId: uuid('review_item_id').references(() => reviewItems.id, {
+    onDelete: 'set null',
+  }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

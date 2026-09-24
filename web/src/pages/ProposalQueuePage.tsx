@@ -13,6 +13,7 @@ import { DiffView } from './DiffView';
 import { ProposalComments } from './ProposalComments';
 import { ProposalReviewers } from './ProposalReviewers';
 import { ProposalPreview } from './ProposalPreview';
+import { QualityFindings } from './QualityFindings';
 import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
@@ -208,10 +209,22 @@ export function ProposalQueuePage() {
                   <strong>Status:</strong> {selected.status}
                   <br />
                   <strong>Correlation:</strong> {selected.correlationId}
+                  {selected.reviewItemId && (
+                    <>
+                      <br />
+                      <strong>From review item:</strong> {selected.reviewItemId}
+                    </>
+                  )}
                 </p>
                 <DiffView diff={selected.diff} />
                 {selected.proposed && (
                   <ProposalPreview key={selected.id} entity={selected.proposed} />
+                )}
+                {selected.quality && (
+                  <>
+                    <h3>Automated checks</h3>
+                    <QualityFindings findings={selected.quality.findings} />
+                  </>
                 )}
                 {tenantId && (
                   <ProposalReviewers

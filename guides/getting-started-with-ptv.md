@@ -79,7 +79,8 @@ people, so that the work and the know-how survive staff changes. If you
 don't know who your Palveluhallinta main user is, ask ptv-tuki@dvv.fi.
 
 The PTV roles are DVV's roles. **This MCP has its own, separate role
-model**: Reader, Editor, Publisher and Tenant Admin. Only people who also
+model**: Katselija (Viewer), Ehdottaja (Contributor), Hyväksyjä (Approver),
+Julkaisija (Publisher) and Pääkäyttäjä (Administrator). Only people who also
 have the right PTV rights should hold MCP roles that write to PTV (see
 `ptv-mcp-admin`).
 

@@ -30,7 +30,7 @@ Before drafting, load the `content-quality` guide
    - Classifications: `ptv_list_codes` (service classes, target groups,
      life events, industrial classes) and `ptv_search_ontology_terms`
 3. Check whether a proposal for the same content is already pending:
-   `ptv_list_proposals {"status":"pending"}` (Editor+).
+   `ptv_list_proposals {"status":"pending"}` (Contributor+).
 
 ## 2. Draft the change
 
@@ -64,9 +64,14 @@ After proposing, show the user:
 1. The **proposal ID** and what kind it is (service update, new service,
    or channel update).
 2. The **diff**: every changed field, language by language, old → new.
-3. The **quality review**: go through checklist section 9 of
-   `content-quality` and list any `FAIL` items with suggested fixes. Also
-   list the `Q-FACT-1` items that need human confirmation.
+3. The **quality review**:
+   - The tool result's `quality` holds the **automated checks**. They are
+     deterministic, so the same text always gives the same result. Show
+     every `error`, and fix it before asking for approval unless the user
+     knowingly accepts it. Show the `warning`s for the user to judge.
+   - Then check by hand only the items the automation can't decide
+     (marked *manual* in `content-quality` section 9). Always list the
+     `Q-FACT-1` facts that need human confirmation.
 4. The **validation result** from the tool (mandatory fields, limits).
 5. **Who can approve it and how** (next step).
 
@@ -77,7 +82,7 @@ content and have the old one rejected, so the audit trail stays clear.
 
 Approval is a **human** act.
 
-- **Preferred:** an Editor or higher opens the web UI → **Proposal queue**,
+- **Preferred:** a Hyväksyjä (Approver) or higher opens the web UI → **Proposal queue**,
   reads the re-diffed proposal (always computed against the *current* PTV
   data), and resolves it.
 - **In chat:** call `ptv_resolve_proposal` only after the user has seen the
@@ -89,8 +94,8 @@ Resolution options:
 
 | Action               | Who                                                   | Effect                                                                                                                                           |
 | -------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `reject`             | Editor+                                               | Closes the proposal. Nothing is written.                                                                                                        |
-| `approve_and_export` | Editor+                                               | Approves it and produces a per-language preview for **manual** entry in PTV's own UI (`ptv_export_for_manual_publish`). The human then publishes it in PTV. |
+| `reject`             | Approver+                                             | Closes the proposal. Nothing is written.                                                                                                        |
+| `approve_and_export` | Approver+                                             | Approves it and produces a per-language preview for **manual** entry in PTV's own UI (`ptv_export_for_manual_publish`). The human then publishes it in PTV. |
 | `approve_and_apply`  | Publisher + write-capable PTV connection              | Validates it and writes it to PTV through the API. The proposal becomes `applied`, or `failed` with the error.                                                   |
 
 v12 writing is not yet enabled in this MCP. Until it is, use
@@ -118,10 +123,62 @@ When asked to "check" or "review" content, fetch it and run the
 as a table of check ID, result, field/language and suggested fix. Offer to
 draft proposals for the fixes. Don't create proposals unasked.
 
+## Review campaigns: checking all content
+
+A **review campaign** is a full check of the organisation's PTV content.
+It makes sure every service, channel and organisation is up to date and
+has the proper channels linked.
+
+1. **Start** (Julkaisija/Publisher+): `ptv_review_start_campaign` with the
+   PTV organisation id. Sub-organisations are included by default. Every
+   published service, channel and organisation becomes a **review item**,
+   and the automated checks (`ptv_check_quality`) run on each one.
+2. **Assign** (Publisher+): `ptv_review_assign` gives items to reviewers
+   (Ehdottaja/Contributor+). Assign by item ids, or by kind and/or
+   organisation (e.g. all channels of one parish to its office secretary).
+3. **Review** (the assigned reviewer): `ptv_review_my_items`, then for each
+   item `ptv_review_get_item`. That shows the current PTV data, fresh
+   automated findings and any linked proposals. With the reviewer, check
+   that:
+   - the facts are current (the automated checks can't know this);
+   - every real channel is connected, and nothing outdated is;
+   - the automated findings are fixed, or knowingly accepted.
+4. **Decide** with the reviewer:
+   - Nothing to change → `ptv_review_complete_item` with `decision: "confirmed"`.
+   - Changes needed → draft them with `ptv_propose_changes`,
+     `ptv_propose_channel_changes` or `ptv_propose_new_service`, **passing
+     `reviewItemId`**. Show the diff and quality results as in sections
+     2–3, then `ptv_review_complete_item` with
+     `decision: "changes_proposed"`. This sends the item to the Publishers.
+5. **Publish** (Approver/Publisher): the proposals appear in the proposal
+   queue and in `ptv_my_tasks`, and are resolved as in section 4. If a
+   proposal is rejected, a Publisher can send the item back with
+   `ptv_review_reopen_item`.
+6. **Close** (Publisher+): `ptv_review_close_campaign` once the items are
+   handled. Every step is in the audit log under the campaign's
+   correlation id.
+
+The same flow is available in the web UI under **Content review**.
+
+## What is waiting for me?
+
+Call `ptv_my_tasks` at the start of a session and tell the user its
+`summary` lines. It lists:
+
+- review items assigned to them,
+- proposals waiting for their sign-off,
+- for Approvers and above, every suggested change that still needs review,
+  resolving or publishing, each with its readiness.
+
+The web UI shows the same list under Content review → **Waiting for you**.
+
 ## Roles cheat-sheet
 
-- **Reader**: search, read and propose.
-- **Editor**: also list, review, reject, and approve and export.
-- **Publisher**: also approve and apply (write to PTV).
-- **Tenant Admin**: also members, PTV connections and the audit log. See the
-  `ptv-mcp-admin` skill.
+- **Katselija (Viewer)**: read and run quality checks.
+- **Ehdottaja (Contributor)**: also propose, comment, sign off, and review
+  assigned campaign items.
+- **Hyväksyjä (Approver)**: also resolve (reject, or approve and export).
+- **Julkaisija (Publisher)**: also approve and apply (write to PTV), and run
+  review campaigns.
+- **Pääkäyttäjä (Administrator)**: also members, PTV connections, settings
+  and the audit log. See the `ptv-mcp-admin` skill.

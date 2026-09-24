@@ -50,3 +50,24 @@ export const reviewDecisionEnum = pgEnum('review_decision', [
   'approved',
   'changes_requested',
 ]);
+
+/** A content review campaign: a full check of an organisation's PTV content. */
+export const reviewCampaignStatusEnum = pgEnum('review_campaign_status', ['open', 'closed']);
+
+/** What a review item points at in PTV. */
+export const reviewTargetKindEnum = pgEnum('review_target_kind', [
+  'organisation',
+  'service',
+  'channel',
+]);
+
+/**
+ * A review item's state: `open` until its reviewer decides, then
+ * `confirmed` (up to date, channels linked, nothing to change) or
+ * `changes_proposed` (sent to Publishers with linked proposals).
+ */
+export const reviewItemStatusEnum = pgEnum('review_item_status', [
+  'open',
+  'confirmed',
+  'changes_proposed',
+]);

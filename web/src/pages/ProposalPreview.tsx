@@ -13,7 +13,13 @@ import {
  * time — the same text an Approver would copy into PTV on
  * approve_and_export, and the only readable view of a new service.
  */
-export function ProposalPreview({ entity }: { entity: PreviewEntity }) {
+export function ProposalPreview({
+  entity,
+  title = 'Preview after approval',
+}: {
+  entity: PreviewEntity;
+  title?: string;
+}) {
   const languages = [
     ...new Set([
       ...(entity.languages ?? []),
@@ -26,7 +32,7 @@ export function ProposalPreview({ entity }: { entity: PreviewEntity }) {
 
   return (
     <section>
-      <h3>Preview after approval</h3>
+      <h3>{title}</h3>
       {languages.length > 1 && (
         <p style={{ display: 'flex', gap: 8 }}>
           {languages.map((code) => (

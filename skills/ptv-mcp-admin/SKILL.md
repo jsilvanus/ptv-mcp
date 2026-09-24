@@ -5,7 +5,7 @@ description: Set up and administer the ptv-mcp server for an organisation (e.g. 
 
 # ptv-mcp administration
 
-This skill walks a **Tenant Admin** (and the server operator) through
+This skill walks a **Pääkäyttäjä** (Administrator, `tenant_admin`; "Tenant Admin" below) and the server operator through
 setting up ptv-mcp for an organisation. Doing it for the AI assistant:
 most steps happen in the ptv-mcp **web UI** or in DVV's services. Guide
 the user step by step and check each prerequisite. Never ask the user for
@@ -61,19 +61,24 @@ A **tenant** is one PTV organisation (e.g. a parish union) in ptv-mcp.
 
 ### Choosing roles
 
-| MCP role         | Can do                                                                                                                                  | Give to                                                                              |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Reader**       | Search and read PTV data. **Propose** changes, which are queued and not written.                                                         | Staff who suggest content: employees who know the activity                           |
-| **Editor**       | Everything a Reader can do, plus review the proposal queue, **reject** proposals, or **approve and export** them for manual publishing in PTV's own UI | PTV maintainers (PTV-ylläpitäjä)                                                     |
-| **Publisher**    | Everything an Editor can do, plus **approve and apply**: write to PTV (needs a write-capable PTV connection)                             | PTV main users / trained maintainers who also have PTV rights in Palveluhallinta     |
-| **Tenant Admin** | Everything, plus members, roles, PTV connections and the audit log                                                                     | One or two PTV main users (PTV-pääkäyttäjä)                                          |
+| MCP role                          | Can do                                                                                                                                     | Give to                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| **Katselija** (Viewer)            | Read the organisation's PTV data, drafts included, and run the automated quality check                                                    | People who only need to look                                                      |
+| **Ehdottaja** (Contributor)       | Plus **propose** changes (queued, not written), comment, sign off as a required reviewer, and review the items of a review campaign assigned to them | Staff who know the activity: the reviewers of a review campaign                   |
+| **Hyväksyjä** (Approver)          | Plus **resolve** proposals: reject, or approve and export for manual publishing in PTV's own UI                                            | PTV maintainers (PTV-ylläpitäjä)                                                  |
+| **Julkaisija** (Publisher)        | Plus **approve and apply** (write to PTV; needs a write-capable PTV connection), and **start and run review campaigns**                   | PTV main users / trained maintainers who also have PTV rights in Palveluhallinta |
+| **Pääkäyttäjä** (Administrator, `tenant_admin`) | Everything, plus members, roles, PTV connections, tenant settings (four-eyes) and the audit log                           | One or two PTV main users (PTV-pääkäyttäjä)                                       |
 
 Principles:
 
-- **Least privilege.** Give Publisher only to people who are allowed to
+- **Least privilege.** Give Julkaisija only to people who are allowed to
   publish the organisation's official information and who have done PTV
-  training. Keep **at least two Tenant Admins**, mirroring DVV's rule of a
+  training. Keep **at least two administrators**, mirroring DVV's rule of a
   main user plus a deputy.
+- **Four-eyes** is on by default, so nobody resolves their own proposal. A
+  very small parish with one PTV person can switch it off in the
+  organisation settings. Keep it on if you can: it is the strongest
+  evidence of human editorial control.
 - **Remove people promptly** when they change jobs, and review members at
   least once a year. Role changes are recorded in the audit log.
 

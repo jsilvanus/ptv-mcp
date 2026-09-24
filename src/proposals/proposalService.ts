@@ -30,6 +30,8 @@ export interface ProposalRecord {
   correlationId: string;
   resolvedByUserId: string | null;
   resolvedAt: Date | null;
+  /** The review item this proposal came from (docs/review-campaigns-plan.md), if any. */
+  reviewItemId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,6 +91,7 @@ export class ProposalService {
     changes: Partial<Service>;
     queuedDiff: ServiceDiffEntry[];
     correlationId: string;
+    reviewItemId?: string;
   }): Promise<ProposalRecord> {
     const row = await withContext(this.db, { tenantId: input.tenantId }, async (tx) => {
       const created = await tx
@@ -103,6 +106,7 @@ export class ProposalService {
           changes: input.changes,
           queuedDiff: input.queuedDiff,
           correlationId: input.correlationId,
+          reviewItemId: input.reviewItemId ?? null,
         })
         .returning();
       return created[0];

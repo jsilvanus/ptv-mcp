@@ -1,3 +1,4 @@
+import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
@@ -41,6 +42,23 @@ export type ResolveProposalAction = 'approve_and_export' | 'approve_and_apply' |
 export interface QueuedProposeChangesResult extends ProposeChangesResult {
   proposalId: string;
   status: ProposalStatus;
+  /** Automated content checks on the proposed service. */
+  quality: QualityReport;
+}
+
+/**
+ * Automated content checks on a proposal's `proposed` entity. Channel
+ * proposals don't know the channel's connections, so Q-STRUCT-5 is left
+ * to the review item and ptv_check_quality.
+ */
+export function proposedQuality(
+  kind: ProposalKind,
+  proposed: Service | NewService | ServiceChannel | null,
+): QualityReport | null {
+  if (!proposed) return null;
+  return kind === 'channel_update'
+    ? checkChannel(proposed as ServiceChannel)
+    : checkService(proposed as Service | NewService);
 }
 
 export interface ProposalSummary {
@@ -53,6 +71,8 @@ export interface ProposalSummary {
   correlationId: string;
   resolvedByUserId: string | null;
   resolvedAt: Date | null;
+  /** Set when the proposal was made for a review campaign item. */
+  reviewItemId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +93,8 @@ export interface ProposalDetails extends ProposalSummary {
   comments: ProposalComment[];
   /** Required reviewers; approving waits until all have `approved`. */
   reviewers: ProposalReviewer[];
+  /** Automated content checks on `proposed` (src/quality/contentChecks.ts); null without it. */
+  quality: QualityReport | null;
 }
 
 export class InvalidResolveActionError extends Error {
@@ -84,7 +106,7 @@ export class InvalidResolveActionError extends Error {
   }
 }
 
-function toSummary(proposal: ProposalRecord): ProposalSummary {
+export function toSummary(proposal: ProposalRecord): ProposalSummary {
   return {
     id: proposal.id,
     kind: proposal.kind,
@@ -95,6 +117,7 @@ function toSummary(proposal: ProposalRecord): ProposalSummary {
     correlationId: proposal.correlationId,
     resolvedByUserId: proposal.resolvedByUserId,
     resolvedAt: proposal.resolvedAt,
+    reviewItemId: proposal.reviewItemId ?? null,
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
   };
@@ -111,14 +134,19 @@ async function proposalDetails(
     proposalService.listComments(ctx.tenantId, proposal.id),
     proposalService.listReviewers(ctx.tenantId, proposal.id),
   ]);
-  return { ...details, comments, reviewers };
+  return {
+    ...details,
+    comments,
+    reviewers,
+    quality: proposedQuality(proposal.kind, details.proposed),
+  };
 }
 
 async function proposalDiffDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
-): Promise<Omit<ProposalDetails, 'comments' | 'reviewers'>> {
+): Promise<Omit<ProposalDetails, 'comments' | 'reviewers' | 'quality'>> {
   try {
     return await liveProposalDetails(registry, proposal, ctx);
   } catch (err) {
@@ -140,7 +168,7 @@ async function liveProposalDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
-): Promise<Omit<ProposalDetails, 'comments' | 'reviewers'>> {
+): Promise<Omit<ProposalDetails, 'comments' | 'reviewers' | 'quality'>> {
   if (proposal.kind === 'service_create') {
     return {
       ...toSummary(proposal),
@@ -192,6 +220,7 @@ export async function queueProposal(
   serviceId: PtvContentId,
   changes: Partial<Service>,
   correlationId?: string,
+  reviewItemId?: string,
 ): Promise<QueuedProposeChangesResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const prepared = await prepareProposal(registry, ctx, serviceId, changes);
@@ -213,6 +242,7 @@ export async function queueProposal(
     changes,
     queuedDiff: prepared.diff,
     correlationId: auditEntry.correlationId,
+    ...(reviewItemId ? { reviewItemId } : {}),
   });
 
   return {
@@ -220,6 +250,7 @@ export async function queueProposal(
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
+    quality: checkService(prepared.proposed),
   };
 }
 

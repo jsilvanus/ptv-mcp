@@ -193,4 +193,35 @@ describe('Row-Level Security', () => {
       });
     }
   });
+  it('scopes review_campaigns and review_items by tenant, and fails closed without context', async () => {
+    const campaignId = randomUUID();
+    await admin.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+      await tx`INSERT INTO review_campaigns (id, tenant_id, environment, name, organization_id, created_by_user_id, correlation_id) VALUES (${campaignId}, ${tenantA}, 'test', 'Tarkistus', 'org', ${userA}, ${randomUUID()})`;
+      await tx`INSERT INTO review_items (tenant_id, campaign_id, target_kind, target_id, target_name, organization_id) VALUES (${tenantA}, ${campaignId}, 'service', 's', 'Palvelu', 'org')`;
+    });
+    try {
+      for (const table of ['review_campaigns', 'review_items'] as const) {
+        const column = table === 'review_campaigns' ? 'id' : 'campaign_id';
+        const withoutContext =
+          await asApp`SELECT 1 FROM ${asApp(table)} WHERE ${asApp(column)} = ${campaignId}`;
+        const asTenantB = await asApp.begin(async (tx) => {
+          await tx`SELECT set_config('app.current_tenant_id', ${tenantB}, true)`;
+          return tx`SELECT 1 FROM ${tx(table)} WHERE ${tx(column)} = ${campaignId}`;
+        });
+        const asTenantA = await asApp.begin(async (tx) => {
+          await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+          return tx`SELECT 1 FROM ${tx(table)} WHERE ${tx(column)} = ${campaignId}`;
+        });
+        expect(withoutContext).toHaveLength(0);
+        expect(asTenantB).toHaveLength(0);
+        expect(asTenantA).toHaveLength(1);
+      }
+    } finally {
+      await admin.begin(async (tx) => {
+        await tx`SELECT set_config('app.current_tenant_id', ${tenantA}, true)`;
+        await tx`DELETE FROM review_campaigns WHERE id = ${campaignId}`;
+      });
+    }
+  });
 });

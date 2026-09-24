@@ -95,6 +95,7 @@ export function guideUri(topic: GuideTopic): string {
 export const SERVER_INSTRUCTIONS = [
   "ptv-mcp manages an organisation's content in Suomi.fi Palvelutietovaranto (PTV), Finland's national service catalogue. PTV content is public, openly reused information.",
   'All writes are two-phase: you only draft proposals; a human with the right role reviews and approves them. Never call ptv_resolve_proposal or ptv_apply_changes unless the user has seen the full diff (every field, every language) and explicitly asked to approve or apply that specific proposal. This human review is what makes AI-assisted publishing lawful under EU AI Act Art. 50(4).',
+  'At the start of a session, call ptv_my_tasks and tell the user what is waiting for them (review items, sign-offs, changes to resolve or publish). MCP notifications are not used for this; ptv_my_tasks is the inbox.',
   'Never invent facts (opening hours, prices, phone numbers, eligibility); mark anything unverified. Never ask for or repeat API keys, passwords or tokens. Never put personal names in PTV content.',
   `Before drafting or reviewing content, read the guides with ptv_get_guide (topics: ${GUIDE_TOPICS.join(', ')}) — especially content-quality (writing rules + review checklist), ai-compliance and ptv-mcp-workflow. For setup questions use ptv-mcp-admin, getting-started and api-credentials.`,
 ].join('\n\n');
@@ -149,7 +150,7 @@ export function registerGuides(server: McpServer): void {
     ({ target }) =>
       promptText(
         [
-          'Review the following PTV content against the guide below. If the target is an id, fetch it first with ptv_get_service, ptv_get_channel or ptv_get_organisation. Check every language version separately. Report a table of check ID, result (PASS/FAIL/N/A), field and language, and suggested fix, then list facts that need human confirmation. Do not create proposals unless asked.',
+          'Review the following PTV content against the guide below. If the target is a service or channel id, run ptv_check_quality on it first: its findings are the deterministic automated checks, report them as they are. Then fetch it (ptv_get_service, ptv_get_channel or ptv_get_organisation) and check by hand only the checklist items marked manual, every language version separately. Report a table of check ID, result (PASS/FAIL/N/A), field and language, and suggested fix, then list facts that need human confirmation. Do not create proposals unless asked.',
           `Target: ${target}`,
           '---',
           readGuide('content-quality'),

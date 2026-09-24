@@ -204,6 +204,18 @@ DVV's kehittajille.suomi.fi content guidelines; its `Q-*` checklist IDs
 are referenced by the prompts and tests. Keep them stable, and update the
 guides rather than hard-coding PTV writing rules in tool descriptions.
 
+### Automated quality checks, review campaigns and the inbox
+
+`src/quality/contentChecks.ts` is the deterministic implementation of the
+`Q-*` checks marked *auto* in `guides/content-quality.md`; proposals,
+review items and `ptv_check_quality` all use it, so change rules there (and
+the guide's markers) rather than in prompts. Review campaigns
+(`src/reviews/`, `docs/review-campaigns-plan.md`) turn an organisation's
+published content into review items that reviewers confirm or answer with
+proposals linked by `proposals.review_item_id`. `ptv_my_tasks`
+(`src/mcp/myTasks.ts`) is the pull-style inbox: the stateless MCP
+transport has no channel for push notifications.
+
 ### Everything else
 
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —

@@ -15,10 +15,25 @@ Use it in two ways:
   item. Report each failed check with its ID (e.g. `Q-STRUCT-1`) and the
   field and language where it fails.
 
-The MCP's own validator (`ptv_validate_changes`) checks only mandatory
-fields, character limits and code values. It does **not** check the
-quality rules below. Quality review is the job of the writer, the AI
-assistant, and in the end the human who approves the change.
+**Automated checks.** The checks marked *auto* in section 9 run
+deterministically in the MCP (`src/quality/contentChecks.ts`). Their
+results come back:
+
+- in the `quality` field of every proposal,
+- on every review campaign item,
+- from `ptv_check_quality`.
+
+The same text always gives the same result, whichever AI (if any) is
+used. Errors break a DVV rule. Warnings are heuristics (e.g. Finnish
+passive voice) for a person to judge. Only the fields the MCP reads are
+checked: names, summaries, descriptions, classifications, languages and
+connections. Instructions, contact fields and opening hours are not read,
+so check them by hand.
+
+Checks marked *manual* need judgement (the service test, tone, facts). The
+writer, the AI assistant and in the end the human approver own them.
+`ptv_validate_changes` separately checks PTV's own write rules: mandatory
+fields, limits and code values.
 
 ---
 
@@ -380,77 +395,77 @@ field, language and a suggested fix) or `N/A` for each item.
 
 ### Structure and data model
 
-- `Q-STRUCT-1`: No phone numbers, email addresses, URLs, street or visiting
+- `Q-STRUCT-1` (*auto*): No phone numbers, email addresses, URLs, street or visiting
   addresses, or opening hours in names, summaries, descriptions,
   instructions or conditions.
-- `Q-STRUCT-2`: The text doesn't refer to other descriptions, other fields
+- `Q-STRUCT-2` (*auto (heuristic)*): The text doesn't refer to other descriptions, other fields
   ("see below"), or "this page/website".
-- `Q-STRUCT-3`: A service's content is about the service, not the
+- `Q-STRUCT-3` (*manual*): A service's content is about the service, not the
   organisation. A channel's description is about the channel only. An
   organisation's description is neutral and not promotional.
-- `Q-STRUCT-4`: The service passes the service test: customers want it,
+- `Q-STRUCT-4` (*manual*): The service passes the service test: customers want it,
   the customer is active, it has channels, and it's at the right level
   (not bundled, not internal).
-- `Q-STRUCT-5`: Every service has at least one connected channel and every
+- `Q-STRUCT-5` (*auto*): Every service has at least one connected channel and every
   channel at least one service. All real channels are connected.
-- `Q-STRUCT-6`: Another organisation's channel is connected, not described
+- `Q-STRUCT-6` (*manual*): Another organisation's channel is connected, not described
   again.
 
 ### Fields
 
-- `Q-NAME-1`: The name is customer-oriented, doesn't repeat the
+- `Q-NAME-1` (*partly auto: organisation name in the service name*): The name is customer-oriented, doesn't repeat the
   organisation's name without need, and isn't a duplicate. A channel name
   describes the channel, and e-service or web page names work as link
   text.
-- `Q-SUM-1`: The summary is at most 150 characters, isn't a copy of the
+- `Q-SUM-1` (*auto*): The summary is at most 150 characters, isn't a copy of the
   name, adds information, and contains nothing that's missing from the
   description, instructions or conditions.
-- `Q-DESC-1`: The description is within its limit (service and channel
+- `Q-DESC-1` (*auto: presence and length*): The description is within its limit (service and channel
   5,000, organisation 2,500 characters) and says what the customer gets
   and what need it meets.
-- `Q-INSTR-1`: The instructions tell the customer what to do and in what
+- `Q-INSTR-1` (*manual*): The instructions tell the customer what to do and in what
   order, and point to the channels in words.
-- `Q-GD-1`: If a general description is used, its text isn't repeated or
+- `Q-GD-1` (*manual*): If a general description is used, its text isn't repeated or
   copied, and only local details are added.
-- `Q-LAW-1`: Laws appear only as Finlex links in the law field, not as
+- `Q-LAW-1` (*auto (heuristic)*): Laws appear only as Finlex links in the law field, not as
   references in running text.
-- `Q-CLASS-1`: There are 1–4 service classes, with at least one subclass.
-- `Q-CLASS-2`: There are 1–10 ontology terms, specific rather than generic,
+- `Q-CLASS-1` (*auto*): There are 1–4 service classes, with at least one subclass.
+- `Q-CLASS-2` (*auto: count*): There are 1–10 ontology terms, specific rather than generic,
   and free keywords don't replace real terms.
-- `Q-CLASS-3`: Citizen subgroups are used only for services limited to
+- `Q-CLASS-3` (*auto: KR2 sub-group, many citizen sub-groups*): Citizen subgroups are used only for services limited to
   those groups (never all of them), and business services have a subgroup.
-- `Q-AREA-1`: The area isn't wider than the real service area.
-- `Q-LANG-1`: The service languages list the languages the customer is
+- `Q-AREA-1` (*manual*): The area isn't wider than the real service area.
+- `Q-LANG-1` (*partly auto: languages present*): The service languages list the languages the customer is
   actually served in. Channels are described only in the languages they
   serve in.
-- `Q-LANG-2`: The language versions match each other in content, and all
+- `Q-LANG-2` (*auto: every language version has name, summary and description*): The language versions match each other in content, and all
   of them are published or intentionally drafted.
-- `Q-CONTACT-1`: Phone numbers have no leading 0, include a price type and
+- `Q-CONTACT-1` (*manual*): Phone numbers have no leading 0, include a price type and
   any extra cost in words, and have no personal names in additional info.
   URLs start with http(s):// and aren't `tunnistautuminen.suomi.fi`.
-- `Q-HOURS-1`: Times use the `12.00` format. Holiday hours are checked for
+- `Q-HOURS-1` (*manual*): Times use the `12.00` format. Holiday hours are checked for
   the current church and calendar year. Exceptional hours have a clear
   title.
 
 ### Style
 
-- `Q-STYLE-1`: The most important thing comes first.
-- `Q-STYLE-2`: The reader is addressed as "you", uses imperatives, and
+- `Q-STYLE-1` (*manual*): The most important thing comes first.
+- `Q-STYLE-2` (*auto (heuristic, Finnish)*): The reader is addressed as "you", uses imperatives, and
   there is no unnecessary passive voice.
-- `Q-STYLE-3`: Paragraphs have at most four sentences and one topic each,
+- `Q-STYLE-3` (*auto (heuristic)*): Paragraphs have at most four sentences and one topic each,
   and sentences are short (usually three clauses or fewer).
-- `Q-STYLE-4`: There are no participial or infinitive constructions
+- `Q-STYLE-4` (*auto (heuristic, Finnish)*): There are no participial or infinitive constructions
   (lauseenvastikkeet); subordinate clauses are used instead.
-- `Q-STYLE-5`: Plain language: no jargon, and abbreviations are explained.
-- `Q-STYLE-6`: No personal names; titles or roles are used instead.
-- `Q-STYLE-7`: No dates or years that will go out of date.
-- `Q-STYLE-8`: No spelling or grammar errors.
-- `Q-STYLE-9`: Formatting is limited to paragraphs, lists and
+- `Q-STYLE-5` (*manual*): Plain language: no jargon, and abbreviations are explained.
+- `Q-STYLE-6` (*manual*): No personal names; titles or roles are used instead.
+- `Q-STYLE-7` (*auto (heuristic)*): No dates or years that will go out of date.
+- `Q-STYLE-8` (*manual*): No spelling or grammar errors.
+- `Q-STYLE-9` (*auto*): Formatting is limited to paragraphs, lists and
   subheadings, with no emphasis markup.
 
 ### Accuracy (always a human check)
 
-- `Q-FACT-1`: Every fact is correct and current: prices, opening hours,
+- `Q-FACT-1` (*manual*): Every fact is correct and current: prices, opening hours,
   eligibility, contacts and the producer. Facts that came from an AI
   suggestion and haven't been confirmed from an authoritative source must
   be flagged to the human approver, not presented as certain.
