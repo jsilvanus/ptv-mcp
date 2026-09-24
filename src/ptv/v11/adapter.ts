@@ -40,7 +40,11 @@ import { generalDescriptionWireToDomain } from './mappers/generalDescription.js'
 import { serviceCollectionWireToDomain } from './mappers/serviceCollection.js';
 import { connectionsFromChannel, connectionsFromService } from './mappers/connection.js';
 import { referenceCodeWireToDomain, V11_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
-import { newServiceToV11Body, serviceChangesToV11Body } from './writeMapping.js';
+import {
+  newServiceToV11Body,
+  organizationAreaToV11,
+  serviceChangesToV11Body,
+} from './writeMapping.js';
 import { channelChangesToV11Body, V11_CHANNEL_WRITE_TYPES } from './channelWriteMapping.js';
 import { planServiceConnections } from './connectionWrite.js';
 import {
@@ -477,9 +481,12 @@ export class PtvV11Adapter implements PtvAdapter {
     if (!this.capabilities.supportsWrite) {
       throw new Error('PtvV11Adapter: write is not enabled for this instance');
     }
+    const organization = await this.getOrNull<V11OrganizationWire>(
+      `/api/v11/Organization/${service.organizationId}`,
+    );
     const created = await this.client.post<V11ServiceWire>(
       '/api/v11/Service',
-      newServiceToV11Body(service),
+      newServiceToV11Body(service, organizationAreaToV11(organization)),
     );
     return {
       serviceId: created.id,

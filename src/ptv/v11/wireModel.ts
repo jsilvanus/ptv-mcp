@@ -123,7 +123,15 @@ export interface V11OrganizationWire {
   businessCode?: string | null;
   publishingStatus: V11PublishingStatus;
   organizationNames: V11LocalizedItem[];
+  /** Nationwide, NationwideExceptAlandIslands or LimitedType. */
+  areaType?: string | null;
+  areas?: V11AreaItem[] | null;
   modified: string;
+}
+
+export interface V11AreaItem {
+  type?: string | null;
+  code?: string | null;
 }
 
 export interface V11GeneralDescriptionWire {

@@ -2,7 +2,13 @@ import type { NewService } from '../adapter.js';
 import type { CodeListEntry, LocalizedText, Service } from '../domain.js';
 import { needsDeleteFlag } from './deleteFlags.js';
 import { toV11WritePublishingStatus } from './mappers/common.js';
-import type { V11CodeListItem, V11LocalizedItem, V11ServiceWire } from './wireModel.js';
+import type {
+  V11AreaItem,
+  V11CodeListItem,
+  V11LocalizedItem,
+  V11OrganizationWire,
+  V11ServiceWire,
+} from './wireModel.js';
 
 /**
  * Translates a domain-level partial Service change into the body v11's
@@ -136,7 +142,32 @@ const CLASSIFICATION_FIELDS = [
  * parish's own service: publicly funded, nationwide, produced by the
  * responsible organisation itself. They can be changed in PTV's UI.
  */
-export function newServiceToV11Body(service: NewService): Record<string, unknown> {
+/**
+ * The area a new service covers, taken from its organisation: PTV refuses a
+ * service area wider than the organisation's own ("Area information type
+ * Nationwide is too wide."), and the domain model carries no area.
+ */
+export function organizationAreaToV11(
+  organization: Pick<V11OrganizationWire, 'areaType' | 'areas'> | null,
+): { areaType: string; areas?: { type: string; areaCodes: string[] }[] } {
+  if (organization?.areaType !== 'LimitedType') {
+    return { areaType: organization?.areaType || 'Nationwide' };
+  }
+  const codesByType = new Map<string, string[]>();
+  for (const area of organization.areas ?? ([] as V11AreaItem[])) {
+    if (!area.type || !area.code) continue;
+    codesByType.set(area.type, [...(codesByType.get(area.type) ?? []), area.code]);
+  }
+  return {
+    areaType: 'LimitedType',
+    areas: [...codesByType].map(([type, areaCodes]) => ({ type, areaCodes })),
+  };
+}
+
+export function newServiceToV11Body(
+  service: NewService,
+  area: ReturnType<typeof organizationAreaToV11> = { areaType: 'Nationwide' },
+): Record<string, unknown> {
   const uris = (entries: CodeListEntry[] | undefined) =>
     (entries ?? []).map((entry) => entry.uri).filter((uri): uri is string => !!uri);
   return {
@@ -158,7 +189,7 @@ export function newServiceToV11Body(service: NewService): Record<string, unknown
     ...(service.generalDescriptionId ? { generalDescriptionId: service.generalDescriptionId } : {}),
     ...(service.sourceId ? { sourceId: service.sourceId } : {}),
     fundingType: 'PubliclyFunded',
-    areaType: 'Nationwide',
+    ...area,
     mainResponsibleOrganization: service.organizationId,
     serviceProducers: [
       { provisionType: 'SelfProducedServices', organizations: [service.organizationId] },
