@@ -16,8 +16,9 @@ import type { ToolContext } from './toolContext.js';
  * - `waiting_for_reviewers`: required reviewers haven't all approved.
  * - `ready_to_resolve`: can be approved (export or apply) or rejected now.
  * - `needs_another_resolver`: your own proposal; four-eyes needs someone else.
- * - `approved_for_manual_publish`: approved + exported; publish it in PTV's
- *   own UI (Publisher+ only).
+ * - `approved_for_manual_publish`: approved + exported; enter it in PTV's
+ *   own UI from its manual-publishing sheet, then close it with
+ *   ptv_confirm_manual_publish (listed to Publishers and above).
  */
 export type ChangeReadiness =
   | 'waiting_for_reviewers'
@@ -137,7 +138,7 @@ export async function listMyTasks(
   }
   if (count('approved_for_manual_publish') > 0) {
     summary.push(
-      `${count('approved_for_manual_publish')} approved change(s) were exported and need publishing in PTV's own UI.`,
+      `${count('approved_for_manual_publish')} approved change(s) were exported and need publishing in PTV's own UI (ptv_get_proposal shows what to enter); confirm each with ptv_confirm_manual_publish once it is in PTV.`,
     );
   }
   for (const campaign of openCampaigns) {

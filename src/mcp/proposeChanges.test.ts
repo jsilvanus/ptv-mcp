@@ -54,6 +54,33 @@ describe('diffService', () => {
     expect(diffService(baseService, {})).toEqual([]);
   });
 
+  it('ignores key order and PTV-filled hour defaults, so read-back data equals the proposal', () => {
+    const current = {
+      ...baseService,
+      phoneNumbers: [{ number: '401234567', language: 'fi', prefixNumber: '+358' }],
+      serviceHours: [
+        {
+          type: 'DaysOfTheWeek',
+          validForNow: true,
+          openingTimes: [
+            { dayFrom: 'Monday', from: '09:00', to: '15:00' },
+            { dayFrom: 'Tuesday', from: '09:00', to: '15:00' },
+          ],
+        },
+      ],
+    } as unknown as Service;
+    const changes = {
+      phoneNumbers: [{ language: 'fi', prefixNumber: '+358', number: '401234567' }],
+      serviceHours: [
+        {
+          type: 'DaysOfTheWeek',
+          openingTimes: [{ dayFrom: 'Monday', dayTo: 'Tuesday', from: '09:00', to: '15:00' }],
+        },
+      ],
+    } as unknown as Partial<Service>;
+    expect(diffService(current, changes)).toEqual([]);
+  });
+
   it('compares classifications by uri, ignoring names and order', () => {
     const current: Service = {
       ...baseService,

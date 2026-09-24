@@ -270,7 +270,12 @@ describe('channelChangesToV11Body: channel fields', () => {
         isAlwaysOpen: false,
         isReservation: false,
         additionalInformation: [{ language: 'fi', value: 'Syyskausi' }],
-        openingHour: [{ dayFrom: 'Monday', dayTo: 'Friday', from: '09:00', to: '15:00' }],
+        // A weekday range is written out one day per entry (dayTo would mean over midnight).
+        openingHour: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((dayFrom) => ({
+          dayFrom,
+          from: '09:00',
+          to: '15:00',
+        })),
       },
     ]);
   });

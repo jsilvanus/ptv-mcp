@@ -1718,3 +1718,29 @@ Fixed after the test:
 Still to verify live: approving and applying channel field changes and a
 channel create. Four-eyes needs a second member, or an explicit
 decision to apply.
+
+## 2026-09-24 — Manual publishing sheet, Q-STRUCT-5 while creating, hour ranges
+
+- **Manual publishing.** `approve_and_export` used to leave only a
+  per-language text preview (for service updates), and nothing tracked
+  whether the change reached PTV.
+  - Every approved proposal now has a `manualPublish` sheet: all changed
+    fields, structured ones included, with PTV's Finnish labels, in the
+    edit form's order and formats, plus the steps.
+  - `ptv_confirm_manual_publish` and REST `confirm-published` close the
+    proposal as `applied` after checking PTV. An update must re-diff
+    empty; a new item is looked up by `ptvId`, its organisation and names
+    are checked, and the id is recorded.
+  - The web UI's Proposal queue shows the sheet with copy buttons and a
+    Mark as published button.
+- **Semantic diff.** `diffService` now ignores key order, and compares
+  service hours in canonical form, because PTV returns weekly hours one
+  day per entry. Before this, data read back from PTV could never equal a
+  proposal.
+- **Weekday ranges.** A weekly hour's `dayFrom`–`dayTo` (the guide's own
+  example) went to v11 as is. PTV could read it as one long span, as it
+  does for OverMidnight hours. It is now written one day per entry. The
+  live test proposal for Testimonitoimitalo had exactly this shape.
+- **Q-STRUCT-5** is a warning, with the next step, on new-service and
+  new-channel proposals. They are created one at a time and linked after.
+  It stays an error on published content.

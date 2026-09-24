@@ -181,6 +181,32 @@ export class ProposalService {
     return row as ProposalRecord;
   }
 
+  /**
+   * Closes an approved (exported) proposal once a person has published it
+   * in PTV's own UI: it becomes `applied`, keeping who approved it, and a
+   * new item gets the id PTV gave it.
+   */
+  async markPublished(
+    tenantId: string,
+    proposalId: string,
+    serviceId?: string,
+  ): Promise<ProposalRecord> {
+    const current = await this.getById(tenantId, proposalId);
+    if (current.status !== 'approved') {
+      throw new ProposalAlreadyResolvedError(proposalId, current.status);
+    }
+    const row = await withContext(this.db, { tenantId }, async (tx) => {
+      const updated = await tx
+        .update(proposals)
+        .set({ status: 'applied', updatedAt: new Date(), ...(serviceId ? { serviceId } : {}) })
+        .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId)))
+        .returning();
+      return updated[0];
+    });
+    if (!row) throw new ProposalNotFoundError(proposalId);
+    return row as ProposalRecord;
+  }
+
   /** Links a proposal to a review campaign item. */
   async setReviewItem(tenantId: string, proposalId: string, reviewItemId: string): Promise<void> {
     await withContext(this.db, { tenantId }, async (tx) =>

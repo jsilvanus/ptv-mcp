@@ -48,6 +48,8 @@ export const PARAGRAPH_MAX_SENTENCES = 4;
 export interface ServiceCheckContext {
   /** The owning organisation's names, to flag service names that repeat them. */
   organisationNames?: LocalizedText;
+  /** A new service still being proposed: no channels yet is a warning (Q-STRUCT-5). */
+  creating?: boolean;
 }
 
 export interface ChannelCheckContext {
@@ -56,6 +58,11 @@ export interface ChannelCheckContext {
    * unknown; 0 raises Q-STRUCT-5.
    */
   connectedServiceCount?: number;
+  /**
+   * A new channel still being proposed: a missing connection is the next
+   * step, not a broken rule, so Q-STRUCT-5 is a warning.
+   */
+  creating?: boolean;
   /** Today (YYYY-MM-DD) for date checks; defaults to the current date. */
   today?: string;
 }
@@ -423,7 +430,19 @@ export function checkService(
     error('Q-LANG-1', 'languages', 'No service languages (the languages customers are served in).');
   }
   if (service.serviceChannelIds.length === 0) {
-    error('Q-STRUCT-5', 'serviceChannelIds', 'No connected service channels.');
+    if (context.creating) {
+      // Services and channels are created one at a time and linked after:
+      // expected at this step, but the link must follow before publishing.
+      findings.push({
+        checkId: 'Q-STRUCT-5',
+        severity: 'warning',
+        field: 'serviceChannelIds',
+        message:
+          'No channels yet. Once the service exists, connect it: propose a new channel with its id in serviceIds, or add existing channel ids to its serviceChannelIds.',
+      });
+    } else {
+      error('Q-STRUCT-5', 'serviceChannelIds', 'No connected service channels.');
+    }
   }
   return report(findings);
 }
@@ -558,12 +577,22 @@ export function checkChannel(
     });
   }
   if (context.connectedServiceCount === 0) {
-    findings.push({
-      checkId: 'Q-STRUCT-5',
-      severity: 'error',
-      field: 'connections',
-      message: 'Not connected to any service; every channel needs at least one.',
-    });
+    findings.push(
+      context.creating
+        ? {
+            checkId: 'Q-STRUCT-5',
+            severity: 'warning',
+            field: 'serviceIds',
+            message:
+              "Not connected to a service yet. Give serviceIds, or once the channel exists, add its id to the service's serviceChannelIds.",
+          }
+        : {
+            checkId: 'Q-STRUCT-5',
+            severity: 'error',
+            field: 'connections',
+            message: 'Not connected to any service; every channel needs at least one.',
+          },
+    );
   }
   return report(findings);
 }

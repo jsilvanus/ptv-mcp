@@ -233,6 +233,19 @@ fields"). `validateChannel` (`src/validation/channelRules.ts`) holds PTV's
 hard rules, and `checkChannel` the guideline warnings. New channels are
 `channel_create` proposals (`src/mcp/newChannelProposal.ts`).
 
+### Manual publishing
+
+`approve_and_export` writes nothing to PTV. Approved proposals carry a
+`manualPublish` sheet (`src/mcp/manualPublish.ts`): the fields to enter
+in PTV's UI, with Finnish labels and PTV formats. `ptv_confirm_manual_publish`
+(`confirmManualPublish` in `src/mcp/proposalQueue.ts`, and REST
+`.../confirm-published`) checks PTV and then moves the proposal to
+`applied`. The check re-diffs updates and looks up new items by `ptvId`.
+It relies on `diffService` comparing values semantically: key order is
+ignored, and service hours are compared in canonical form
+(`src/ptv/serviceHours.ts`). Keep it that way, or read-back data never
+equals the proposal.
+
 ### Everything else
 
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —

@@ -51,6 +51,17 @@ Before drafting, load the `content-quality` guide
   `serviceIds` to connect it to its services in the same step.
 - **Connect or disconnect a channel**: `ptv_propose_changes` on the
   service, with its full `serviceChannelIds` list.
+- **Create a service and a channel together**: one at a time, because a
+  new item's id only exists once it is created in PTV.
+  1. First check the organisation's and other organisations' shared
+     channels: often only a connection is needed.
+  2. Propose and publish the first one (usually the service).
+  3. Propose the second with a link to the first. A new channel takes
+     `serviceIds`; a new service takes `serviceChannelIds`.
+
+  The first proposal gets a Q-STRUCT-5 **warning** ("not connected yet").
+  That is expected at this step. Published content without connections
+  gets a Q-STRUCT-5 **error**.
 - Optional pre-check: `ptv_validate_changes` validates the merged
   `proposed` object against PTV's mandatory-field and limit rules.
 
@@ -102,12 +113,35 @@ Resolution options:
 | Action               | Who                                                   | Effect                                                                                                                                           |
 | -------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `reject`             | Approver+                                             | Closes the proposal. Nothing is written.                                                                                                        |
-| `approve_and_export` | Approver+                                             | Approves it and produces a per-language preview for **manual** entry in PTV's own UI (`ptv_export_for_manual_publish`). The human then publishes it in PTV. |
+| `approve_and_export` | Approver+                                             | Approves it without writing anything. The result's `manualPublish` sheet lists every field for **manual** entry in PTV's own UI. A person enters and publishes it there, then confirms it (see "Manual publishing" below). |
 | `approve_and_apply`  | Publisher + write-capable PTV connection              | Validates it and writes it to PTV through the API. The proposal becomes `applied`, or `failed` with the error.                                                   |
 
 v12 writing is not yet enabled in this MCP. Until it is, use
 `approve_and_export`, or `approve_and_apply` on connections that support
 writes.
+
+### Manual publishing (approve_and_export)
+
+1. The approved proposal's `manualPublish` sheet (in the resolve result,
+   `ptv_get_proposal`, and the web UI's Proposal queue with the status
+   filter set to *approved*) gives:
+   - the steps;
+   - every field to change, with PTV's Finnish label, the current value
+     and the value to enter. Times are written 9.00, dates 24.12.2026,
+     and phone numbers with their charge type.
+
+   For an update the sheet lists only what still differs from PTV, so it
+   shrinks as the change is entered.
+2. The person enters the fields in PTV (palvelutietovaranto.suomi.fi) and
+   publishes every listed language version.
+3. They confirm it with `ptv_confirm_manual_publish`, or with **Mark as
+   published** in the Proposal queue. The MCP checks PTV first:
+   - an update must leave nothing to differ;
+   - a new service or channel needs `ptvId` (the id PTV gave it) and
+     must carry the proposed names.
+
+   The proposal then becomes `applied`. Until then it stays in
+   `ptv_my_tasks` as `approved_for_manual_publish`.
 
 ## 5. After publishing
 
@@ -192,7 +226,7 @@ complete list.
 | `names`, `summaries` (max 150), `descriptions` | all | `{ "fi": "…", "sv": "…" }`. These keys are the language versions. |
 | `languages` | all | The languages the channel **serves customers in** (e.g. `["fi","sv","ar"]`). |
 | `isVisibleForAll` | all | Other organisations may connect it (recommended: `true`). |
-| `serviceHours` | all | `[{ "type": "DaysOfTheWeek", "openingTimes": [{ "dayFrom": "Monday", "dayTo": "Friday", "from": "09:00", "to": "15:00" }], "additionalInformation": { "fi": "Syyskausi" } }]`. `Exceptional` hours need `validFrom` (plus `validTo`, and `isClosed` for closures). `OverMidnight` hours can end on another day. Without times, use `isAlwaysOpen` or `isReservation`. Dates are `YYYY-MM-DD`, times `HH:mm`. |
+| `serviceHours` | all | `[{ "type": "DaysOfTheWeek", "openingTimes": [{ "dayFrom": "Monday", "dayTo": "Friday", "from": "09:00", "to": "15:00" }], "additionalInformation": { "fi": "Syyskausi" } }]`. `Exceptional` hours need `validFrom` (plus `validTo`, and `isClosed` for closures). On weekly hours, `dayFrom`–`dayTo` is shorthand for the same times on each day of the range; it is written to PTV one day per entry. `OverMidnight` hours use `dayTo` for the day they end on. Without times, use `isAlwaysOpen` or `isReservation`. Dates are `YYYY-MM-DD`, times `HH:mm`. |
 | `urls` | EChannel, WebPage (required for every language version), Phone (optional) | `{ "fi": "https://…" }`. The exact page for each language, never `tunnistautuminen.suomi.fi`. |
 | `phoneNumbers` | Phone (required), ServiceLocation | `[{ "language": "fi", "type": "Phone" \| "Sms" \| "Fax", "prefixNumber": "+358", "number": "19 123 4567", "additionalInformation": "Vaihde", "chargeType": "Chargeable" \| "FreeOfCharge" \| "Other", "chargeDescription": "…" }]`. No leading 0. For a national service number (e.g. 020…), set `"isFinnishServiceNumber": true` and no prefix. Languages fi, sv or en only. |
 | `addresses` | ServiceLocation (a visiting street address is required) | `[{ "kind": "Street", "street": { "fi": "Kirkkokatu" }, "streetNumber": "5", "postalCode": "11100", "additionalInformation": { "fi": "Sisäänkäynti pihalta" } }]`. `kind` can also be `Other` (latitude and longitude plus additionalInformation, for places without an address; not shown on Suomi.fi) or `Foreign` (`text`). `"purpose": "Postal"` marks a postal address. |

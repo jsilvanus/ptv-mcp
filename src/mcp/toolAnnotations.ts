@@ -70,6 +70,10 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     title: 'Vie käsin julkaistavaksi',
     annotations: QUEUE_WRITE_READING_PTV,
   },
+  ptv_confirm_manual_publish: {
+    title: 'Kuittaa käsin julkaistuksi',
+    annotations: QUEUE_WRITE_READING_PTV,
+  },
   ptv_resolve_proposal: { title: 'Hyväksy tai hylkää muutosehdotus', annotations: PTV_WRITE },
   ptv_apply_changes: { title: 'Julkaise muutokset PTV:hen', annotations: PTV_WRITE },
 
