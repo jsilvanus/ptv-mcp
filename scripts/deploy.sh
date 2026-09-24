@@ -23,6 +23,13 @@ branch="${DEPLOY_BRANCH:-main}"
 
 log() { printf '[deploy %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
+# `npm install` on the server rewrites package-lock.json; the committed
+# lockfile is authoritative (npm ci below), so drop that drift.
+if ! git diff --quiet -- package-lock.json; then
+  log "discarding local package-lock.json changes"
+  git checkout -- package-lock.json
+fi
+
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   log "working tree has local changes; refusing to deploy over them:"
   git status --short --untracked-files=no
