@@ -54,6 +54,27 @@ describe('diffService', () => {
     expect(diffService(baseService, {})).toEqual([]);
   });
 
+  it('compares classifications by uri, ignoring names and order', () => {
+    const current: Service = {
+      ...baseService,
+      serviceClasses: [
+        { uri: 'http://example/class/1', names: { fi: 'Yksi', sv: 'Ett' } },
+        { uri: 'http://example/class/2', names: { fi: 'Kaksi' } },
+      ],
+    };
+    expect(
+      diffService(current, {
+        serviceClasses: [
+          { uri: 'http://example/class/2', names: {} },
+          { uri: 'http://example/class/1', names: { fi: 'Yksi' } },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      diffService(current, { serviceClasses: [{ uri: 'http://example/class/1', names: {} }] }),
+    ).toHaveLength(1);
+  });
+
   it('expands a localized field into one entry per changed language', () => {
     const diff = diffService(baseService, { names: { fi: 'Uusi nimi', sv: 'Gammalt namn' } });
     expect(diff).toEqual([{ field: 'names.fi', before: 'Vanha nimi', after: 'Uusi nimi' }]);
