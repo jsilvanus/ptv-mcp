@@ -63,8 +63,13 @@ export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied' | '
 
 export type ProposalResolveAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 
+/** Mirrors src/db/schema/enums.ts's proposalKindEnum. */
+export type ProposalKind = 'service_update' | 'service_create' | 'channel_update';
+
 export interface ProposalSummary {
   id: string;
+  kind: ProposalKind;
+  /** Target service or channel; empty for a service_create proposal until applied. */
   serviceId: string;
   environment: PtvEnvironment;
   proposedByUserId: string;

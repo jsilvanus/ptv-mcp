@@ -1,3 +1,4 @@
+import type { NewService } from '../adapter.js';
 import type { CodeListEntry, LocalizedText, Service } from '../domain.js';
 import { needsDeleteFlag } from './deleteFlags.js';
 import { toV11WritePublishingStatus } from './mappers/common.js';
@@ -86,6 +87,44 @@ export function serviceChangesToV11Body(
   }
 
   return body;
+}
+
+/**
+ * The body for `POST /api/v11/Service`. Besides the domain fields, PTV
+ * requires fundingType, areaType, mainResponsibleOrganization and
+ * serviceProducers, which the domain model doesn't carry. Defaults for a
+ * parish's own service: publicly funded, nationwide, produced by the
+ * responsible organisation itself. They can be changed in PTV's UI.
+ */
+export function newServiceToV11Body(service: NewService): Record<string, unknown> {
+  const uris = (entries: CodeListEntry[] | undefined) =>
+    (entries ?? []).map((entry) => entry.uri).filter((uri): uri is string => !!uri);
+  return {
+    type: service.serviceType,
+    publishingStatus: toV11WritePublishingStatus(service.publishingStatus),
+    serviceNames: localizedTextToWireList(service.names, 'Name'),
+    serviceDescriptions: [
+      ...localizedTextToWireList(service.summaries, 'Summary'),
+      ...localizedTextToWireList(service.descriptions, 'Description'),
+    ],
+    languages: service.languages,
+    serviceClasses: uris(service.serviceClasses),
+    ontologyTerms: uris(service.ontologyTerms),
+    targetGroups: uris(service.targetGroups),
+    lifeEvents: uris(service.lifeEvents),
+    industrialClasses: (service.industrialClasses ?? [])
+      .map(industrialClassUri)
+      .filter((uri): uri is string => !!uri),
+    ...(service.generalDescriptionId ? { generalDescriptionId: service.generalDescriptionId } : {}),
+    ...(service.sourceId ? { sourceId: service.sourceId } : {}),
+    fundingType: 'PubliclyFunded',
+    areaType: 'Nationwide',
+    mainResponsibleOrganization: service.organizationId,
+    serviceProducers: [
+      { provisionType: 'SelfProducedServices', organizations: [service.organizationId] },
+    ],
+    ...(service.serviceChannelIds.length > 0 ? { serviceChannels: service.serviceChannelIds } : {}),
+  };
 }
 
 /** Full-replace lists PTV requires on every PUT of a service without a general description. */

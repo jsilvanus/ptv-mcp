@@ -130,5 +130,26 @@ export function runPtvAdapterContractTests(
         await expect(attempt).rejects.toThrow();
       }
     });
+
+    it('createService refuses to write when the adapter declares no write capability', async () => {
+      if (adapter.getCapabilities().supportsWrite) return;
+      await expect(
+        adapter.createService({
+          organizationId: 'org',
+          serviceType: 'Service',
+          publishingStatus: 'Draft',
+          names: { fi: 'x' },
+          summaries: {},
+          descriptions: {},
+          serviceClasses: [],
+          ontologyTerms: [],
+          targetGroups: [],
+          lifeEvents: [],
+          industrialClasses: [],
+          languages: ['fi'],
+          serviceChannelIds: [],
+        }),
+      ).rejects.toThrow();
+    });
   });
 }

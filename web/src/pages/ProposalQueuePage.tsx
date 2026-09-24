@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { ApiError, apiFetch } from '../api/client';
 import type {
   ProposalDetails,
+  ProposalKind,
   ProposalResolveAction,
   ProposalStatus,
   ProposalSummary,
@@ -167,9 +168,11 @@ export function ProposalQueuePage() {
                       onClick={() => setSelectedId(proposal.id)}
                       style={{ width: '100%', textAlign: 'left' }}
                     >
-                      <strong>{proposal.serviceId}</strong>
+                      <strong>{proposalTarget(proposal)}</strong>
                       <br />
-                      <span className="muted">{proposal.status}</span>
+                      <span className="muted">
+                        {KIND_LABELS[proposal.kind]} · {proposal.status}
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -186,7 +189,7 @@ export function ProposalQueuePage() {
             ) : (
               <>
                 <p>
-                  <strong>Service:</strong> {selected.serviceId}
+                  <strong>{KIND_LABELS[selected.kind]}:</strong> {proposalTarget(selected)}
                   <br />
                   <strong>Status:</strong> {selected.status}
                   <br />
@@ -224,4 +227,14 @@ export function ProposalQueuePage() {
       )}
     </div>
   );
+}
+
+const KIND_LABELS: Record<ProposalKind, string> = {
+  service_update: 'Service update',
+  service_create: 'New service',
+  channel_update: 'Channel update',
+};
+
+function proposalTarget(proposal: ProposalSummary): string {
+  return proposal.serviceId || '(not created yet)';
 }

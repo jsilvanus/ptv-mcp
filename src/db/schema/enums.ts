@@ -25,3 +25,16 @@ export const proposalStatusEnum = pgEnum('proposal_status', [
   'applied',
   'failed',
 ]);
+
+/**
+ * What a proposal does: update an existing service (the original and
+ * default kind), create a new service, or update a service channel. The
+ * proposal's `service_id` holds the target entity's id: the service or
+ * channel, or for `service_create` the new service's id once applied
+ * (empty until then).
+ */
+export const proposalKindEnum = pgEnum('proposal_kind', [
+  'service_update',
+  'service_create',
+  'channel_update',
+]);

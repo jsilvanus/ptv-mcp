@@ -1,6 +1,7 @@
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
   ApplyServiceChangeResult,
+  NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
   PtvEnvironment,
@@ -30,14 +31,14 @@ import {
   fetchOrganizationServiceWindow,
 } from './pagination.js';
 import { serviceWireToDomain } from './mappers/service.js';
-import { V11ModifiedVersionLockedError } from './mappers/common.js';
+import { toPublishingStatus, V11ModifiedVersionLockedError } from './mappers/common.js';
 import { serviceChannelWireToDomain } from './mappers/serviceChannel.js';
 import { organizationWireToDomain } from './mappers/organization.js';
 import { generalDescriptionWireToDomain } from './mappers/generalDescription.js';
 import { serviceCollectionWireToDomain } from './mappers/serviceCollection.js';
 import { connectionsFromChannel, connectionsFromService } from './mappers/connection.js';
 import { referenceCodeWireToDomain, V11_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
-import { serviceChangesToV11Body } from './writeMapping.js';
+import { newServiceToV11Body, serviceChangesToV11Body } from './writeMapping.js';
 import { planServiceConnections } from './connectionWrite.js';
 import {
   sharedV11ApiTokenCache,
@@ -461,6 +462,21 @@ export class PtvV11Adapter implements PtvAdapter {
     return {
       serviceId: updated.id,
       publishingStatus: serviceWireToDomain(updated).publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createService(service: NewService): Promise<ApplyServiceChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const created = await this.client.post<V11ServiceWire>(
+      '/api/v11/Service',
+      newServiceToV11Body(service),
+    );
+    return {
+      serviceId: created.id,
+      publishingStatus: toPublishingStatus(created.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
   }

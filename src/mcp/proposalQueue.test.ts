@@ -17,6 +17,7 @@ import type {
   ProposalStatus,
 } from '../proposals/proposalService.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
+import { queueNewServiceProposal } from './newServiceProposal.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -71,6 +72,7 @@ function fakeProposalService() {
       const row: ProposalRecord = {
         id: `proposal-${rows.length + 1}`,
         tenantId: input.tenantId,
+        kind: input.kind ?? 'service_update',
         serviceId: input.serviceId,
         environment: input.environment,
         proposedByUserId: input.proposedByUserId,
@@ -97,12 +99,19 @@ function fakeProposalService() {
       return row;
     }),
     markResolved: vi.fn(
-      async (_tenantId: string, proposalId: string, status: Exclude<ProposalStatus, 'pending'>) => {
+      async (
+        _tenantId: string,
+        proposalId: string,
+        status: Exclude<ProposalStatus, 'pending'>,
+        _resolvedBy: string,
+        serviceId?: string,
+      ) => {
         const row = rows.find((entry) => entry.id === proposalId);
         if (!row) {
           throw new Error('not found');
         }
         row.status = status;
+        if (serviceId) row.serviceId = serviceId;
         row.resolvedByUserId = ctx.actingUserId;
         row.resolvedAt = new Date();
         row.updatedAt = new Date();
@@ -195,5 +204,84 @@ describe('proposalQueue', () => {
     );
     expect(resolved.status).toBe('applied');
     expect(rows[0]?.status).toBe('applied');
+  });
+
+  describe('service_create proposals', () => {
+    const newService: Partial<Service> = { ...service };
+    delete newService.id;
+    delete newService.modifiedAt;
+    delete newService.publishingStatus;
+
+    it('queues a new service with its validation, then applies it and records the new id', async () => {
+      const registry = buildRegistry(true);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+
+      const queued = await queueNewServiceProposal(
+        readerResolver,
+        audit,
+        api,
+        new V11ChangeValidator(),
+        ctx,
+        { ...newService, names: { fi: 'Uusi palvelu' } },
+      );
+      expect(queued.validation).toEqual({ valid: true, errors: [] });
+      expect(queued.proposed.publishingStatus).toBe('Draft');
+      expect(queued.diff).toContainEqual({ field: 'names.fi', after: 'Uusi palvelu' });
+      expect(rows[0]).toMatchObject({ kind: 'service_create', serviceId: '' });
+
+      const details = await getProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+      );
+      expect(details.current).toBeNull();
+
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+      );
+      expect(resolved.status).toBe('applied');
+      expect(resolved.serviceId).not.toBe('');
+      expect(audit.recordCalls.map((entry) => entry.action)).toContain('CreateService');
+    });
+
+    it('reports validation errors at queue time and refuses to apply an invalid service', async () => {
+      const registry = buildRegistry(true);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueNewServiceProposal(
+        readerResolver,
+        audit,
+        api,
+        new V11ChangeValidator(),
+        ctx,
+        { organizationId: 'org-1', names: { fi: 'Ilman luokituksia' }, languages: ['fi'] },
+      );
+      expect(queued.validation.valid).toBe(false);
+
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          'approve_and_apply',
+        ),
+      ).rejects.toThrow(/failed validation/);
+      expect(rows[0]?.status).toBe('failed');
+    });
   });
 });
