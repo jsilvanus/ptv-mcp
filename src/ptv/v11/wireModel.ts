@@ -110,6 +110,8 @@ export interface V11ServiceChannelWire {
   serviceChannelNames: V11LocalizedItem[];
   serviceChannelDescriptions: V11LocalizedItem[];
   languages: string[];
+  /** EChannel only; required on its PUT. */
+  requiresAuthentication?: boolean | null;
   services?: V11ServiceRelation[];
   modified: string;
 }

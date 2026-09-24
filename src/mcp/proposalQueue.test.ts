@@ -18,6 +18,7 @@ import type {
 } from '../proposals/proposalService.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
+import { queueChannelProposal } from './channelProposal.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -282,6 +283,67 @@ describe('proposalQueue', () => {
         ),
       ).rejects.toThrow(/failed validation/);
       expect(rows[0]?.status).toBe('failed');
+    });
+  });
+
+  describe('channel_update proposals', () => {
+    const channel = {
+      id: 'ch-1',
+      organizationId: 'org-1',
+      channelType: 'Phone' as const,
+      publishingStatus: 'Published' as const,
+      names: { fi: 'Asiakaspalvelu' },
+      descriptions: { fi: 'Kuvaus' },
+      languages: ['fi'],
+    };
+    const adapter = new InMemoryPtvAdapter({
+      channels: [channel],
+      capabilities: {
+        apiVersion: 'v11',
+        environment: 'test',
+        credentialScope: 'tenant',
+        supportsRead: true,
+        supportsWrite: true,
+        supportsDraftRead: true,
+      },
+    });
+    const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+
+    it('queues a channel change and applies it on approve_and_apply', async () => {
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueChannelProposal(readerResolver, registry, audit, api, ctx, 'ch-1', {
+        names: { fi: 'Seurakunnan asiakaspalvelu' },
+      });
+      expect(queued.diff).toEqual([
+        { field: 'names.fi', before: 'Asiakaspalvelu', after: 'Seurakunnan asiakaspalvelu' },
+      ]);
+      expect(rows[0]).toMatchObject({ kind: 'channel_update', serviceId: 'ch-1' });
+
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+      );
+      expect(resolved.status).toBe('applied');
+      expect(resolved.diff).toEqual([]);
+      expect((await adapter.getChannel('ch-1'))?.names).toEqual({
+        fi: 'Seurakunnan asiakaspalvelu',
+      });
+    });
+
+    it('refuses fields it cannot write', async () => {
+      const { api } = fakeProposalService();
+      await expect(
+        queueChannelProposal(readerResolver, registry, fakeAuditService(), api, ctx, 'ch-1', {
+          channelType: 'WebPage',
+        }),
+      ).rejects.toThrow(/can't be changed/);
     });
   });
 });

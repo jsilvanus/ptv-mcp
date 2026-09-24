@@ -1,5 +1,7 @@
 import type {
+  ApplyChannelChangeResult,
   ApplyServiceChangeResult,
+  ChannelChangeProposal,
   NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
@@ -626,6 +628,10 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async createService(_service: NewService): Promise<ApplyServiceChangeResult> {
+    throw new Error('PTV v12 write operations are not enabled yet');
+  }
+
+  async applyChannelChange(_proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
     throw new Error('PTV v12 write operations are not enabled yet');
   }
 }

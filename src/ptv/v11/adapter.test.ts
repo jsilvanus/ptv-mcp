@@ -214,3 +214,38 @@ describe('PtvV11Adapter connection writes', () => {
     ]);
   });
 });
+
+describe('PtvV11Adapter.applyChannelChange', () => {
+  it.each(['EChannel', 'Phone', 'PrintableForm', 'ServiceLocation', 'WebPage'])(
+    'PUTs a %s channel to its own type path with the token',
+    async (type) => {
+      const wire = {
+        id: 'ch-1',
+        serviceChannelType: type,
+        organizationId: 'org-15',
+        publishingStatus: 'Published',
+        serviceChannelNames: [{ language: 'fi', value: 'Vanha', type: 'Name' }],
+        serviceChannelDescriptions: [],
+        languages: ['fi'],
+        modified: '2026-09-24T00:00:00',
+      };
+      const { fetchImpl, calls } = fakeFetch({
+        'GET /api/v11/ServiceChannel/active/ch-1': () => Response.json(wire),
+        [`PUT /api/v11/ServiceChannel/${type}/ch-1`]: () => Response.json(wire),
+      });
+      const adapter = new PtvV11Adapter({
+        environment: 'test',
+        apiUser,
+        apiTokenCache: tokenCache,
+        canWrite: true,
+        fetchImpl,
+      });
+
+      await adapter.applyChannelChange({ channelId: 'ch-1', changes: { names: { fi: 'Uusi' } } });
+
+      const put = calls.find((call) => call.method === 'PUT');
+      expect(put?.path).toBe(`/api/v11/ServiceChannel/${type}/ch-1`);
+      expect(put?.authorization).toBe('Bearer api-user-token');
+    },
+  );
+});
