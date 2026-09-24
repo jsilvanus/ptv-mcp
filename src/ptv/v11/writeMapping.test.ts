@@ -129,6 +129,55 @@ describe('serviceChangesToV11Body', () => {
       );
     });
 
+    describe('with a general description linked', () => {
+      const linked: V11ServiceWire = {
+        ...current,
+        generalDescriptionId: 'gd-1',
+        serviceClasses: [
+          ...current.serviceClasses,
+          { name: [], code: 'P25.5', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1203' },
+        ],
+      };
+      const inherited = new Set(['http://urn.fi/URN:NBN:fi:au:ptvl:v1203']);
+
+      it('does not resend the classifications, which are not required then', () => {
+        const body = serviceChangesToV11Body({ names: { fi: 'X' } }, linked, inherited);
+        expect('serviceClasses' in body).toBe(false);
+        expect('targetGroups' in body).toBe(false);
+      });
+
+      it("on unlink sends the type and resends only the service's own classifications", () => {
+        const body = serviceChangesToV11Body(
+          { generalDescriptionId: null as unknown as string },
+          linked,
+          inherited,
+        );
+        expect(body.deleteGeneralDescriptionId).toBe(true);
+        expect(body.type).toBe('Service');
+        expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1105']);
+      });
+
+      it('keeps inherited entries out of a list the change sends', () => {
+        const body = serviceChangesToV11Body(
+          {
+            serviceClasses: [
+              { uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1203', names: {} },
+              { uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} },
+            ],
+          },
+          linked,
+          inherited,
+        );
+        expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1111']);
+      });
+    });
+
+    it('maps a serviceType change to type', () => {
+      expect(serviceChangesToV11Body({ serviceType: 'PermitOrObligation' }, current).type).toBe(
+        'PermitOrObligation',
+      );
+    });
+
     it('resends the classifications PTV requires when there is no general description', () => {
       const body = serviceChangesToV11Body({ names: { fi: 'X' } }, current);
       expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1105']);

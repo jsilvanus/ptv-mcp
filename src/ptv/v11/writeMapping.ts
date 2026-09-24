@@ -30,8 +30,19 @@ import type { V11CodeListItem, V11LocalizedItem, V11ServiceWire } from './wireMo
 export function serviceChangesToV11Body(
   changes: Partial<Service>,
   current?: V11ServiceWire,
+  /**
+   * URIs of the classifications the linked general description brings.
+   * PTV's read merges them into the service's own lists without marking
+   * them, so they are filtered out of whatever is sent back; otherwise
+   * they would become the service's own.
+   */
+  inheritedUris: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {};
+
+  if ('serviceType' in changes && changes.serviceType) {
+    body.type = changes.serviceType;
+  }
 
   if (changes.publishingStatus) {
     body.publishingStatus = toV11WritePublishingStatus(changes.publishingStatus);
@@ -68,9 +79,22 @@ export function serviceChangesToV11Body(
   applyUriListField(body, 'Service', 'lifeEvents', changes.lifeEvents);
   applyIndustrialClassField(body, changes.industrialClasses);
 
-  if (current) {
+  // Required only without a general description; with one linked they're
+  // left alone.
+  const keepsGeneralDescription =
+    'generalDescriptionId' in changes
+      ? !!changes.generalDescriptionId
+      : !!current?.generalDescriptionId;
+  if (current && !keepsGeneralDescription) {
     for (const field of REQUIRED_WITHOUT_GENERAL_DESCRIPTION) {
       if (!(field in changes)) body[field] = wireUris(current[field]);
+    }
+  }
+
+  for (const field of CLASSIFICATION_FIELDS) {
+    const value = body[field];
+    if (Array.isArray(value) && inheritedUris.size > 0) {
+      body[field] = value.filter((uri) => !inheritedUris.has(uri as string));
     }
   }
 
@@ -83,11 +107,22 @@ export function serviceChangesToV11Body(
       body.generalDescriptionId = changes.generalDescriptionId;
     } else {
       setDeleteFlag(body, 'Service', 'generalDescriptionId');
+      // Live 400: "Type: The field is required when 'DeleteGeneralDescriptionId'
+      // has value 'True'" (the type came from the general description).
+      body.type ??= current?.type;
     }
   }
 
   return body;
 }
+
+const CLASSIFICATION_FIELDS = [
+  'serviceClasses',
+  'ontologyTerms',
+  'targetGroups',
+  'lifeEvents',
+  'industrialClasses',
+] as const;
 
 /**
  * The body for `POST /api/v11/Service`. Besides the domain fields, PTV
