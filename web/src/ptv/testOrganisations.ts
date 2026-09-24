@@ -71,8 +71,8 @@ export interface PtvTestApiAccount {
  * The API user (`API…@testi.fi`, not `API-ASTI…`) of each test
  * organisation, keyed by organisation id, from DVV's public test account
  * list (TEST_ACCOUNTS_URL). Picking an organisation in the v11 API-user
- * form fills these in. Organisations missing here fall back to manual
- * entry. Test environment only; DVV may change these when the test
+ * form fills these in. Only organisations listed here can be picked
+ * (all can while the table is empty). Test environment only; DVV may change these when the test
  * environment is reset.
  *
  * Example entry:
