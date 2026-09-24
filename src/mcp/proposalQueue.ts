@@ -33,6 +33,7 @@ import {
 } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { applyChanges, exportForManualPublish } from './applyOrExport.js';
+import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
 import {
   prepareProposal,
   ServiceNotFoundError,
@@ -63,11 +64,11 @@ export function proposedQuality(
     const serviceIds = (proposed as { serviceIds?: string[] }).serviceIds;
     return checkChannel(proposed as ServiceChannel, {
       connectedServiceCount: serviceIds?.length ?? 0,
+      creating: true,
     });
   }
-  return kind === 'channel_update'
-    ? checkChannel(proposed as ServiceChannel)
-    : checkService(proposed as Service | NewService);
+  if (kind === 'channel_update') return checkChannel(proposed as ServiceChannel);
+  return checkService(proposed as Service | NewService, { creating: kind === 'service_create' });
 }
 
 export interface ProposalSummary {
@@ -104,6 +105,18 @@ export interface ProposalDetails extends ProposalSummary {
   reviewers: ProposalReviewer[];
   /** Automated content checks on `proposed` (src/quality/contentChecks.ts); null without it. */
   quality: QualityReport | null;
+  /**
+   * An approved (exported) proposal: what to enter in PTV's own UI. For an
+   * update it lists what still differs from PTV, so it empties as the
+   * change is entered.
+   */
+  manualPublish: ManualPublishSheet | null;
+  /**
+   * An approved update: true once PTV already holds every change (confirm
+   * it with ptv_confirm_manual_publish). null for new items, which are
+   * checked by the id given when confirming, and for other statuses.
+   */
+  publishedInPtv: boolean | null;
 }
 
 export class InvalidResolveActionError extends Error {
@@ -148,14 +161,54 @@ async function proposalDetails(
     comments,
     reviewers,
     quality: proposedQuality(proposal.kind, details.proposed),
+    ...manualPublishState(proposal, details),
   };
 }
+
+function isCreate(kind: ProposalKind): boolean {
+  return kind === 'service_create' || kind === 'channel_create';
+}
+
+function manualPublishState(
+  proposal: ProposalRecord,
+  details: DiffDetails,
+): Pick<ProposalDetails, 'manualPublish' | 'publishedInPtv'> {
+  if (proposal.status !== 'approved') return { manualPublish: null, publishedInPtv: null };
+  const entity = (details.proposed ?? details.current) as
+    (Partial<ServiceChannel> & { names?: Service['names'] }) | null;
+  const creating = isCreate(proposal.kind);
+  const archived =
+    (proposal.changes as { publishingStatus?: string }).publishingStatus === 'Archived';
+  return {
+    manualPublish: buildManualPublishSheet({
+      kind: proposal.kind,
+      diff: creating ? proposal.queuedDiff : details.diff,
+      ptvId: creating ? null : proposal.serviceId,
+      names: (details.current ?? entity)?.names ?? {},
+      languages: Object.keys(entity?.names ?? {}),
+      ...(entity?.channelType ? { channelType: entity.channelType } : {}),
+      ...(entity?.organizationId ? { organizationId: entity.organizationId } : {}),
+    }),
+    publishedInPtv: creating
+      ? null
+      : details.current
+        ? details.diff.length === 0
+        : archived
+          ? true
+          : null,
+  };
+}
+
+type DiffDetails = Omit<
+  ProposalDetails,
+  'comments' | 'reviewers' | 'quality' | 'manualPublish' | 'publishedInPtv'
+>;
 
 async function proposalDiffDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
-): Promise<Omit<ProposalDetails, 'comments' | 'reviewers' | 'quality'>> {
+): Promise<DiffDetails> {
   try {
     return await liveProposalDetails(registry, proposal, ctx);
   } catch (err) {
@@ -177,7 +230,7 @@ async function liveProposalDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
-): Promise<Omit<ProposalDetails, 'comments' | 'reviewers' | 'quality'>> {
+): Promise<DiffDetails> {
   if (proposal.kind === 'channel_create') {
     return {
       ...toSummary(proposal),
@@ -902,8 +955,10 @@ export function isProposalQueueError(
   | InvalidCommentError
   | InvalidReviewRequestError
   | ReviewsPendingError
-  | NotARequestedReviewerError {
+  | NotARequestedReviewerError
+  | ManualPublishCheckError {
   return (
+    err instanceof ManualPublishCheckError ||
     err instanceof ProposalNotFoundError ||
     err instanceof ProposalAlreadyResolvedError ||
     err instanceof InvalidResolveActionError ||
@@ -912,4 +967,113 @@ export function isProposalQueueError(
     err instanceof ReviewsPendingError ||
     err instanceof NotARequestedReviewerError
   );
+}
+
+export class ManualPublishCheckError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ManualPublishCheckError';
+  }
+}
+
+/**
+ * `ptv_confirm_manual_publish`: closes an approved (exported) proposal once
+ * a person has entered it in PTV's own UI. Checks PTV first: an update must
+ * leave nothing to diff; a new service or channel is found by the id PTV
+ * gave it (`ptvId`), must belong to the organisation and carry the proposed
+ * names, and the id is recorded on the proposal. The proposal becomes
+ * `applied`. Approver+ (Hyväksyjä), like approving it.
+ */
+export async function confirmManualPublish(
+  resolveRole: MembershipRoleResolver,
+  registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposalId: string,
+  ptvId?: string,
+): Promise<ProposalDetails> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
+  const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  if (proposal.status !== 'approved') {
+    throw new ManualPublishCheckError(
+      `Proposal ${proposalId} is ${proposal.status}; only an approved (exported) proposal is published by hand.`,
+    );
+  }
+  const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+  let createdId: string | undefined;
+  if (isCreate(proposal.kind)) {
+    if (!ptvId?.trim()) {
+      throw new ManualPublishCheckError(
+        'Give ptvId: the id PTV gave the new item (shown in its address in PTV).',
+      );
+    }
+    createdId = ptvId.trim();
+    await checkCreatedItem(registry, proposalCtx, proposal, createdId);
+  } else {
+    const details = await proposalDiffDetails(registry, proposal, proposalCtx);
+    const state = manualPublishState(proposal, details);
+    if (state.publishedInPtv !== true) {
+      const fields = details.diff.map((entry) => entry.field).join(', ');
+      throw new ManualPublishCheckError(
+        details.current
+          ? `PTV does not have the whole change yet; still different: ${fields}. Enter these (see the manual-publishing sheet in ptv_get_proposal) and publish, then confirm again.`
+          : 'The item can no longer be read from PTV, so the change cannot be checked.',
+      );
+    }
+  }
+  const published = await proposalService.markPublished(ctx.tenantId, proposalId, createdId);
+  await auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action: 'ConfirmManualPublish',
+    resourceType: 'Proposal',
+    resourceId: proposalId,
+    ...(createdId ? { afterState: { ptvId: createdId } } : {}),
+    result: 'Published',
+    correlationId: proposal.correlationId,
+  });
+  return proposalDetails(registry, proposalService, published, proposalCtx);
+}
+
+async function checkCreatedItem(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+  ptvId: string,
+): Promise<void> {
+  const adapter = await registry.resolve({
+    tenantId: ctx.tenantId,
+    environment: ctx.environment,
+    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
+    operation: 'read',
+    actingUserId: ctx.actingUserId,
+  });
+  const expected = proposal.changes as Partial<Service>;
+  const found: { organizationId: string; names: Service['names'] } | null =
+    proposal.kind === 'service_create'
+      ? await adapter.getService(ptvId).catch(() => null)
+      : await adapter.getChannel(ptvId).catch(() => null);
+  const what = proposal.kind === 'service_create' ? 'service' : 'channel';
+  if (!found) {
+    throw new ManualPublishCheckError(
+      `No ${what} ${ptvId} in PTV (${ctx.environment}). Check the id; a draft may not be readable until it is published.`,
+    );
+  }
+  const problems: string[] = [];
+  if (expected.organizationId && found.organizationId !== expected.organizationId) {
+    problems.push(
+      `it belongs to organisation ${found.organizationId}, not ${expected.organizationId}`,
+    );
+  }
+  for (const [language, name] of Object.entries(expected.names ?? {})) {
+    if (name && found.names[language] !== name) {
+      problems.push(`its ${language} name is "${found.names[language] ?? ''}", not "${name}"`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new ManualPublishCheckError(
+      `The ${what} ${ptvId} does not match the proposal: ${problems.join('; ')}.`,
+    );
+  }
 }

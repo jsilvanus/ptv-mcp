@@ -407,8 +407,10 @@ field, language and a suggested fix) or `N/A` for each item.
 - `Q-STRUCT-4` (*manual*): The service passes the service test: customers want it,
   the customer is active, it has channels, and it's at the right level
   (not bundled, not internal).
-- `Q-STRUCT-5` (*auto*): Every service has at least one connected channel and every
-  channel at least one service. All real channels are connected.
+- `Q-STRUCT-5` (*auto*; a warning on a new service or channel that is
+  still being proposed, because items are created one at a time and
+  linked after): Every service has at least one connected channel and
+  every channel at least one service. All real channels are connected.
 - `Q-STRUCT-6` (*manual*): Another organisation's channel is connected, not described
   again.
 

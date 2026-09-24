@@ -13,6 +13,7 @@ import { DiffView } from './DiffView';
 import { ProposalComments } from './ProposalComments';
 import { ProposalReviewers } from './ProposalReviewers';
 import { ProposalPreview } from './ProposalPreview';
+import { ManualPublishPanel } from './ManualPublishPanel';
 import { QualityFindings } from './QualityFindings';
 import { roleAtLeast } from '../auth/roles';
 
@@ -216,6 +217,20 @@ export function ProposalQueuePage() {
                     </>
                   )}
                 </p>
+                {tenantId && selected.status === 'approved' && selected.manualPublish && (
+                  <ManualPublishPanel
+                    key={selected.id}
+                    tenantId={tenantId}
+                    proposalId={selected.id}
+                    sheet={selected.manualPublish}
+                    publishedInPtv={selected.publishedInPtv}
+                    canConfirm={canResolve}
+                    onConfirmed={(updated) => {
+                      setSelected(updated);
+                      void loadList();
+                    }}
+                  />
+                )}
                 <DiffView diff={selected.diff} />
                 {selected.proposed && (
                   <ProposalPreview key={selected.id} entity={selected.proposed} />

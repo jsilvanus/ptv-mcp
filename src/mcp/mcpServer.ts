@@ -48,6 +48,7 @@ import {
   isProposalQueueError,
   listProposals,
   queueProposal,
+  confirmManualPublish,
   resolveProposal,
   commentOnProposal,
   MAX_COMMENT_LENGTH,
@@ -875,7 +876,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_resolve_proposal',
     withOAuthSecurity({
       description:
-        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it. Approving also waits for every required reviewer to sign off.',
+        "Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it. Approving also waits for every required reviewer to sign off. approve_and_export writes nothing: the result's manualPublish sheet lists every field to enter in PTV's own UI (Finnish labels, PTV formats) and the steps; after entering it, close it with ptv_confirm_manual_publish.",
       inputSchema: {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
@@ -894,6 +895,38 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             args.proposalId,
             args.action,
             requireFourEyes,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_confirm_manual_publish',
+    withOAuthSecurity({
+      description:
+        "Close an approved (approve_and_export) proposal after a person has entered it in PTV's own UI. The MCP checks PTV first: an update must have nothing left to differ; a new service or channel needs ptvId (the id PTV gave it) and must belong to the organisation and carry the proposed names. Then the proposal becomes applied (the id is recorded for new items). If PTV still differs, the error lists the fields; ptv_get_proposal shows what is left in its manualPublish sheet. Approver role (Hyväksyjä) or above.",
+      inputSchema: {
+        proposalId: z.string(),
+        ptvId: z
+          .string()
+          .optional()
+          .describe('New services and channels only: the id PTV gave the created item.'),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await confirmManualPublish(
+            resolveRole,
+            registry,
+            proposalService,
+            auditService,
+            toolContext(extra),
+            args.proposalId,
+            args.ptvId,
           ),
         );
       } catch (err) {

@@ -202,6 +202,29 @@ export interface ProposalDetails extends ProposalSummary {
   reviewers: ProposalReviewer[];
   /** Automated content checks on `proposed`; null without it. */
   quality: QualityReport | null;
+  /** Approved (exported) proposals: what to enter in PTV's own UI. */
+  manualPublish: ManualPublishSheet | null;
+  /** Approved updates: true once PTV already holds the whole change. */
+  publishedInPtv: boolean | null;
+}
+
+/** Mirrors src/mcp/manualPublish.ts. */
+export interface ManualPublishSheet {
+  action: 'update' | 'create';
+  target: string;
+  ptvId: string | null;
+  name: string | null;
+  languages: string[];
+  steps: string[];
+  fields: ManualPublishField[];
+}
+
+export interface ManualPublishField {
+  field: string;
+  label: string;
+  language?: string;
+  before?: string;
+  after: string;
 }
 
 /** Mirrors src/quality/contentChecks.ts. */

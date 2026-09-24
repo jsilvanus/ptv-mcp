@@ -102,7 +102,7 @@ export async function queueNewServiceProposal(
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
-    quality: checkService(proposed),
+    quality: checkService(proposed, { creating: true }),
   };
 }
 

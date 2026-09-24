@@ -1,3 +1,4 @@
+import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
 import type { ApplyServiceChangeResult } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { LanguageCode, PtvContentId, Service } from '../ptv/domain.js';
@@ -47,6 +48,8 @@ export interface ManualPublishExport {
   serviceId: PtvContentId;
   languages: Record<LanguageCode, ManualPublishLanguageEntry>;
   proposed: Service;
+  /** Every changed field to enter in PTV's own UI, with the steps. */
+  sheet: ManualPublishSheet;
   correlationId: string;
 }
 
@@ -59,7 +62,12 @@ export async function exportForManualPublish(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<ManualPublishExport> {
-  const { proposed, correlationId: chainId } = await proposeChanges(
+  const {
+    current,
+    proposed,
+    diff,
+    correlationId: chainId,
+  } = await proposeChanges(
     resolveRole,
     registry,
     auditService,
@@ -93,7 +101,14 @@ export async function exportForManualPublish(
     correlationId: chainId,
   });
 
-  return { serviceId, languages, proposed, correlationId: chainId };
+  const sheet = buildManualPublishSheet({
+    kind: 'service_update',
+    diff,
+    ptvId: serviceId,
+    names: current.names,
+    languages: Object.keys(proposed.names),
+  });
+  return { serviceId, languages, proposed, sheet, correlationId: chainId };
 }
 
 export interface ApplyChangesResult extends ApplyServiceChangeResult {

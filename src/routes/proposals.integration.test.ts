@@ -337,4 +337,105 @@ describe('proposal routes', () => {
     expect(resolveAsEditor.statusCode).toBe(200);
     expect((resolveAsEditor.json() as { status: string }).status).toBe('rejected');
   });
+
+  it('exports an approved proposal with a manual-publishing sheet and confirms it against PTV', async () => {
+    const publisher = await createUser('publisher');
+    await db
+      .update(tenants)
+      .set({ requireFourEyes: false })
+      .where(eq(tenants.id, publisher.tenantId));
+    const mcpToken = await oauthService.issueAccessToken(
+      publisher.userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      publisher.tenantId,
+      'test',
+      'v11',
+      'v11',
+    );
+    const propose = async (names: Record<string, string>) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/mcp',
+        headers: {
+          authorization: 'Bearer ' + mcpToken,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        payload: {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'ptv_propose_changes',
+            arguments: { serviceId: BASE_SERVICE.id, changes: { names } },
+          },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      const list = await app.inject({
+        method: 'GET',
+        url: `/tenants/${publisher.tenantId}/proposals?status=pending`,
+        headers: { authorization: 'Bearer ' + publisher.token },
+      });
+      return (list.json() as Array<{ id: string }>)[0]!.id;
+    };
+    const resolve = (id: string, action: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/tenants/${publisher.tenantId}/proposals/${id}/resolve`,
+        headers: { authorization: 'Bearer ' + publisher.token },
+        payload: { action },
+      });
+    const confirm = (id: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/tenants/${publisher.tenantId}/proposals/${id}/confirm-published`,
+        headers: { authorization: 'Bearer ' + publisher.token },
+        payload: {},
+      });
+
+    // Not yet entered in PTV: the sheet lists the name, confirming is refused.
+    const renamed = await propose({ fi: 'Route renamed' });
+    expect((await confirm(renamed)).statusCode).toBe(409);
+    const exported = await resolve(renamed, 'approve_and_export');
+    expect(exported.statusCode).toBe(200);
+    const details = exported.json() as {
+      status: string;
+      publishedInPtv: boolean | null;
+      manualPublish: { action: string; ptvId: string; fields: unknown[]; steps: string[] };
+    };
+    expect(details.status).toBe('approved');
+    expect(details.publishedInPtv).toBe(false);
+    expect(details.manualPublish).toMatchObject({ action: 'update', ptvId: BASE_SERVICE.id });
+    expect(details.manualPublish.fields).toEqual([
+      {
+        field: 'names',
+        label: 'Nimi',
+        language: 'fi',
+        before: 'Route service',
+        after: 'Route renamed',
+      },
+    ]);
+    const notYet = await confirm(renamed);
+    expect(notYet.statusCode).toBe(409);
+    expect(notYet.body).toContain('names.fi');
+
+    // Already in PTV (the in-memory PTV has this name): confirming closes it.
+    const same = await propose({ fi: BASE_SERVICE.names.fi! });
+    const sameExported = (await resolve(same, 'approve_and_export')).json() as {
+      publishedInPtv: boolean;
+      manualPublish: { fields: unknown[] };
+    };
+    expect(sameExported.publishedInPtv).toBe(true);
+    expect(sameExported.manualPublish.fields).toEqual([]);
+    const confirmed = await confirm(same);
+    expect(confirmed.statusCode).toBe(200);
+    expect((confirmed.json() as { status: string }).status).toBe('applied');
+    const audit = await withContext(db, { tenantId: publisher.tenantId }, (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.tenantId, publisher.tenantId)),
+    );
+    expect(audit.map((entry) => entry.action)).toContain('ConfirmManualPublish');
+    expect((await confirm(same)).statusCode).toBe(409);
+  });
 });

@@ -113,7 +113,10 @@ export type Weekday =
 /** One opening time within a service hour: `from`/`to` as HH:mm. */
 export interface OpeningTime {
   dayFrom: Weekday;
-  /** Only for OverMidnight hours ending on another day. */
+  /**
+   * OverMidnight: the day the time ends on. Otherwise shorthand for the same
+   * times on every day from dayFrom to dayTo (written out one per day).
+   */
   dayTo?: Weekday;
   from: string;
   to: string;

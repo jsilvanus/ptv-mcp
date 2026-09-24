@@ -10,6 +10,7 @@ import type {
   WebLink,
   Weekday,
 } from '../domain.js';
+import { expandOpeningTimes } from '../serviceHours.js';
 
 /**
  * v11 wire shapes of the type-specific channel fields and their
@@ -266,7 +267,7 @@ export function serviceHourToWire(hour: ServiceHour): V11ServiceHour {
     ...(hour.additionalInformation
       ? { additionalInformation: textToLanguageItems(hour.additionalInformation) }
       : {}),
-    openingHour: (hour.openingTimes ?? []).map((time) => ({
+    openingHour: expandOpeningTimes(hour).map((time) => ({
       dayFrom: time.dayFrom,
       ...(time.dayTo ? { dayTo: time.dayTo } : {}),
       from: time.from,

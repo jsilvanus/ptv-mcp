@@ -1,5 +1,12 @@
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { CodeListEntry, LocalizedText, PtvContentId, Service } from '../ptv/domain.js';
+import type {
+  CodeListEntry,
+  LocalizedText,
+  PtvContentId,
+  Service,
+  ServiceHour,
+} from '../ptv/domain.js';
+import { canonicalServiceHours } from '../ptv/serviceHours.js';
 import type { AuditService } from '../audit/auditService.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
@@ -152,12 +159,34 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
       }
       continue;
     }
-    if (JSON.stringify(before) !== JSON.stringify(after)) {
+    if (comparable(field, before) !== comparable(field, after)) {
       entries.push({ field, before, after });
     }
   }
 
   return entries;
+}
+
+/**
+ * A value's comparison key: key order and undefined members don't matter,
+ * and service hours compare in canonical form (PTV returns weekly hours
+ * one day per entry), so data read back from PTV equals what was written.
+ */
+function comparable(field: string, value: unknown): string {
+  const normalized =
+    field === 'serviceHours' ? canonicalServiceHours(value as ServiceHour[] | undefined) : value;
+  return stableStringify(normalized ?? null);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, member]) => member !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, member]) => `${JSON.stringify(key)}:${stableStringify(member)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 export async function prepareProposal(

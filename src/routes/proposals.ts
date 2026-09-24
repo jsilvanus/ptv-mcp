@@ -9,7 +9,9 @@ import {
   getProposal,
   InvalidCommentError,
   InvalidReviewRequestError,
+  confirmManualPublish,
   listProposals,
+  ManualPublishCheckError,
   listReviewCandidates,
   requestReview,
   resolveProposal,
@@ -139,6 +141,35 @@ export async function proposalRoutes(
           return reply.forbidden(err.message);
         }
         if (err instanceof ReviewsPendingError) {
+          return reply.conflict(err.message);
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Body: { ptvId?: string } | undefined; Querystring: ProposalRequestQuery }>(
+    '/tenants/:tenantId/proposals/:proposalId/confirm-published',
+    { preHandler: [authenticate, requireApprover] },
+    async (request, reply) => {
+      const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
+      const ptvId = request.body?.ptvId;
+      if (ptvId !== undefined && typeof ptvId !== 'string') {
+        return reply.badRequest('ptvId must be a string');
+      }
+      try {
+        return await confirmManualPublish(
+          resolveRole,
+          options.registry,
+          options.proposalService,
+          options.auditService,
+          contextFrom(tenantId, request.userId!, request.query),
+          proposalId,
+          ptvId,
+        );
+      } catch (err) {
+        if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
+        if (err instanceof ProposalAlreadyResolvedError || err instanceof ManualPublishCheckError) {
           return reply.conflict(err.message);
         }
         throw err;
