@@ -41,6 +41,12 @@ export interface ServiceChangeProposal {
   changes: Partial<Service>;
 }
 
+/**
+ * A service to create. PTV assigns `id` and `modifiedAt`;
+ * `publishingStatus` is Draft or Published.
+ */
+export type NewService = Omit<Service, 'id' | 'modifiedAt'>;
+
 export interface ApplyServiceChangeResult {
   serviceId: PtvContentId;
   publishingStatus: Service['publishingStatus'];
@@ -99,4 +105,7 @@ export interface PtvAdapter {
    * first and surface a clear error rather than relying on this throwing.
    */
   applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult>;
+
+  /** Creates a new service; same write-capability rules as applyServiceChange. */
+  createService(service: NewService): Promise<ApplyServiceChangeResult>;
 }

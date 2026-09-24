@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Service } from '../domain.js';
-import { serviceChangesToV11Body } from './writeMapping.js';
+import { newServiceToV11Body, serviceChangesToV11Body } from './writeMapping.js';
 import { toPublishingStatus } from './mappers/common.js';
 import type { V11ServiceWire } from './wireModel.js';
 
@@ -167,5 +167,45 @@ describe('toPublishingStatus', () => {
   it('reads Modified as is and Deleted as Archived', () => {
     expect(toPublishingStatus('Modified')).toBe('Modified');
     expect(toPublishingStatus('Deleted')).toBe('Archived');
+  });
+});
+
+describe('newServiceToV11Body', () => {
+  it('fills the fields PTV requires on POST that the domain model does not carry', () => {
+    const body = newServiceToV11Body({
+      organizationId: 'org-15',
+      serviceType: 'Service',
+      publishingStatus: 'Draft',
+      names: { fi: 'Kastekoulu' },
+      summaries: { fi: 'Tiivistelmä' },
+      descriptions: { fi: 'Kuvaus' },
+      serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
+      ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
+      targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
+      lifeEvents: [],
+      industrialClasses: [],
+      languages: ['fi'],
+      serviceChannelIds: ['channel-1'],
+    });
+    expect(body).toEqual({
+      type: 'Service',
+      publishingStatus: 'Draft',
+      serviceNames: [{ language: 'fi', value: 'Kastekoulu', type: 'Name' }],
+      serviceDescriptions: [
+        { language: 'fi', value: 'Tiivistelmä', type: 'Summary' },
+        { language: 'fi', value: 'Kuvaus', type: 'Description' },
+      ],
+      languages: ['fi'],
+      serviceClasses: ['http://urn.fi/URN:NBN:fi:au:ptvl:v1111'],
+      ontologyTerms: ['http://www.yso.fi/onto/koko/p34462'],
+      targetGroups: ['http://urn.fi/URN:NBN:fi:au:ptvl:v2001'],
+      lifeEvents: [],
+      industrialClasses: [],
+      fundingType: 'PubliclyFunded',
+      areaType: 'Nationwide',
+      mainResponsibleOrganization: 'org-15',
+      serviceProducers: [{ provisionType: 'SelfProducedServices', organizations: ['org-15'] }],
+      serviceChannels: ['channel-1'],
+    });
   });
 });

@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type {
   ApplyServiceChangeResult,
+  NewService,
   PtvAdapter,
   PtvAdapterCapabilities,
   ServiceChangeProposal,
@@ -150,6 +152,21 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return {
       serviceId: updated.id,
       publishingStatus: updated.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createService(service: NewService): Promise<ApplyServiceChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
+    const created: Service = { ...service, id: randomUUID() };
+    this.services.push(created);
+    return {
+      serviceId: created.id,
+      publishingStatus: created.publishingStatus,
       appliedAt: new Date().toISOString(),
     };
   }

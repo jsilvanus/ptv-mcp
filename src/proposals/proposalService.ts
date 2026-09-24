@@ -1,15 +1,18 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { proposals, proposalStatusEnum } from '../db/schema/index.js';
+import { proposalKindEnum, proposals, proposalStatusEnum } from '../db/schema/index.js';
 import type { Service } from '../ptv/domain.js';
 import type { ServiceDiffEntry } from '../mcp/proposeChanges.js';
 
 export type ProposalStatus = (typeof proposalStatusEnum.enumValues)[number];
+export type ProposalKind = (typeof proposalKindEnum.enumValues)[number];
 
 export interface ProposalRecord {
   id: string;
   tenantId: string;
+  kind: ProposalKind;
+  /** The target service or channel; for `service_create`, the new service once applied, else ''. */
   serviceId: string;
   environment: 'test' | 'production';
   proposedByUserId: string;
@@ -42,6 +45,7 @@ export class ProposalService {
 
   async createPending(input: {
     tenantId: string;
+    kind?: ProposalKind;
     serviceId: string;
     environment: 'test' | 'production';
     proposedByUserId: string;
@@ -54,6 +58,7 @@ export class ProposalService {
         .insert(proposals)
         .values({
           tenantId: input.tenantId,
+          kind: input.kind ?? 'service_update',
           serviceId: input.serviceId,
           environment: input.environment,
           proposedByUserId: input.proposedByUserId,
@@ -107,6 +112,8 @@ export class ProposalService {
     proposalId: string,
     status: Exclude<ProposalStatus, 'pending'>,
     resolvedByUserId: string,
+    /** Records the id PTV gave a service created by this proposal. */
+    serviceId?: string,
   ): Promise<ProposalRecord> {
     const current = await this.getById(tenantId, proposalId);
     if (current.status !== 'pending') {
@@ -116,7 +123,13 @@ export class ProposalService {
     const row = await withContext(this.db, { tenantId }, async (tx) => {
       const updated = await tx
         .update(proposals)
-        .set({ status, resolvedByUserId, resolvedAt: now, updatedAt: now })
+        .set({
+          status,
+          resolvedByUserId,
+          resolvedAt: now,
+          updatedAt: now,
+          ...(serviceId ? { serviceId } : {}),
+        })
         .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId)))
         .returning();
       return updated[0];

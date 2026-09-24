@@ -1,5 +1,5 @@
 import { jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { proposalStatusEnum, ptvEnvironmentEnum } from './enums.js';
+import { proposalKindEnum, proposalStatusEnum, ptvEnvironmentEnum } from './enums.js';
 import { tenants } from './tenant.js';
 import { users } from './user.js';
 
@@ -13,6 +13,7 @@ export const proposals = pgTable('proposals', {
   tenantId: uuid('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
+  kind: proposalKindEnum('kind').notNull().default('service_update'),
   serviceId: text('service_id').notNull(),
   environment: ptvEnvironmentEnum('environment').notNull(),
   proposedByUserId: uuid('proposed_by_user_id')

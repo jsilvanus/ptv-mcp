@@ -1,3 +1,4 @@
+import { queueNewServiceProposal } from './newServiceProposal.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -512,9 +513,41 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
+    'ptv_propose_new_service',
+    withOAuthSecurity({
+      description:
+        'Queue a proposal to create a new PTV service. Nothing is written until an Editor+ resolves it with approve_and_apply (which also needs Publisher-level write access); PTV then assigns the id, recorded on the proposal. `service` is a Service without id: organizationId, serviceType (default Service), publishingStatus (Draft by default, or Published), names, summaries, descriptions, languages, serviceClasses (at least one subclass, e.g. P25.6), ontologyTerms (KOKO URIs), targetGroups, optionally lifeEvents, industrialClasses (needs target groups KR2 + KR2.x), generalDescriptionId, serviceChannelIds. Classification entries need a `uri` (or `code` for industrial classes). Returns the validation result right away.',
+      inputSchema: {
+        service: z
+          .record(z.string(), z.unknown())
+          .describe('The new service: a Service without id (see the tool description).'),
+        correlationId: z.string().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await queueNewServiceProposal(
+            resolveRole,
+            auditService,
+            proposalService,
+            validator,
+            toolContext(extra),
+            args.service as Partial<Service>,
+            args.correlationId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
     'ptv_list_proposals',
     withOAuthSecurity({
-      description: 'List queued service proposals for a tenant. Requires Editor+ role.',
+      description:
+        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). Requires Editor+ role.',
       inputSchema: {
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
       },
