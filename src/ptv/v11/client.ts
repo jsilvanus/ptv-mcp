@@ -125,7 +125,7 @@ export class PtvV11Client {
         if (!isRetryable(response.status) || attempt === this.maxRetries) {
           const text = await response.text().catch(() => '');
           throw new PtvV11ApiError(
-            `PTV v11 request failed: ${method} ${path} -> ${response.status} ${text}`.trim(),
+            describeFailure(method, path, response.status, text),
             response.status,
             path,
           );
@@ -144,6 +144,52 @@ export class PtvV11Client {
       ? lastError
       : new Error(`PTV v11 request failed: ${method} ${path}`);
   }
+}
+
+/**
+ * PTV answers a rejected write with a 400 whose body maps each field to
+ * its messages, e.g. `{"PublishingStatus":["The PublishingStatus field is
+ * required."]}`. That is rendered as one "Field: message" line per error
+ * so the MCP caller can read it. Any other body is passed through
+ * (truncated). The request body is never included, and PTV never echoes
+ * the bearer token.
+ */
+export function describeFailure(
+  method: string,
+  path: string,
+  status: number,
+  text: string,
+): string {
+  const fieldErrors = parseFieldErrors(text);
+  if (fieldErrors.length > 0) {
+    return [
+      `PTV rejected ${method} ${path} (${status}):`,
+      ...fieldErrors.map(([field, message]) => `- ${field}: ${message}`),
+    ].join('\n');
+  }
+  const snippet = text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
+  return `PTV v11 request failed: ${method} ${path} -> ${status} ${snippet}`.trim();
+}
+
+function parseFieldErrors(text: string): [string, string][] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  // ASP.NET ProblemDetails wraps the same map in `errors`.
+  const source = (parsed as { errors?: unknown }).errors ?? parsed;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
+  const result: [string, string][] = [];
+  for (const [field, messages] of Object.entries(source)) {
+    const list = Array.isArray(messages) ? messages : [messages];
+    for (const message of list) {
+      if (typeof message === 'string') result.push([field || '(body)', message]);
+    }
+  }
+  return result;
 }
 
 function isRetryable(status: number): boolean {
