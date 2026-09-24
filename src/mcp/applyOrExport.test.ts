@@ -16,8 +16,8 @@ const ctx: ToolContext = {
   writeApiVersion: 'v11',
   actingUserId: 'user-1',
 };
-const fakeEditorResolver = async () => 'editor' as const;
-const fakeReaderResolver = async () => 'reader' as const;
+const fakeEditorResolver = async () => 'approver' as const;
+const fakeReaderResolver = async () => 'contributor' as const;
 
 const baseService: Service = {
   id: 'svc-1',

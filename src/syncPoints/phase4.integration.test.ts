@@ -101,7 +101,7 @@ describe('Phase 4 sync point', () => {
       .values({ id: tenantId, name: 'Phase 4 Sync Tenant', slug: `p4-${tenantId}` });
     createdTenantIds.push(tenantId);
     await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role: 'editor' });
+      await tx.insert(memberships).values({ tenantId, userId, role: 'approver' });
     });
     await configService.upsert(tenantId, 'test', 'v11', {
       authMode: 'oauth2',

@@ -9,8 +9,8 @@ import { diffService, proposeChanges, ServiceNotFoundError } from './proposeChan
 import type { ToolContext } from './toolContext.js';
 
 const ctx: ToolContext = { tenantId: 'tenant-1', environment: 'test', actingUserId: 'user-1' };
-const fakeEditorResolver = async () => 'editor' as const;
-const fakeReaderResolver = async () => 'reader' as const;
+const fakeEditorResolver = async () => 'approver' as const;
+const fakeReaderResolver = async () => 'contributor' as const;
 const fakeNoMembershipResolver = async () => null;
 
 const baseService: Service = {

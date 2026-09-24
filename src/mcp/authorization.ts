@@ -20,10 +20,10 @@ export type MembershipRoleResolver = (
 
 /**
  * `PtvAdapterRegistry.resolve()` only gates *PTV adapter/credential*
- * access (Reader for read, Publisher for write) — it has no notion of
- * our own business-action permissions, e.g. that only an Editor may
- * propose or export a change at all (docs/plan.md's role model: a Reader
- * "ei saa ehdottaa muutoksia"). Tool functions that aren't already
+ * access (Viewer for read, Publisher for write) — it has no notion of
+ * our own business-action permissions, e.g. that only a Contributor may
+ * propose and only an Approver may resolve (docs/roles-and-review-plan.md;
+ * a Viewer is read-only). Tool functions that aren't already
  * covered by the registry's own write-role check (`ptv_apply_changes`
  * is, via `operation: 'write'`) call this explicitly first.
  */

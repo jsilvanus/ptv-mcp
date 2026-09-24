@@ -75,7 +75,7 @@ export interface QueuedChannelProposalResult extends PreparedChannelProposal {
   status: ProposalStatus;
 }
 
-/** `ptv_propose_channel_changes`: queues a `channel_update` proposal (Reader+). */
+/** `ptv_propose_channel_changes`: queues a `channel_update` proposal (Contributor+). */
 export async function queueChannelProposal(
   resolveRole: MembershipRoleResolver,
   registry: PtvAdapterRegistry,
@@ -86,7 +86,7 @@ export async function queueChannelProposal(
   changes: Partial<ServiceChannel>,
   correlationId?: string,
 ): Promise<QueuedChannelProposalResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'reader');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const prepared = await prepareChannelProposal(registry, ctx, channelId, changes);
   const validation = validateChannel(prepared.proposed);
   const auditEntry = await auditService.record({

@@ -1,5 +1,5 @@
 /** Mirrors src/auth/rbac.ts's MembershipRole — kept in sync by hand since the web app has no shared package with the backend. */
-export type MembershipRole = 'reader' | 'editor' | 'publisher' | 'tenant_admin';
+export type MembershipRole = 'viewer' | 'contributor' | 'approver' | 'publisher' | 'tenant_admin';
 
 export type PtvEnvironment = 'test' | 'production';
 

@@ -10,6 +10,7 @@ import type {
 } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 import { DiffView } from './DiffView';
+import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
 
@@ -31,10 +32,10 @@ export function ProposalQueuePage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const canReview = useMemo(() => {
-    if (!currentTenant) return false;
-    return ['editor', 'publisher', 'tenant_admin'].includes(currentTenant.role);
-  }, [currentTenant]);
+  // Contributors view proposals; resolving needs Approver, applying Publisher.
+  const canReview = useMemo(() => roleAtLeast(currentTenant?.role, 'contributor'), [currentTenant]);
+  const canResolve = roleAtLeast(currentTenant?.role, 'approver');
+  const canApply = roleAtLeast(currentTenant?.role, 'publisher');
 
   const loadList = useCallback(async () => {
     if (!tenantId || !canReview) return;
@@ -196,7 +197,7 @@ export function ProposalQueuePage() {
                   <strong>Correlation:</strong> {selected.correlationId}
                 </p>
                 <DiffView diff={selected.diff} />
-                {selected.status === 'pending' && (
+                {selected.status === 'pending' && canResolve && (
                   <p style={{ display: 'flex', gap: 8 }}>
                     <button
                       className="primary"
@@ -205,13 +206,15 @@ export function ProposalQueuePage() {
                     >
                       {resolvingAction === 'approve_and_export' ? 'Resolving…' : 'Approve + export'}
                     </button>
-                    <button
-                      className="primary"
-                      disabled={resolvingAction !== null}
-                      onClick={() => void resolve('approve_and_apply')}
-                    >
-                      {resolvingAction === 'approve_and_apply' ? 'Resolving…' : 'Approve + apply'}
-                    </button>
+                    {canApply && (
+                      <button
+                        className="primary"
+                        disabled={resolvingAction !== null}
+                        onClick={() => void resolve('approve_and_apply')}
+                      >
+                        {resolvingAction === 'approve_and_apply' ? 'Resolving…' : 'Approve + apply'}
+                      </button>
+                    )}
                     <button
                       disabled={resolvingAction !== null}
                       onClick={() => void resolve('reject')}

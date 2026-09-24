@@ -8,6 +8,7 @@ import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
 import { auditEntries, memberships, proposals, tenants, users } from '../db/schema/index.js';
 import { signAccessToken } from '../auth/jwt.js';
+import type { MembershipRole } from '../auth/rbac.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import { OAuthService } from '../mcp/oauthService.js';
@@ -92,7 +93,7 @@ describe('proposal routes', () => {
     createdUserIds.length = 0;
   });
 
-  async function createUser(role?: 'reader' | 'editor' | 'publisher' | 'tenant_admin') {
+  async function createUser(role?: MembershipRole) {
     const userId = randomUUID();
     const tenantId = randomUUID();
     await db.insert(users).values({
@@ -126,8 +127,8 @@ describe('proposal routes', () => {
     return { userId, tenantId, token };
   }
 
-  it('lets an editor list/get/resolve proposals and blocks a reader', async () => {
-    const editor = await createUser('editor');
+  it('lets a contributor propose and view but not resolve, an approver resolve, and blocks a viewer', async () => {
+    const editor = await createUser('approver');
     const readerId = randomUUID();
     await db.insert(users).values({
       id: readerId,
@@ -141,7 +142,7 @@ describe('proposal routes', () => {
       await tx.insert(memberships).values({
         tenantId: editor.tenantId,
         userId: readerId,
-        role: 'reader',
+        role: 'contributor',
       });
     });
     // The /mcp call below needs a real MCP OAuth token (tenant/environment/
@@ -183,12 +184,36 @@ describe('proposal routes', () => {
     });
     expect(queuedByReader.statusCode).toBe(200);
 
+    // Contributors (Ehdottaja) can view the queue but not resolve.
     const listAsReader = await app.inject({
       method: 'GET',
       url: `/tenants/${editor.tenantId}/proposals`,
       headers: { authorization: 'Bearer ' + readerToken },
     });
-    expect(listAsReader.statusCode).toBe(403);
+    expect(listAsReader.statusCode).toBe(200);
+
+    // Viewers (Katselija) are read-only: no proposal queue.
+    const viewerId = randomUUID();
+    await db.insert(users).values({
+      id: viewerId,
+      email: `${viewerId}@example.test`,
+      name: 'Viewer',
+      passwordHash: 'x',
+    });
+    createdUserIds.push(viewerId);
+    await withContext(db, { tenantId: editor.tenantId }, async (tx) => {
+      await tx
+        .insert(memberships)
+        .values({ tenantId: editor.tenantId, userId: viewerId, role: 'viewer' });
+    });
+    const listAsViewer = await app.inject({
+      method: 'GET',
+      url: `/tenants/${editor.tenantId}/proposals`,
+      headers: {
+        authorization: 'Bearer ' + (await signAccessToken({ sub: viewerId }, config.jwtSecret)),
+      },
+    });
+    expect(listAsViewer.statusCode).toBe(403);
 
     const listAsEditor = await app.inject({
       method: 'GET',
@@ -205,6 +230,14 @@ describe('proposal routes', () => {
       headers: { authorization: 'Bearer ' + editor.token },
     });
     expect(getAsEditor.statusCode).toBe(200);
+
+    const resolveAsContributor = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/resolve`,
+      headers: { authorization: 'Bearer ' + readerToken },
+      payload: { action: 'reject' },
+    });
+    expect(resolveAsContributor.statusCode).toBe(403);
 
     const resolveAsEditor = await app.inject({
       method: 'POST',

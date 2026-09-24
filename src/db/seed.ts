@@ -50,7 +50,7 @@ await client.begin(async (tx) => {
   await tx`SELECT set_config('app.current_tenant_id', ${hausjarvi.id}, true)`;
   await tx`
     INSERT INTO memberships (user_id, tenant_id, role)
-    VALUES (${juha.id}, ${hausjarvi.id}, 'editor')
+    VALUES (${juha.id}, ${hausjarvi.id}, 'approver')
   `;
 });
 

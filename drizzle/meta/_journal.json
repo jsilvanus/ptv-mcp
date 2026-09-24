@@ -120,6 +120,13 @@
       "when": 1790257000000,
       "tag": "0017_proposal_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790260000000,
+      "tag": "0018_role_split",
+      "breakpoints": true
     }
   ]
 }

@@ -175,11 +175,11 @@ export async function prepareProposal(
  * Originally *was* `ptv_propose_changes` itself (Phase 4 Stream B), gated
  * at Editor+ per docs/plan.md's original role model. Since Phase 8 (the
  * proposal queue), the `ptv_propose_changes` **tool** is `queueProposal`
- * (mcp/proposalQueue.ts), gated at Reader+ — a Reader can queue a proposal
- * without being able to approve one. This function now only runs
+ * (mcp/proposalQueue.ts), gated at Contributor+ — a Contributor can queue a
+ * proposal without being able to approve one. This function now only runs
  * internally, as the re-diff step `exportForManualPublish`/`applyChanges`
  * use when resolving an already-queued proposal — both of those are
- * already gated Editor+ by `resolveProposal`, so the Editor check here is
+ * already gated Approver+ by `resolveProposal`, so the Approver check here is
  * a redundant-but-harmless double-check, not a second authorization gate.
  */
 export async function proposeChanges(
@@ -191,7 +191,7 @@ export async function proposeChanges(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<ProposeChangesResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const { current, proposed, diff } = await prepareProposal(registry, ctx, serviceId, changes);
 
   const entry = await auditService.record({

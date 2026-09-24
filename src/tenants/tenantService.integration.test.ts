@@ -85,13 +85,13 @@ describe('TenantService', () => {
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
 
-    await service.addMember(tenantId, member.email, 'editor', admin.id);
+    await service.addMember(tenantId, member.email, 'approver', admin.id);
     const members = await service.listMembers(tenantId);
     expect(members).toContainEqual({
       userId: member.id,
       email: member.email,
       name: 'Member',
-      role: 'editor',
+      role: 'approver',
     });
   });
 
@@ -101,7 +101,7 @@ describe('TenantService', () => {
     createdTenantIds.push(tenantId);
 
     await expect(
-      service.addMember(tenantId, 'nobody@example.test', 'reader', admin.id),
+      service.addMember(tenantId, 'nobody@example.test', 'contributor', admin.id),
     ).rejects.toThrow(UserNotFoundError);
   });
 
@@ -110,7 +110,7 @@ describe('TenantService', () => {
     const member = await createUser('Member');
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
-    await service.addMember(tenantId, member.email, 'reader', admin.id);
+    await service.addMember(tenantId, member.email, 'contributor', admin.id);
 
     await service.updateMemberRole(tenantId, member.id, 'publisher', admin.id);
     const members = await service.listMembers(tenantId);
@@ -132,7 +132,7 @@ describe('TenantService', () => {
     const member = await createUser('Member');
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
-    await service.addMember(tenantId, member.email, 'reader', admin.id);
+    await service.addMember(tenantId, member.email, 'contributor', admin.id);
 
     await service.removeMember(tenantId, member.id, admin.id);
     const members = await service.listMembers(tenantId);
@@ -145,7 +145,7 @@ describe('TenantService', () => {
     const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
     createdTenantIds.push(tenantId);
 
-    await service.addMember(tenantId, member.email, 'reader', admin.id);
+    await service.addMember(tenantId, member.email, 'contributor', admin.id);
     await service.updateMemberRole(tenantId, member.id, 'publisher', admin.id);
 
     const auditService = new AuditService(db);
