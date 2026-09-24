@@ -351,7 +351,12 @@ describe('PTV v12 read parity mappings', () => {
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
       }
-      if (url.includes('/connection/search')) {
+      if (
+        url.includes('/connection/search') ||
+        /\/api\/v12\/(service-classes|ontology-terms|target-groups|life-events|industrial-classes)/.test(
+          url,
+        )
+      ) {
         return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -838,5 +843,113 @@ describe('PTV v12 wire-shape mappings', () => {
 
     expect(result.items.map((org) => org.id)).toEqual(['org-1', 'org-2', 'org-3', 'org-4']);
     expect(result.totalCount).toBe(4);
+  });
+});
+
+describe('PTV v12 classification code names', () => {
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  const page = (items: unknown[]) =>
+    json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
+  const ontologyUri = 'http://www.yso.fi/onto/koko/p4416';
+
+  function serviceFetch(requested: URL[], serviceClasses: string[]): typeof fetch {
+    return async (input) => {
+      const url = new URL(String(input));
+      requested.push(url);
+      if (url.pathname === '/api/v12/service/service-1')
+        return json({
+          contentId: 'service-1',
+          organizationContentId: 'org-1',
+          serviceType: 'Service',
+          languageVersions: { fi: { name: 'Nuoren tai aikuisen kaste' } },
+          serviceClasses,
+          ontologyTerms: [ontologyUri],
+        });
+      if (url.pathname === '/api/v12/connection/search') return page([]);
+      if (url.pathname === '/api/v12/service-classes')
+        return page(
+          url.searchParams
+            .getAll('codes')
+            .filter((code) => code === 'P25.6')
+            .map((code) => ({
+              code,
+              uri: `http://uri.suomi.fi/codelist/ptv/ptvserclass2/code/${code}`,
+              name: { fi: 'Uskonnot ja vakaumukset', en: 'Religions and beliefs' },
+            })),
+        );
+      if (url.pathname === '/api/v12/ontology-terms') {
+        expect(url.searchParams.getAll('uris')).toEqual([ontologyUri]);
+        return page([{ uri: ontologyUri, name: { fi: 'kaste' } }]);
+      }
+      throw new Error(`Unexpected URL: ${url.toString()}`);
+    };
+  }
+
+  it('fills names by code and by URI, and serves repeats from the cache', async () => {
+    const requested: URL[] = [];
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl: serviceFetch(requested, ['P25.6', 'P99.9']),
+      codeNameCache: new CodeNameCache(),
+    });
+
+    const service = await adapter.getService('service-1');
+
+    expect(service?.serviceClasses).toEqual([
+      {
+        code: 'P25.6',
+        names: { fi: 'Uskonnot ja vakaumukset', en: 'Religions and beliefs' },
+      },
+      { code: 'P99.9', names: {} },
+    ]);
+    expect(service?.ontologyTerms).toEqual([{ code: ontologyUri, names: { fi: 'kaste' } }]);
+
+    const lookups = () =>
+      requested.filter((url) => /service-classes|ontology-terms/.test(url.pathname)).length;
+    expect(lookups()).toBe(2);
+    await adapter.getService('service-1');
+    // Known and unknown codes are both cached: no further lookups.
+    expect(lookups()).toBe(2);
+  });
+
+  it('batches code lookups to 20 per request', async () => {
+    const requested: URL[] = [];
+    const codes = Array.from({ length: 25 }, (_, i) => `P${i + 1}`);
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl: serviceFetch(requested, codes),
+      codeNameCache: new CodeNameCache(),
+    });
+
+    await adapter.getService('service-1');
+
+    const batches = requested
+      .filter((url) => url.pathname === '/api/v12/service-classes')
+      .map((url) => url.searchParams.getAll('codes').length)
+      .sort((a, b) => a - b);
+    expect(batches).toEqual([5, 20]);
+  });
+
+  it('expires cached names after the TTL', async () => {
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    let now = 0;
+    const cache = new CodeNameCache(1000, () => now);
+    cache.set('test', 'serviceClasses', 'P25.6', { fi: 'Uskonnot' });
+
+    now = 999;
+    expect(cache.get('test', 'serviceClasses', 'P25.6')).toEqual({ fi: 'Uskonnot' });
+    expect(cache.get('production', 'serviceClasses', 'P25.6')).toBeUndefined();
+    now = 1000;
+    expect(cache.get('test', 'serviceClasses', 'P25.6')).toBeUndefined();
   });
 });

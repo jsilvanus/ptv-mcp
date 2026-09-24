@@ -18,6 +18,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { PtvV12Client } from './client.js';
+import { type CodeListKind, CodeNameCache, sharedCodeNameCache } from './codeNameCache.js';
 
 interface V12ServiceChannelWire {
   contentId?: string;
@@ -161,9 +162,17 @@ interface V12GeneralDescriptionWire {
 export class PtvV12Adapter implements PtvAdapter {
   private readonly client: PtvV12Client;
   private readonly capabilities: PtvAdapterCapabilities;
+  private readonly codeNames: CodeNameCache;
 
-  constructor(options: { environment: PtvEnvironment; apiKey: string; fetchImpl?: typeof fetch }) {
+  constructor(options: {
+    environment: PtvEnvironment;
+    apiKey: string;
+    fetchImpl?: typeof fetch;
+    /** Defaults to the process-wide cache; tests pass their own. */
+    codeNameCache?: CodeNameCache;
+  }) {
     this.client = new PtvV12Client(options);
+    this.codeNames = options.codeNameCache ?? sharedCodeNameCache;
     this.capabilities = {
       apiVersion: 'v12',
       environment: options.environment,
@@ -196,13 +205,16 @@ export class PtvV12Adapter implements PtvAdapter {
         (!query || matchesService(service, query)),
     );
     const result = paginate(filtered, page, pageSize);
-    return { ...result, items: await this.withChannelIds(result.items) };
+    return {
+      ...result,
+      items: await this.withCodeNames(await this.withChannelIds(result.items)),
+    };
   }
 
   async getService(id: PtvContentId): Promise<Service | null> {
     try {
       const raw = await this.client.get<V12ServiceWire>(`/api/v12/service/${id}`);
-      const [service] = await this.withChannelIds([mapV12Service(raw)]);
+      const [service] = await this.withCodeNames(await this.withChannelIds([mapV12Service(raw)]));
       return service ?? null;
     } catch (err) {
       if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404)
@@ -342,7 +354,8 @@ export class PtvV12Adapter implements PtvAdapter {
             (!query || matchesGeneralDescription(mapV12GeneralDescription(item), query)),
       )
       .map(mapV12GeneralDescription);
-    return paginate(filtered, page, pageSize);
+    const result = paginate(filtered, page, pageSize);
+    return { ...result, items: await this.withCodeNames(result.items) };
   }
   /**
    * v12 services carry no channel list; connections are their own
@@ -403,8 +416,81 @@ export class PtvV12Adapter implements PtvAdapter {
         ).join(', ')}`,
       );
     }
-    const items = await this.fetchAllRaw<unknown>(path, 100);
-    return items.map((item) => referenceCodeToDomain(item));
+    const items = (await this.fetchAllRaw<unknown>(path, 100)).map(referenceCodeToDomain);
+    if (isCodeListKind(codeListName)) {
+      for (const item of items) this.cacheCodeName(codeListName, item);
+    }
+    return items;
+  }
+
+  /**
+   * Fill `names` on classification entries, which v12 returns as bare
+   * codes/URIs. Only codes not already cached are fetched, via the
+   * reference-data endpoints' `codes`/`uris` filters (max 20 per request).
+   * A failed lookup leaves names empty rather than failing the read.
+   */
+  private async withCodeNames<T extends CodeCarrier>(items: T[]): Promise<T[]> {
+    const environment = this.capabilities.environment;
+    await Promise.all(
+      CODE_LIST_KINDS.map(async (kind) => {
+        const missing = new Set<string>();
+        for (const item of items) {
+          for (const entry of item[kind]) {
+            const key = entry.code ?? entry.uri;
+            if (key && Object.keys(entry.names).length === 0) {
+              if (!this.codeNames.get(environment, kind, key)) missing.add(key);
+            }
+          }
+        }
+        const keys = [...missing];
+        const batches: Array<{ param: 'codes' | 'uris'; values: string[] }> = [];
+        for (const param of ['uris', 'codes'] as const) {
+          const values = keys.filter((key) => isUri(key) === (param === 'uris'));
+          for (let i = 0; i < values.length; i += CODE_FILTER_MAX_ITEMS) {
+            batches.push({ param, values: values.slice(i, i + CODE_FILTER_MAX_ITEMS) });
+          }
+        }
+        await Promise.all(
+          batches.map(async ({ param, values }) => {
+            try {
+              const found = (
+                await this.fetchAllRaw<unknown>(V12_REFERENCE_CODE_LIST_PATHS[kind]!, 100, {
+                  [param]: values,
+                })
+              ).map(referenceCodeToDomain);
+              for (const entry of found) this.cacheCodeName(kind, entry);
+              // Cache misses too, so an unknown code isn't re-requested on every read.
+              for (const value of values) {
+                if (!this.codeNames.get(environment, kind, value)) {
+                  this.codeNames.set(environment, kind, value, {});
+                }
+              }
+            } catch {
+              // Leave these names empty; the next read retries.
+            }
+          }),
+        );
+      }),
+    );
+    return items.map((item) => {
+      const withNames = { ...item };
+      for (const kind of CODE_LIST_KINDS) {
+        withNames[kind] = item[kind].map((entry) => {
+          const key = entry.code ?? entry.uri;
+          if (!key || Object.keys(entry.names).length > 0) return entry;
+          const names = this.codeNames.get(environment, kind, key);
+          return names && Object.keys(names).length > 0 ? { ...entry, names } : entry;
+        });
+      }
+      return withNames;
+    });
+  }
+
+  private cacheCodeName(kind: CodeListKind, entry: CodeListEntry): void {
+    const environment = this.capabilities.environment;
+    for (const key of [entry.code, entry.uri]) {
+      if (key) this.codeNames.set(environment, kind, key, entry.names);
+    }
   }
   /**
    * Fetch every page of a v12 paginated endpoint. Page 1 tells us
@@ -520,6 +606,26 @@ function extractTotalCount(raw: unknown, fallback: number): number {
 }
 
 const PAGE_FETCH_CONCURRENCY = 6;
+/** `codes` / `uris` maxItems on the v12 reference-data endpoints. */
+const CODE_FILTER_MAX_ITEMS = 20;
+
+const CODE_LIST_KINDS: readonly CodeListKind[] = [
+  'serviceClasses',
+  'targetGroups',
+  'lifeEvents',
+  'industrialClasses',
+  'ontologyTerms',
+];
+
+type CodeCarrier = Record<CodeListKind, CodeListEntry[]>;
+
+function isCodeListKind(name: string): name is CodeListKind {
+  return (CODE_LIST_KINDS as readonly string[]).includes(name);
+}
+
+function isUri(value: string): boolean {
+  return /^https?:\/\//.test(value);
+}
 /** `serviceContentIds` / `channelContentIds` maxItems in the v12 spec. */
 const CONNECTION_SEARCH_MAX_IDS = 20;
 
