@@ -19,7 +19,12 @@ import {
   ChannelNotFoundError,
   prepareChannelProposal,
 } from './channelProposal.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import {
+  FourEyesError,
+  requireTenantRole,
+  type FourEyesResolver,
+  type MembershipRoleResolver,
+} from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { applyChanges, exportForManualPublish } from './applyOrExport.js';
 import {
@@ -305,10 +310,22 @@ export async function resolveProposal(
   ctx: ToolContext,
   proposalId: string,
   action: ResolveProposalAction,
+  requireFourEyes: FourEyesResolver,
 ): Promise<ProposalDetails> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+
+  // Four-eyes: approving your own proposal is refused; rejecting (withdrawing) it is fine.
+  if (
+    action !== 'reject' &&
+    proposal.proposedByUserId === ctx.actingUserId &&
+    (await requireFourEyes(ctx.tenantId))
+  ) {
+    throw new FourEyesError(
+      'Four-eyes review: you cannot approve a proposal you created. Another Hyväksyjä or Julkaisija must resolve it (you can still reject it).',
+    );
+  }
 
   if (action === 'reject') {
     const rejected = await proposalService.markResolved(

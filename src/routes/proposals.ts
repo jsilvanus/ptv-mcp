@@ -18,6 +18,8 @@ import {
   ProposalService,
   type ProposalStatus,
 } from '../proposals/proposalService.js';
+import { FourEyesError } from '../mcp/authorization.js';
+import { tenantRequiresFourEyes } from '../tenants/tenantService.js';
 
 export interface ProposalRoutesOptions {
   db: Database;
@@ -112,6 +114,7 @@ export async function proposalRoutes(
           contextFrom(tenantId, request.userId!, request.query),
           proposalId,
           request.body.action,
+          (id) => tenantRequiresFourEyes(options.db, id),
         );
       } catch (err) {
         if (err instanceof ProposalNotFoundError) {
@@ -119,6 +122,9 @@ export async function proposalRoutes(
         }
         if (err instanceof ProposalAlreadyResolvedError) {
           return reply.conflict(err.message);
+        }
+        if (err instanceof FourEyesError) {
+          return reply.forbidden(err.message);
         }
         throw err;
       }

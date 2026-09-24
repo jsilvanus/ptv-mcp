@@ -27,6 +27,8 @@ const writeCtx = { ...ctx, writeApiVersion: 'v11' };
 const readerResolver: MembershipRoleResolver = async () => 'contributor';
 const editorResolver: MembershipRoleResolver = async () => 'approver';
 const publisherResolver: MembershipRoleResolver = async () => 'publisher';
+const noFourEyes = async () => false;
+const fourEyes = async () => true;
 
 const service: Service = {
   id: 'svc-1',
@@ -183,6 +185,7 @@ describe('proposalQueue', () => {
       ctx,
       queued.proposalId,
       'reject' as ResolveProposalAction,
+      noFourEyes,
     );
     expect(resolved.status).toBe('rejected');
   });
@@ -205,10 +208,67 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       ),
     ).rejects.toMatchObject({ reason: 'not_authorized' });
 
     expect(rows[0]?.status).toBe('pending');
+  });
+
+  it('refuses approving your own proposal under four-eyes, but lets you reject it', async () => {
+    const registry = buildRegistry(true);
+    const audit = fakeAuditService();
+    const { rows, api } = fakeProposalService();
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Oma ehdotus' },
+    });
+
+    for (const action of ['approve_and_apply', 'approve_and_export'] as const) {
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          action,
+          fourEyes,
+        ),
+      ).rejects.toThrow(/Four-eyes/);
+    }
+    expect(rows[0]?.status).toBe('pending');
+
+    const otherUser = { ...writeCtx, actingUserId: 'user-2' };
+    const exported = await resolveProposal(
+      editorResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      otherUser,
+      queued.proposalId,
+      'approve_and_export',
+      fourEyes,
+    );
+    expect(exported.status).not.toBe('pending');
+
+    const second = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+      names: { fi: 'Peruttava' },
+    });
+    const rejected = await resolveProposal(
+      editorResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      ctx,
+      second.proposalId,
+      'reject',
+      fourEyes,
+    );
+    expect(rejected.status).toBe('rejected');
   });
 
   it('allows publisher resolver to approve_and_apply', async () => {
@@ -228,6 +288,7 @@ describe('proposalQueue', () => {
       writeCtx,
       queued.proposalId,
       'approve_and_apply',
+      noFourEyes,
     );
     expect(resolved.status).toBe('applied');
     expect(rows[0]?.status).toBe('applied');
@@ -273,6 +334,7 @@ describe('proposalQueue', () => {
       writeCtx,
       queued.proposalId,
       'approve_and_apply',
+      noFourEyes,
     );
 
     expect(resolved).toMatchObject({ status: 'applied', current: null, proposed: null, diff: [] });
@@ -325,6 +387,7 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       );
       expect(resolved.status).toBe('applied');
       expect(resolved.serviceId).not.toBe('');
@@ -355,6 +418,7 @@ describe('proposalQueue', () => {
           writeCtx,
           queued.proposalId,
           'approve_and_apply',
+          noFourEyes,
         ),
       ).rejects.toThrow(/failed validation/);
       expect(rows[0]?.status).toBe('failed');
@@ -404,6 +468,7 @@ describe('proposalQueue', () => {
         writeCtx,
         queued.proposalId,
         'approve_and_apply',
+        noFourEyes,
       );
       expect(resolved.status).toBe('applied');
       expect(resolved.diff).toEqual([]);

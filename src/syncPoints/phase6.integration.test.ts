@@ -146,9 +146,13 @@ describe('Phase 6 sync point', () => {
     );
   }
 
-  async function createTenant(name: string): Promise<string> {
+  // These flows exercise the direct export/apply tools per role, which
+  // four-eyes (on by default) refuses outright — see the last test.
+  async function createTenant(name: string, requireFourEyes = false): Promise<string> {
     const tenantId = randomUUID();
-    await db.insert(tenants).values({ id: tenantId, name, slug: `phase6-${tenantId}` });
+    await db
+      .insert(tenants)
+      .values({ id: tenantId, name, slug: `phase6-${tenantId}`, requireFourEyes });
     createdTenantIds.push(tenantId);
     return tenantId;
   }
@@ -426,5 +430,30 @@ describe('Phase 6 sync point', () => {
 
     const capturedSharedTokens = capturedUserTokens.filter((token) => token === 'shared-token');
     expect(capturedSharedTokens.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refuses the direct export/apply tools when the tenant requires four-eyes', async () => {
+    const tenantId = await createTenant('Phase 6 four-eyes tenant', true);
+    const publisherUser = await registerUser('Four-eyes Publisher');
+    await addMembership(tenantId, publisherUser.userId, 'publisher');
+    await configureV11(tenantId, true);
+    await connectionService.storeConnection(
+      publisherUser.userId,
+      'v11',
+      'test',
+      'four-eyes-token',
+      new Date('2030-01-01T00:00:00.000Z'),
+    );
+    const client = await connectedClient(await mintToken(publisherUser.userId, tenantId));
+
+    for (const name of ['ptv_export_for_manual_publish', 'ptv_apply_changes']) {
+      const result = await client.callTool({
+        name,
+        arguments: { serviceId: BASE_SERVICE.id, changes: { names: { fi: 'Suoraan' } } },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('four-eyes');
+    }
+    await client.close();
   });
 });

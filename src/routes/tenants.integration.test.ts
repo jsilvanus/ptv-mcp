@@ -153,6 +153,63 @@ describe('tenant routes', () => {
     expect(membersRes.json()).toHaveLength(3);
   });
 
+  it('defaults four-eyes on, lets members read it and only a tenant_admin change it', async () => {
+    const admin = await createUserWithToken();
+    const viewer = await createUserWithToken();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: 'Settings Tenant', slug: `tenant-${randomUUID()}` },
+    });
+    const { tenantId } = createRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+    await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/members`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { email: viewer.email, role: 'viewer' },
+    });
+
+    const asViewer = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+    });
+    expect(asViewer.statusCode).toBe(200);
+    expect(asViewer.json()).toEqual({ requireFourEyes: true });
+
+    const forbidden = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { requireFourEyes: false },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const invalid = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { requireFourEyes: 'no' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/settings`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { requireFourEyes: false },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toEqual({ requireFourEyes: false });
+
+    const audit = await withContext(db, { tenantId }, async (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.tenantId, tenantId)),
+    );
+    expect(audit.map((entry) => entry.action)).toContain('UpdateTenantSettings');
+  });
+
   it('updates and then removes a member via HTTP', async () => {
     const admin = await createUserWithToken();
     const member = await createUserWithToken();
