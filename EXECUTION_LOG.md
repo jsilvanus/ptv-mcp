@@ -1449,3 +1449,23 @@ the domain model lacks). Creation and channel updates still need live
 verification: the connector's tool list predates them, so it has to be
 reconnected.
 
+
+## 2026-09-24 — v11 channel updates verified live; service creation fixed
+
+Through the reconnected PTV-MCP connector (test environment, organisation
+15):
+
+- Channel updates (`ptv_propose_channel_changes` → `approve_and_apply`)
+  work for EChannel, Phone, ServiceLocation and WebPage. Each `fi`
+  description got " (PTV-MCP testi)" and was restored. Compared with a
+  public-API snapshot, only `modified` differs afterwards; Summaries,
+  other languages, hours and addresses survived. PrintableForm is still
+  unverified (organisation 15 has none).
+- Service creation failed: PTV refused the hard-coded
+  `areaType: "Nationwide"` for a `LimitedType` organisation. #54 copies the
+  organisation's area into the POST, and the `ptv_propose_new_service`
+  description now says localized fields are keyed by language (an array
+  shape only failed validation on `names`).
+- Known gap: #54 is merged but not deployed (the Farcmd deploy was not
+  permitted from this session), so create → publish → archive still needs
+  a live run after a redeploy. No test service was created.

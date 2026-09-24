@@ -157,6 +157,24 @@ descriptions, service hours, contact details). Removing everything is
 `deleteAllChannelRelations: true` with an empty list. Adding and removing
 were both verified.
 
+### Service POST (`POST /api/v11/Service`)
+
+- The service area can't be wider than the organisation's. With
+  `areaType: "Nationwide"` for Testiorganisaatio 15 (`LimitedType`,
+  wellbeing services county 16), PTV answers 400 *"Areas: Area
+  information type Nationwide is too wide."* The domain model carries no
+  area, so the adapter copies the organisation's `areaType` and `areas`
+  (as `{type, areaCodes}` per type) into the POST (#54).
+
+### Channel PUT (`PUT /api/v11/ServiceChannel/{type}/{id}`)
+
+Verified for EChannel, Phone, ServiceLocation and WebPage (organisation 15
+has no PrintableForm). Changing only the `fi` Description and restoring it
+left every other field identical on the public read: Summaries, other
+languages, service hours, addresses, URLs, phone numbers. One quirk: PTV
+may return `serviceHours` in a different order after a save; the content
+is unchanged.
+
 ### Errors
 
 A rejected write is a 400 whose body maps fields to messages
