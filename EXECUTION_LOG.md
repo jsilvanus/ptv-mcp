@@ -1476,3 +1476,19 @@ Through the reconnected PTV-MCP connector (test environment, organisation
   (`current`/`proposed` null), for `ptv_get_proposal` too.
 - The first deploy attempt failed on the server's GitHub SSH key
   (`Permission denied (publickey)`); fixed on the server, outside the repo.
+
+
+## 2026-09-24 — Roles step 4: four-eyes
+
+- `tenants.require_four_eyes` (migration 0020, default true, so every
+  existing tenant gets it on). `resolveProposal` refuses
+  `approve_and_export`/`approve_and_apply` when the resolver created the
+  proposal; reject stays allowed so a proposer can withdraw.
+- The direct `ptv_export_for_manual_publish`/`ptv_apply_changes` tools are
+  refused while four-eyes is on: they would let one person both write and
+  approve. Phase 4/6 sync tests create their tenant with it off; a new
+  Phase 6 test covers the refusal.
+- `GET/PUT /tenants/:id/settings` (Viewer reads, Tenant Admin writes,
+  audited as `UpdateTenantSettings`); checkbox on the members page.
+- Live testing with one account needs four-eyes switched off for that
+  tenant first, or a second account to resolve.

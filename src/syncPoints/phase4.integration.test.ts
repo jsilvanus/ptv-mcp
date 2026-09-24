@@ -98,7 +98,13 @@ describe('Phase 4 sync point', () => {
     const tenantId = randomUUID();
     await db
       .insert(tenants)
-      .values({ id: tenantId, name: 'Phase 4 Sync Tenant', slug: `p4-${tenantId}` });
+      // Exercises the direct export tool, which four-eyes refuses.
+      .values({
+        id: tenantId,
+        name: 'Phase 4 Sync Tenant',
+        slug: `p4-${tenantId}`,
+        requireFourEyes: false,
+      });
     createdTenantIds.push(tenantId);
     await withContext(db, { tenantId }, async (tx) => {
       await tx.insert(memberships).values({ tenantId, userId, role: 'approver' });

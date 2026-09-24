@@ -13,8 +13,9 @@ import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
-import { NotAuthorizedError } from './authorization.js';
+import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
 import type { ProposalService } from '../proposals/proposalService.js';
+import { tenantRequiresFourEyes } from '../tenants/tenantService.js';
 import * as searchTools from './searchTools.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
@@ -75,6 +76,7 @@ function describeError(err: unknown): string {
     err instanceof ServiceNotFoundError ||
     err instanceof ValidationFailedError ||
     err instanceof NotAuthorizedError ||
+    err instanceof FourEyesError ||
     isProposalQueueError(err)
   ) {
     return err.message;
@@ -225,6 +227,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const { db, registry, auditService, validator, proposalService } = deps;
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(db, tenantId, userId);
+  const requireFourEyes = (tenantId: string) => tenantRequiresFourEyes(db, tenantId);
   const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
 
   server.registerTool(
@@ -681,7 +684,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_resolve_proposal',
     withOAuthSecurity({
       description:
-        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija).',
+        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it.',
       inputSchema: {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
@@ -699,6 +702,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             toolContext(extra),
             args.proposalId,
             args.action,
+            requireFourEyes,
           ),
         );
       } catch (err) {
@@ -738,7 +742,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_export_for_manual_publish',
     withOAuthSecurity({
       description:
-        "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish.",
+        "Render an approved proposal into a per-language preview for manual copy into PTV's own admin UI, and record it as ReadyForManualPublish. Refused when the organisation requires four-eyes review (the default): use ptv_propose_changes instead.",
       inputSchema: {
         serviceId: z.string(),
         changes: changesSchema,
@@ -747,12 +751,14 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
+        const ctx = toolContext(extra);
+        await requireNoFourEyes(requireFourEyes, ctx.tenantId);
         return textResult(
           await exportForManualPublish(
             resolveRole,
             registry,
             auditService,
-            toolContext(extra),
+            ctx,
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,
@@ -768,7 +774,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_apply_changes',
     withOAuthSecurity({
       description:
-        'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection.',
+        'Validate and write a proposed change directly to PTV via a write-capable adapter for this tenant/environment. Requires Publisher role and an active PTV connection. Refused when the organisation requires four-eyes review (the default): use ptv_propose_changes instead.',
       inputSchema: {
         serviceId: z.string(),
         changes: changesSchema,
@@ -777,13 +783,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     }),
     async (args, extra) => {
       try {
+        const ctx = toolContext(extra);
+        await requireNoFourEyes(requireFourEyes, ctx.tenantId);
         return textResult(
           await applyChanges(
             resolveRole,
             registry,
             auditService,
             validator,
-            toolContext(extra),
+            ctx,
             args.serviceId,
             args.changes as Partial<Service>,
             args.correlationId,

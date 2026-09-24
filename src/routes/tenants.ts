@@ -29,6 +29,10 @@ interface AddMemberBody {
   role: MembershipRole;
 }
 
+interface UpdateSettingsBody {
+  requireFourEyes?: unknown;
+}
+
 interface UpdateMemberRoleBody {
   role: MembershipRole;
 }
@@ -40,6 +44,7 @@ export async function tenantRoutes(
   const { tenantService, db } = options;
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireTenantAdmin = createRequireRole(db, 'tenant_admin');
+  const requireViewer = createRequireRole(db, 'viewer');
 
   app.post<{ Body: CreateTenantBody }>(
     '/tenants',
@@ -115,6 +120,30 @@ export async function tenantRoutes(
         }
         throw err;
       }
+    },
+  );
+
+  // Every member may read the settings (the proposal page shows whether
+  // four-eyes applies); only a Tenant Admin (Pääkäyttäjä) changes them.
+  app.get(
+    '/tenants/:tenantId/settings',
+    { preHandler: [authenticate, requireViewer] },
+    async (request) => {
+      const { tenantId } = request.params as { tenantId: string };
+      return tenantService.getSettings(tenantId);
+    },
+  );
+
+  app.put<{ Body: UpdateSettingsBody }>(
+    '/tenants/:tenantId/settings',
+    { preHandler: [authenticate, requireTenantAdmin] },
+    async (request, reply) => {
+      const { tenantId } = request.params as { tenantId: string };
+      const requireFourEyes = request.body?.requireFourEyes;
+      if (typeof requireFourEyes !== 'boolean') {
+        return reply.badRequest('requireFourEyes must be a boolean');
+      }
+      return tenantService.updateSettings(tenantId, { requireFourEyes }, request.userId!);
     },
   );
 

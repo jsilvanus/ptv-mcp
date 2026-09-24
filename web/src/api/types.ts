@@ -107,3 +107,7 @@ export interface PtvV11ApiUserStatus {
   supportsRead: boolean;
   supportsWrite: boolean;
 }
+
+export interface TenantSettings {
+  requireFourEyes: boolean;
+}

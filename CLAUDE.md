@@ -148,7 +148,10 @@ state at resolve time — it never trusts the diff stored at queue time
 `approve_and_export` only needs Approver; `approve_and_apply` additionally
 requires the registry to hand back a write-capable adapter for that
 tenant/environment (Publisher-only, enforced by `PtvAdapterRegistry`, not
-by the proposal code itself).
+by the proposal code itself). Four-eyes (`tenants.require_four_eyes`, on by
+default) additionally refuses approving your own proposal and the direct
+`ptv_export_for_manual_publish`/`ptv_apply_changes` tools; integration tests
+that exercise those direct tools create their tenant with it off.
 
 ### MCP layer
 

@@ -38,3 +38,30 @@ export async function requireTenantRole(
     throw new NotAuthorizedError(tenantId, minRole);
   }
 }
+
+/** Whether a tenant enforces four-eyes (`tenants.require_four_eyes`). */
+export type FourEyesResolver = (tenantId: string) => Promise<boolean>;
+
+export class FourEyesError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FourEyesError';
+  }
+}
+
+/**
+ * The direct `ptv_apply_changes` / `ptv_export_for_manual_publish` tools
+ * skip the proposal queue, so one person would both write and approve
+ * the change. With four-eyes on they are refused; the proposal flow
+ * (`ptv_propose_changes` → someone else's `ptv_resolve_proposal`) remains.
+ */
+export async function requireNoFourEyes(
+  requireFourEyes: FourEyesResolver,
+  tenantId: string,
+): Promise<void> {
+  if (await requireFourEyes(tenantId)) {
+    throw new FourEyesError(
+      'This organisation requires four-eyes review: propose the change with ptv_propose_changes and have another member resolve it. A Pääkäyttäjä can switch four-eyes off in the organisation settings.',
+    );
+  }
+}

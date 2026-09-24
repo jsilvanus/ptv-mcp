@@ -45,8 +45,11 @@ keep their meaning). `viewer` is new.
    user.
 3. **Proposal comments.** `proposal_comments` table (RLS), REST + MCP tool
    (`ptv_comment_proposal`), shown on the proposal page.
-4. **Four-eyes.** `tenants.settings.fourEyes` (default true), checked in
-   `resolveProposal`; admin toggle in the web UI.
+4. **Four-eyes.** `tenants.require_four_eyes` (default true), checked in
+   `resolveProposal`; the direct `ptv_export_for_manual_publish` and
+   `ptv_apply_changes` tools are refused while it is on. REST
+   `GET/PUT /tenants/:id/settings` (read: Viewer, write: Tenant Admin,
+   audited as `UpdateTenantSettings`); toggle on the members page.
 5. **Required reviewers.** `proposal_reviewers` table (proposal, user,
    decision, comment, decided_at), MCP tools to request a review and to sign
    off, the gate in `resolveProposal`, and a "waiting for you" list in the

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { apiFetch, ApiError } from '../api/client';
 import type { Member, MembershipRole } from '../api/types';
 import { ROLE_LABELS, ROLES } from '../auth/roles';
+import { TenantSettingsPanel } from './TenantSettingsPanel';
 
 export function MembersPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
@@ -198,6 +199,8 @@ export function MembersPage() {
         </button>
       </form>
       {addError && <p className="error">{addError}</p>}
+
+      {tenantId && <TenantSettingsPanel tenantId={tenantId} />}
     </div>
   );
 }
