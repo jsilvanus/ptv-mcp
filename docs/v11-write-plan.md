@@ -14,6 +14,25 @@ Test targets in organisation 15 (test data is wiped when DVV upgrades PTV):
 `Hautauspalvelu` `c67da57e-ea12-4c90-bd53-1fa5f82e26af` (2 channels) and
 `Testipalvelu 7` `411983fb-d1d4-4db3-bad4-9150a977a302` (no channels).
 
+## Status (2026-09-24)
+
+| Phase | Path | Live | PRs |
+|---|---|---|---|
+| 1 | Service update: names, summaries, descriptions, languages, classifications, life events, industrial classes, general description | ✅ | #39, #42, #47, #49, #51 |
+| 1 | Publishing status (Published; Modified refused) | ✅ | #43, #45 |
+| 2 | Removals (languages, delete flags, general description unlink) | ✅ | #39, #49, #51 |
+| 3 | Readable PTV errors | ✅ | #40 |
+| 4 | Draft reads (`active` endpoints) | ✅ | #41 |
+| 5 | Create service (POST), archive | code merged, live pending a connector reconnect | #48 |
+| 6 | Connections (add, remove, extra info kept) | ✅ | #44, #46 |
+| 6 | Channel updates (5 types) | code merged, live pending a connector reconnect | #50 |
+| 7 | Credential-change audit | integration-tested | #52 |
+
+Findings: [docs/ptv-v11-notes.md](ptv-v11-notes.md), "Live write
+findings". Out of scope for now: creating channels (each type needs data
+the domain model doesn't carry). PrintableForm can't be verified live,
+because organisation 15 has no PrintableForm channel.
+
 ## Phase 1: update an existing service (PUT)
 
 1. Description sentence through propose → `approve_and_apply`, read back.

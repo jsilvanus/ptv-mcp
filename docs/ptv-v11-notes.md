@@ -78,6 +78,92 @@ verify a write against v11's own view of the entity.
 > Test environment details and organisation ids:
 > [docs/ptv-test-environment.md](ptv-test-environment.md).
 
+## Live write findings (2026-09-24, test environment)
+
+> Verified through the PTV-MCP connector (propose → `approve_and_apply`,
+> read back through the connector and the public API) on Testiorganisaatio
+> 15's services *Hautauspalvelu* and *Testipalvelu 7*. Where these differ
+> from the swagger, **these win**. Plan and status:
+> [docs/v11-write-plan.md](v11-write-plan.md).
+
+### Service PUT (`PUT /api/v11/Service/{id}`)
+
+It is **not** a plain partial update (compare "Write model" finding 3
+below):
+
+- `publishingStatus` is required on every PUT.
+- `serviceClasses`, `ontologyTerms` and `targetGroups` are required when
+  the service has no general description.
+- `serviceDescriptions` and `serviceNames` are replaced as whole lists,
+  and a `Summary` must be present. Changing only the description has to
+  resend the summary and the other types (`UserInstruction`,
+  `ChargeTypeAdditionalInfo`, …).
+- Omitting a language's entries from those lists removes that language's
+  texts (removing `sv` worked with `languages: ["fi"]`).
+- `deleteAllLifeEvents` and `deleteAllIndustrialClasses` clear their
+  lists as documented.
+- **Industrial classes:** the schema says "codes", but a plain code
+  (`"94910"`) makes PTV answer **500**. The stat.fi URI
+  `http://www.stat.fi/meta/luokitukset/toimiala/001-2008/94910` works.
+  Industrial classes also need target group KR2 and one of its subgroups
+  (400s: *"Target group 'Businesses and non-government organizations
+  (KR2)' or one of the sub target groups is required if industrial
+  classes are attached"*, *"... one of the sub target groups is
+  required"*).
+- Service classes: at least one must be a subclass (400: *"All the service
+  classes are main service classes. Not allowed!"*).
+- **General description:** linking (`generalDescriptionId`) works.
+  Unlinking (`deleteGeneralDescriptionId`) also needs `type` (400: *"Type:
+  The field is required when 'DeleteGeneralDescriptionId' has value
+  'True'"*). While a general description is linked, the read merges its
+  classifications into the service's own lists **without marking them**.
+  The adapter therefore fetches the description and filters its URIs out
+  of what it sends. If that would empty a list (the service and the
+  description share an entry, e.g. KR1), the list is sent as is.
+- `userName` is not needed: writes with the API-user token succeed
+  without it, and PTV attributes them to the API user. Our audit log
+  records the acting user.
+- PTV returns `serviceChannels: null`, not `[]`, for a service without
+  connections.
+
+### Publishing status
+
+- Writable values: `Draft` (only for a never-published entity),
+  `Published`, and `Deleted` (archive; `Archived` in the domain model).
+- A published entity can't go back to Draft (400: *"You cannot set
+  Publishing status as Draft when current one is Published"*).
+- **`Modified` is a trap.** PTV accepts it once, saving an unpublished
+  version on top of the published one. After that, **every** API write
+  of the service fails (*"You cannot update entity with status
+  Modified"*), whatever status the PUT asks for. Only PTV's web UI can
+  publish or discard that version. PTV-MCP never writes `Modified`, and
+  refuses before calling PTV when the latest version is `Modified`.
+  *Testipalvelu 7* was left in that state by the test and needs
+  publishing or discarding in the UI.
+
+### Draft reads
+
+`Service/active/{id}` and `ServiceChannel/active/{id}` accept the API-user
+token and return the latest version, `Modified` ones included. The public
+`Service/{id}` keeps returning the published version.
+
+### Connections (`PUT /api/v11/Connection/serviceId/{id}`)
+
+The PUT **replaces** the service's connections with the listed ones: a
+body with only a new channel removed the two existing connections. The
+schema's wording suggests it only adds. So PTV-MCP sends the full desired
+list, and kept connections carry their extra info (charge type,
+descriptions, service hours, contact details). Removing everything is
+`deleteAllChannelRelations: true` with an empty list. Adding and removing
+were both verified.
+
+### Errors
+
+A rejected write is a 400 whose body maps fields to messages
+(`{"PublishingStatus": ["..."]}`). PTV-MCP renders it as one
+`- Field: message` line per error. Unexpected failures are 500s with
+`{"errorMessage": "An unexpected error occurred. Trace id: ..."}`.
+
 ## Auth model — confirmed against the live OIDC discovery document
 
 v11 declares a single security scheme:
@@ -220,7 +306,9 @@ than assuming every adapter's secret lives on the same tenant-keyed row.
    PTV's `id`, since we already fetch the entity to build the diff.
 
 3. **PUT is a partial update with explicit "clear" flags, not a full
-   replace.** The service write model
+   replace.** *(Only partly true live; see "Live write findings" above.
+   Several fields are required on every PUT, and localized lists are
+   replaced whole.)* The service write model
    (`V9VmOpenApiServiceIn` — note it's internally still versioned "V9"
    even inside the v11 spec) includes flags like `deleteAllServiceVouchers`,
    `deleteAllLifeEvents`, `deleteAllIndustrialClasses`,
