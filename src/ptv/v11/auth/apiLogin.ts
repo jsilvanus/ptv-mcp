@@ -24,6 +24,8 @@ export interface V11ApiUserCredentials {
   password: string;
   /** Palveluhallinta organisation id; production only, for API users linked to several organisations. */
   apiUserOrganisation?: string;
+  /** PTV organisation this API user writes to, as chosen by the tenant admin (informational). */
+  organisationId?: string;
 }
 
 export interface V11ApiToken {
@@ -60,12 +62,14 @@ export function parseV11ApiUserCredentials(
     return undefined;
   }
   const organisation = credentials?.apiUserOrganisation;
+  const organisationId = credentials?.organisationId;
   return {
     username,
     password,
     ...(typeof organisation === 'string' && organisation
       ? { apiUserOrganisation: organisation }
       : {}),
+    ...(typeof organisationId === 'string' && organisationId ? { organisationId } : {}),
   };
 }
 

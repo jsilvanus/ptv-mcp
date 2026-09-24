@@ -7,6 +7,12 @@ import type {
   PtvV12ConnectionStatus,
 } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
+import {
+  PTV_TEST_API_ACCOUNTS,
+  PTV_TEST_ORGANISATIONS,
+  TEST_ACCOUNTS_URL,
+  testOrganisationLabel,
+} from '../ptv/testOrganisations';
 
 export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
 
@@ -29,6 +35,7 @@ export function PtvConnectionsPage() {
   const [apiUsername, setApiUsername] = useState('');
   const [apiPassword, setApiPassword] = useState('');
   const [apiUserOrganisation, setApiUserOrganisation] = useState('');
+  const [testOrganisationId, setTestOrganisationId] = useState('');
   const [apiUserBusy, setApiUserBusy] = useState(false);
   const [apiUserStatus, setApiUserStatus] = useState<string | null>(null);
 
@@ -146,6 +153,9 @@ export function PtvConnectionsPage() {
           ...(apiUserEnvironment === 'production' && apiUserOrganisation.trim()
             ? { apiUserOrganisation: apiUserOrganisation.trim() }
             : {}),
+          ...(apiUserEnvironment === 'test' && testOrganisationId
+            ? { organisationId: testOrganisationId }
+            : {}),
         }),
       });
       await apiFetch<{ ok: boolean }>(
@@ -233,7 +243,14 @@ export function PtvConnectionsPage() {
               <tr key={`v11-api-${c.environment}`}>
                 <td>v11 (API user)</td>
                 <td>{c.environment}</td>
-                <td>{c.username ?? 'Configured'}</td>
+                <td>
+                  {c.username ?? 'Configured'}
+                  {c.organisationId && (
+                    <div className="muted">
+                      {testOrganisationLabel(c.organisationId) ?? c.organisationId}
+                    </div>
+                  )}
+                </td>
                 <td>—</td>
                 <td>—</td>
                 <td>—</td>
@@ -294,9 +311,12 @@ export function PtvConnectionsPage() {
       <h2 style={{ marginTop: 24 }}>Connect a PTV v11 API user</h2>
       <p className="muted">
         The organisation&apos;s PTV API user (issued by DVV for IN-API access) is used for writes.
-        It is stored encrypted and belongs to the selected tenant. For the test environment, use one
-        of the API users from DVV&apos;s public test account list (see
-        docs/ptv-test-environment.md).
+        It is stored encrypted and belongs to the selected tenant. For the test environment, pick
+        one of DVV&apos;s test organisations and use its <code>API…@testi.fi</code> user from{' '}
+        <a href={TEST_ACCOUNTS_URL} target="_blank" rel="noopener noreferrer">
+          DVV&apos;s public test account list
+        </a>
+        . A test API user can only write to its own organisation.
       </p>
       {currentTenant ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -308,6 +328,28 @@ export function PtvConnectionsPage() {
             <option value="test">test</option>
             <option value="production">production</option>
           </select>
+          {apiUserEnvironment === 'test' && (
+            <select
+              value={testOrganisationId}
+              onChange={(e) => {
+                const organisationId = e.target.value;
+                setTestOrganisationId(organisationId);
+                const account = PTV_TEST_API_ACCOUNTS[organisationId];
+                if (account) {
+                  setApiUsername(account.username);
+                  setApiPassword(account.password);
+                }
+              }}
+              aria-label="Test organisation"
+            >
+              <option value="">Pick a test organisation…</option>
+              {PTV_TEST_ORGANISATIONS.map((organisation) => (
+                <option key={organisation.id} value={organisation.id}>
+                  {organisation.name} ({organisation.type})
+                </option>
+              ))}
+            </select>
+          )}
           <input
             value={apiUsername}
             onChange={(e) => setApiUsername(e.target.value)}
@@ -333,7 +375,12 @@ export function PtvConnectionsPage() {
           <button
             className="primary"
             onClick={() => void saveAndTestApiUser()}
-            disabled={apiUserBusy || !apiUsername.trim() || !apiPassword}
+            disabled={
+              apiUserBusy ||
+              !apiUsername.trim() ||
+              !apiPassword ||
+              (apiUserEnvironment === 'test' && !testOrganisationId)
+            }
           >
             {apiUserBusy ? 'Testing…' : 'Save & test'}
           </button>
