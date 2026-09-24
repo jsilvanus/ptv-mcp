@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Service } from '../domain.js';
-import { newServiceToV11Body, serviceChangesToV11Body } from './writeMapping.js';
+import {
+  newServiceToV11Body,
+  organizationAreaToV11,
+  serviceChangesToV11Body,
+} from './writeMapping.js';
 import { toPublishingStatus } from './mappers/common.js';
 import type { V11ServiceWire } from './wireModel.js';
 
@@ -265,5 +269,33 @@ describe('newServiceToV11Body', () => {
       serviceProducers: [{ provisionType: 'SelfProducedServices', organizations: ['org-15'] }],
       serviceChannels: ['channel-1'],
     });
+  });
+});
+
+describe('organizationAreaToV11', () => {
+  it("copies a limited organisation's areas, grouped by type", () => {
+    expect(
+      organizationAreaToV11({
+        areaType: 'LimitedType',
+        areas: [
+          { type: 'WellbeingServiceCounties', code: '16' },
+          { type: 'Municipality', code: '091' },
+          { type: 'Municipality', code: '049' },
+        ],
+      }),
+    ).toEqual({
+      areaType: 'LimitedType',
+      areas: [
+        { type: 'WellbeingServiceCounties', areaCodes: ['16'] },
+        { type: 'Municipality', areaCodes: ['091', '049'] },
+      ],
+    });
+  });
+
+  it('keeps a nationwide area type and defaults to Nationwide', () => {
+    expect(organizationAreaToV11({ areaType: 'NationwideExceptAlandIslands' })).toEqual({
+      areaType: 'NationwideExceptAlandIslands',
+    });
+    expect(organizationAreaToV11(null)).toEqual({ areaType: 'Nationwide' });
   });
 });

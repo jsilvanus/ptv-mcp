@@ -249,3 +249,48 @@ describe('PtvV11Adapter.applyChannelChange', () => {
     },
   );
 });
+
+describe('PtvV11Adapter.createService', () => {
+  it("POSTs the new service with its organisation's area", async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      'GET /api/v11/Organization/org-15': () =>
+        Response.json({
+          id: 'org-15',
+          areaType: 'LimitedType',
+          areas: [{ type: 'WellbeingServiceCounties', code: '16' }],
+        }),
+      'POST /api/v11/Service': () =>
+        Response.json(serviceWire({ id: 'new-1', publishingStatus: 'Draft' })),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    const result = await adapter.createService({
+      organizationId: 'org-15',
+      serviceType: 'Service',
+      publishingStatus: 'Draft',
+      names: { fi: 'Testi' },
+      summaries: { fi: 'Tiivistelmä' },
+      descriptions: { fi: 'Kuvaus' },
+      serviceClasses: [],
+      ontologyTerms: [],
+      targetGroups: [],
+      lifeEvents: [],
+      industrialClasses: [],
+      languages: ['fi'],
+      serviceChannelIds: [],
+    });
+
+    expect(result.serviceId).toBe('new-1');
+    const post = calls.find((call) => call.method === 'POST' && call.path === '/api/v11/Service');
+    expect(post?.body).toMatchObject({
+      areaType: 'LimitedType',
+      areas: [{ type: 'WellbeingServiceCounties', areaCodes: ['16'] }],
+    });
+  });
+});
