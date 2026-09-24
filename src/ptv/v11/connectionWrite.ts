@@ -8,41 +8,37 @@ export interface V11ServiceConnectionsBody {
 }
 
 /**
- * Plans the `PUT /api/v11/Connection/serviceId/{id}` calls that turn the
+ * Plans the `PUT /api/v11/Connection/serviceId/{id}` call that turns the
  * service's current connections into `desiredChannelIds`.
  *
- * That PUT adds or updates the listed relations and leaves the others
- * alone. The only way to remove one is `deleteAllChannelRelations: true`,
- * which the schema says must come with an empty list. So:
- * - only additions: one call listing the new channels;
- * - any removal: one call deleting all, then one re-adding every channel
- *   that stays (with its connection extra info: charge type,
- *   descriptions, service hours, contact details) plus the new ones.
+ * Verified live: that PUT **replaces** the service's connections with the
+ * listed ones (sending only a new channel dropped the existing two), even
+ * though the schema reads as if it only adds. So the body lists every
+ * desired channel, the kept ones with their connection extra info (charge
+ * type, descriptions, service hours, contact details), so PTV doesn't
+ * drop it. Removing every connection is `deleteAllChannelRelations: true`
+ * with an empty list, as the schema asks.
  *
- * An empty result means nothing changes.
+ * `null` means nothing changes.
  */
 export function planServiceConnections(
   current: V11ServiceWire,
   desiredChannelIds: PtvContentId[],
-): V11ServiceConnectionsBody[] {
+): V11ServiceConnectionsBody | null {
   const currentRelations = current.serviceChannels ?? [];
   const currentIds = new Set(currentRelations.map((relation) => relation.serviceChannel.id));
   const desired = [...new Set(desiredChannelIds)];
-  const added = desired.filter((id) => !currentIds.has(id));
-  const removed = [...currentIds].filter((id) => !desired.includes(id));
+  const unchanged = desired.length === currentIds.size && desired.every((id) => currentIds.has(id));
+  if (unchanged) return null;
+  if (desired.length === 0) return { deleteAllChannelRelations: true, channelRelations: [] };
 
-  if (removed.length === 0) {
-    return added.length === 0
-      ? []
-      : [{ channelRelations: added.map((id) => ({ serviceChannelId: id })) }];
-  }
-
-  const kept = currentRelations.filter((relation) => desired.includes(relation.serviceChannel.id));
-  const readd = [...kept.map(relationToWrite), ...added.map((id) => ({ serviceChannelId: id }))];
-  return [
-    { deleteAllChannelRelations: true, channelRelations: [] },
-    ...(readd.length > 0 ? [{ channelRelations: readd }] : []),
-  ];
+  const byId = new Map(currentRelations.map((relation) => [relation.serviceChannel.id, relation]));
+  return {
+    channelRelations: desired.map((id) => {
+      const relation = byId.get(id);
+      return relation ? relationToWrite(relation) : { serviceChannelId: id };
+    }),
+  };
 }
 
 function relationToWrite(relation: V11ServiceChannelRelation): Record<string, unknown> {
