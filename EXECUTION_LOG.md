@@ -1507,3 +1507,14 @@ Through the reconnected PTV-MCP connector (test environment, organisation
   "waiting for my review" filter. The SPA reads its own user id from the
   access token's `sub` to decide which buttons to show; the server still
   checks everything.
+
+## 2026-09-24 — Roles step 6: readable diff and preview
+
+- `diffService` copies names of classifications the service already has
+  onto proposed entries given by uri or code only. New entries keep their
+  bare code: v11 has no standalone classification code lists
+  (`listCodes` refuses them), so there is nothing to look them up from.
+- Web: Finnish field labels (`Nimi (suomi)`), classification changes as
+  +/− lists, and a per-language "Preview after approval" from the
+  proposal's `proposed` (updates, new services and channels).
+- This completes docs/roles-and-review-plan.md steps 1–6.

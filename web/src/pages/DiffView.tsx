@@ -1,10 +1,45 @@
-import type { ServiceDiffEntry } from '../api/types';
+import type { CodeListEntry, ServiceDiffEntry } from '../api/types';
+import { CODE_LIST_FIELDS, codeEntryKey, codeEntryLabel, fieldLabel } from './ptvLabels';
 
 function formatValue(value: unknown): string {
-  if (value === undefined) return '(none)';
-  if (value === null) return '(null)';
+  if (value === undefined) return '(ei arvoa)';
+  if (value === null) return '(tyhjä)';
   if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return value.join(', ');
+  }
   return JSON.stringify(value);
+}
+
+function isCodeListField(field: string): boolean {
+  return (CODE_LIST_FIELDS as readonly string[]).includes(field);
+}
+
+/** Removed entries struck through, added ones marked, unchanged ones plain. */
+function CodeListChange({ before, after }: { before: unknown; after: unknown }) {
+  const oldEntries = Array.isArray(before) ? (before as CodeListEntry[]) : [];
+  const newEntries = Array.isArray(after) ? (after as CodeListEntry[]) : [];
+  const oldKeys = new Set(oldEntries.map(codeEntryKey));
+  const newKeys = new Set(newEntries.map(codeEntryKey));
+  const removed = oldEntries.filter((entry) => !newKeys.has(codeEntryKey(entry)));
+  return (
+    <ul style={{ margin: 0, paddingLeft: 18 }}>
+      {newEntries.map((entry) => (
+        <li key={codeEntryKey(entry)} title={entry.uri}>
+          {oldKeys.has(codeEntryKey(entry)) ? (
+            codeEntryLabel(entry)
+          ) : (
+            <strong>+ {codeEntryLabel(entry)}</strong>
+          )}
+        </li>
+      ))}
+      {removed.map((entry) => (
+        <li key={codeEntryKey(entry)} title={entry.uri} className="muted">
+          <s>− {codeEntryLabel(entry)}</s>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -12,7 +47,8 @@ function formatValue(value: unknown): string {
  * src/mcp/proposeChanges.ts — the same shape `ptv_propose_changes`
  * returns and what a `ProposeServiceChange` audit entry's `afterState.diff`
  * holds. One row per changed field (localized fields like `names.fi`
- * already arrive pre-split per language from that contract).
+ * already arrive pre-split per language from that contract);
+ * classification lists show what is added and removed.
  */
 export function DiffView({ diff }: { diff: ServiceDiffEntry[] }) {
   if (diff.length === 0) {
@@ -28,15 +64,24 @@ export function DiffView({ diff }: { diff: ServiceDiffEntry[] }) {
         </tr>
       </thead>
       <tbody>
-        {diff.map((entry) => (
-          <tr key={entry.field}>
-            <td>
-              <code>{entry.field}</code>
-            </td>
-            <td className="muted">{formatValue(entry.before)}</td>
-            <td>{formatValue(entry.after)}</td>
-          </tr>
-        ))}
+        {diff.map((entry) =>
+          isCodeListField(entry.field) ? (
+            <tr key={entry.field}>
+              <td title={entry.field}>{fieldLabel(entry.field)}</td>
+              <td colSpan={2}>
+                <CodeListChange before={entry.before} after={entry.after} />
+              </td>
+            </tr>
+          ) : (
+            <tr key={entry.field}>
+              <td title={entry.field}>{fieldLabel(entry.field)}</td>
+              <td className="muted" style={{ whiteSpace: 'pre-wrap' }}>
+                {formatValue(entry.before)}
+              </td>
+              <td style={{ whiteSpace: 'pre-wrap' }}>{formatValue(entry.after)}</td>
+            </tr>
+          ),
+        )}
       </tbody>
     </table>
   );
