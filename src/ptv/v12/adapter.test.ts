@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { V11ChangeValidator } from '../../validation/changeValidator.js';
 import { mapV12Service } from './adapter.js';
 
 describe('PTV v12 service mapping', () => {
@@ -905,11 +906,12 @@ describe('PTV v12 classification code names', () => {
     expect(service?.serviceClasses).toEqual([
       {
         code: 'P25.6',
+        uri: 'http://uri.suomi.fi/codelist/ptv/ptvserclass2/code/P25.6',
         names: { fi: 'Uskonnot ja vakaumukset', en: 'Religions and beliefs' },
       },
       { code: 'P99.9', names: {} },
     ]);
-    expect(service?.ontologyTerms).toEqual([{ code: ontologyUri, names: { fi: 'kaste' } }]);
+    expect(service?.ontologyTerms).toEqual([{ uri: ontologyUri, names: { fi: 'kaste' } }]);
 
     const lookups = () =>
       requested.filter((url) => /service-classes|ontology-terms/.test(url.pathname)).length;
@@ -944,10 +946,10 @@ describe('PTV v12 classification code names', () => {
     const { CodeNameCache } = await import('./codeNameCache.js');
     let now = 0;
     const cache = new CodeNameCache(1000, () => now);
-    cache.set('test', 'serviceClasses', 'P25.6', { fi: 'Uskonnot' });
+    cache.set('test', 'serviceClasses', 'P25.6', { names: { fi: 'Uskonnot' } });
 
     now = 999;
-    expect(cache.get('test', 'serviceClasses', 'P25.6')).toEqual({ fi: 'Uskonnot' });
+    expect(cache.get('test', 'serviceClasses', 'P25.6')).toEqual({ names: { fi: 'Uskonnot' } });
     expect(cache.get('production', 'serviceClasses', 'P25.6')).toBeUndefined();
     now = 1000;
     expect(cache.get('test', 'serviceClasses', 'P25.6')).toBeUndefined();
@@ -979,12 +981,83 @@ describe('PTV v12 empty translations and code-name TTLs', () => {
 
     let now = 0;
     const cache = new CodeNameCache(DEFAULT_CODE_NAME_TTL_MS, () => now);
-    cache.set('test', 'ontologyTerms', 'known', { fi: 'kaste' });
-    cache.set('test', 'ontologyTerms', 'unknown', {}, MISSING_CODE_NAME_TTL_MS);
+    cache.set('test', 'ontologyTerms', 'known', { names: { fi: 'kaste' } });
+    cache.set('test', 'ontologyTerms', 'unknown', { names: {} }, MISSING_CODE_NAME_TTL_MS);
 
     now = day;
     expect(cache.get('test', 'ontologyTerms', 'unknown')).toBeUndefined();
     now = 30 * day - 1;
-    expect(cache.get('test', 'ontologyTerms', 'known')).toEqual({ fi: 'kaste' });
+    expect(cache.get('test', 'ontologyTerms', 'known')).toEqual({ names: { fi: 'kaste' } });
+  });
+});
+
+describe('PTV v12 classifications are writable through v11', () => {
+  it('fills code and uri so a v12-read service passes the v11 change validator', async () => {
+    const base = 'http://uri.suomi.fi/codelist';
+    const lists: Record<string, Array<{ code?: string; uri: string }>> = {
+      '/api/v12/service-classes': [{ code: 'P25.6', uri: `${base}/ptv/ptvserclass2/code/P25.6` }],
+      '/api/v12/target-groups': [{ code: 'KR1', uri: `${base}/ptv/ptvkohderyhmat/code/KR1` }],
+      '/api/v12/life-events': [{ code: 'KE4', uri: `${base}/ptv/ptvelamantilanteet/code/KE4` }],
+      '/api/v12/industrial-classes': [
+        { code: '55109', uri: `${base}/jhs/toimiala_1_20080101/code/55109` },
+      ],
+      '/api/v12/ontology-terms': [{ uri: 'http://www.yso.fi/onto/koko/p76271' }],
+    };
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const page = (items: unknown[]) =>
+        new Response(
+          JSON.stringify({
+            page: 1,
+            pageSize: 100,
+            totalItems: items.length,
+            totalPages: 1,
+            items,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      if (url.pathname === '/api/v12/service/service-1')
+        return new Response(
+          JSON.stringify({
+            contentId: 'service-1',
+            organizationContentId: 'org-1',
+            serviceType: 'Service',
+            languageVersions: {
+              fi: { name: 'Kodin siunaaminen', summary: 'Tiivistelmä', description: 'Kuvaus' },
+            },
+            serviceClasses: ['P25.6'],
+            targetGroups: ['KR1'],
+            lifeEvents: ['KE4'],
+            industrialClasses: [`${base}/jhs/toimiala_1_20080101/code/55109`],
+            ontologyTerms: ['http://www.yso.fi/onto/koko/p76271'],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      if (url.pathname === '/api/v12/connection/search') return page([]);
+      const list = lists[url.pathname];
+      if (list)
+        return page(list.map((item) => ({ ...item, name: { fi: `nimi ${item.code ?? ''}` } })));
+      throw new Error(`Unexpected URL: ${url.toString()}`);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const { CodeNameCache } = await import('./codeNameCache.js');
+    const adapter = new PtvV12Adapter({
+      environment: 'test',
+      apiKey: 'test-key',
+      fetchImpl,
+      codeNameCache: new CodeNameCache(),
+    });
+    const service = await adapter.getService('service-1');
+
+    expect(service?.industrialClasses).toMatchObject([
+      { code: '55109', uri: `${base}/jhs/toimiala_1_20080101/code/55109` },
+    ]);
+    expect(service?.ontologyTerms).toMatchObject([{ uri: 'http://www.yso.fi/onto/koko/p76271' }]);
+    expect(service?.lifeEvents).toMatchObject([
+      { code: 'KE4', uri: `${base}/ptv/ptvelamantilanteet/code/KE4` },
+    ]);
+    const result = new V11ChangeValidator().validate(service!);
+    expect(result.errors).toEqual([]);
   });
 });
