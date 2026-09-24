@@ -1449,3 +1449,30 @@ the domain model lacks). Creation and channel updates still need live
 verification: the connector's tool list predates them, so it has to be
 reconnected.
 
+
+## 2026-09-24 — v11 channel updates and service creation verified live
+
+Through the reconnected PTV-MCP connector (test environment, organisation
+15):
+
+- Channel updates (`ptv_propose_channel_changes` → `approve_and_apply`)
+  work for EChannel, Phone, ServiceLocation and WebPage. Each `fi`
+  description got " (PTV-MCP testi)" and was restored. Compared with a
+  public-API snapshot, only `modified` differs afterwards; Summaries,
+  other languages, hours and addresses survived. PrintableForm is still
+  unverified (organisation 15 has none).
+- Service creation failed: PTV refused the hard-coded
+  `areaType: "Nationwide"` for a `LimitedType` organisation. #54 copies the
+  organisation's area into the POST, and the `ptv_propose_new_service`
+  description now says localized fields are keyed by language (an array
+  shape only failed validation on `names`).
+- After #54 was deployed, create → publish → archive passed live with
+  the test service *PTV-MCP testipalvelu (poistetaan)*
+  (`4678d0e0-ca3f-476c-8dfa-1630ebcfe378`, now archived). The proposal
+  recorded the new id, and the draft read back through `Service/active`.
+- The archive worked in PTV, but the tool call failed with "Service not
+  found": the proposal response re-diffs against the live service, which
+  404s once archived. #56 returns the stored proposal instead
+  (`current`/`proposed` null), for `ptv_get_proposal` too.
+- The first deploy attempt failed on the server's GitHub SSH key
+  (`Permission denied (publickey)`); fixed on the server, outside the repo.
