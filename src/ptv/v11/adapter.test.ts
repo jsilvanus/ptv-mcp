@@ -184,3 +184,33 @@ describe('PtvV11Adapter Modified lock', () => {
     expect(calls.some((call) => call.method === 'PUT')).toBe(false);
   });
 });
+
+describe('PtvV11Adapter connection writes', () => {
+  it('writes serviceChannelIds through the Connection endpoint after the service PUT', async () => {
+    const current = serviceWire({ serviceChannels: [{ serviceChannel: { id: 'a' } }] });
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Service/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: () => Response.json({}),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    await adapter.applyServiceChange({ serviceId: SERVICE_ID, changes: { serviceChannelIds: [] } });
+
+    expect(
+      calls.filter((call) => call.method === 'PUT').map((call) => [call.path, call.body]),
+    ).toEqual([
+      [`/api/v11/Service/${SERVICE_ID}`, expect.any(Object)],
+      [
+        `/api/v11/Connection/serviceId/${SERVICE_ID}`,
+        { deleteAllChannelRelations: true, channelRelations: [] },
+      ],
+    ]);
+  });
+});
