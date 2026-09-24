@@ -10,12 +10,23 @@
 #   MIGRATION_DATABASE_URL   run migrations as this role instead of
 #                            DATABASE_URL from .env (use when the app's own
 #                            role can't create tables)
-#   PTV_MCP_RESTART_CMD      command that restarts the server, e.g.
-#                            "systemctl restart ptv-mcp" or
-#                            "pm2 restart ptv-mcp". If unset, the running
-#                            `tsx watch` picks up the new code by itself.
-#   PTV_MCP_HEALTH_URL       checked after restart (default:
-#                            http://localhost:${PORT:-5999}/health)
+#   PTV_MCP_RESTART_CMD      command that restarts everything (e.g.
+#                            "pm2 restart ptv-mcp"). When set, the script
+#                            does not manage processes itself.
+#   PTV_MCP_HEALTH_URL       API health check (default:
+#                            http://127.0.0.1:${PORT:-5999}/health)
+#   PTV_MCP_WEB_URL          web dev server check (default:
+#                            http://127.0.0.1:5173/)
+#
+# Without PTV_MCP_RESTART_CMD the script runs the dev deployment itself:
+#   - API: `npm run dev` (tsx watch). Started if not running, restarted
+#     when dependencies changed; otherwise tsx watch reloads by itself.
+#   - Web: `npm --prefix web run dev` (Vite, port 5173, which the public
+#     domain points at). Restarted on every deploy, so it never serves
+#     outdated pre-bundled dependencies.
+# Both run detached (setsid nohup), logging to logs/api.log and logs/web.log.
+# Running processes are found by their working directory, so ones started
+# by hand before this script took over are replaced too.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,6 +62,7 @@ if [ -d node_modules ] && git diff --quiet "$before" "$after" -- package.json pa
 else
   log "installing dependencies"
   npm ci --no-audit --no-fund
+  api_deps_changed=1
 fi
 
 # The web UI is served from web/dist, so rebuild it whenever web/ changed
@@ -77,24 +89,96 @@ else
   npm run --silent db:migrate
 fi
 
-if [ -n "${PTV_MCP_RESTART_CMD:-}" ]; then
-  log "restarting: $PTV_MCP_RESTART_CMD"
-  eval "$PTV_MCP_RESTART_CMD"
-else
-  log "no PTV_MCP_RESTART_CMD; relying on tsx watch to reload"
-fi
-
 if [ -f .env ]; then
   port="$(grep -E '^PORT=' .env | tail -1 | cut -d= -f2- || true)"
 fi
-health_url="${PTV_MCP_HEALTH_URL:-http://localhost:${port:-${PORT:-5999}}/health}"
-log "waiting for $health_url"
-for _ in $(seq 1 30); do
-  if curl -fsS --max-time 2 "$health_url" >/dev/null 2>&1; then
-    log "healthy; deployed $(git rev-parse --short HEAD)"
-    exit 0
+health_url="${PTV_MCP_HEALTH_URL:-http://127.0.0.1:${port:-${PORT:-5999}}/health}"
+web_url="${PTV_MCP_WEB_URL:-http://127.0.0.1:5173/}"
+repo="$(pwd -P)"
+mkdir -p logs
+
+# PIDs of processes whose command line matches $1 and whose working
+# directory is $2.
+find_pids() {
+  local pattern="$1" dir="$2" pid
+  for pid in $(pgrep -f -- "$pattern" || true); do
+    [ "$pid" = "$$" ] && continue
+    if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$dir" ]; then
+      echo "$pid"
+    fi
+  done
+}
+
+stop_pids() {
+  local pids="$*" pid
+  [ -z "$pids" ] && return 0
+  # Kill each process's whole group, so npm wrappers and children go too.
+  local own_pgid pgid
+  own_pgid="$(ps -o pgid= $$ | tr -d ' ' || true)"
+  for pid in $pids; do
+    # The process may already be gone; that's fine.
+    pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' ' || true)"
+    if [ -n "$pgid" ] && [ "$pgid" != "$own_pgid" ]; then
+      kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    else
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done
+  for _ in $(seq 1 20); do
+    local alive=""
+    for pid in $pids; do if kill -0 "$pid" 2>/dev/null; then alive=1; fi; done
+    [ -z "$alive" ] && return 0
+    sleep 0.5
+  done
+  for pid in $pids; do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+start_detached() {
+  local name="$1" dir="$2"
+  shift 2
+  log "starting $name: $* (log: logs/$name.log)"
+  # exec setsid: the process gets its own session, and nothing here keeps
+  # the deploy's stdout (Farcmd's SSH channel) open or waits for it.
+  (cd "$dir" && exec setsid nohup "$@" >> "$repo/logs/$name.log" 2>&1 < /dev/null) \
+    > /dev/null 2>&1 < /dev/null &
+}
+
+wait_for() {
+  local name="$1" url="$2"
+  log "waiting for $name at $url"
+  for _ in $(seq 1 45); do
+    if curl -fsS --max-time 2 -o /dev/null "$url" 2>/dev/null; then
+      log "$name is up"
+      return 0
+    fi
+    sleep 2
+  done
+  log "$name did not come up within 90s; see logs/$name.log"
+  return 1
+}
+
+if [ -n "${PTV_MCP_RESTART_CMD:-}" ]; then
+  log "restarting: $PTV_MCP_RESTART_CMD"
+  eval "$PTV_MCP_RESTART_CMD"
+  wait_for api "$health_url"
+else
+  api_pids="$(find_pids 'tsx.* watch src/server.ts' "$repo")"
+  if [ -z "$api_pids" ]; then
+    start_detached api "$repo" npm run dev
+  elif [ -n "${api_deps_changed:-}" ]; then
+    log "dependencies changed; restarting API"
+    stop_pids $api_pids
+    start_detached api "$repo" npm run dev
+  else
+    log "API running (tsx watch reloads code changes)"
   fi
-  sleep 2
-done
-log "server did not become healthy within 60s"
-exit 1
+
+  log "restarting web dev server"
+  stop_pids $(find_pids 'vite' "$repo/web")
+  start_detached web "$repo/web" npm run dev
+
+  wait_for api "$health_url"
+  wait_for web "$web_url"
+fi
+
+log "deployed $(git rev-parse --short HEAD)"
