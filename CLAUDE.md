@@ -194,6 +194,12 @@ A mismatched `resource`/audience between two `OAuthService` instances
 verification — `npm run mcp:token` (`src/mcp/token.ts`) had exactly this
 bug until the same fix.
 
+Every tool's `title` and annotations (`readOnlyHint`, `destructiveHint`,
+`openWorldHint`) come from `TOOL_METADATA` in `src/mcp/toolAnnotations.ts`;
+`useToolMetadata` refuses to register a tool without an entry. Only tools
+that can write to PTV (`ptv_resolve_proposal`, `ptv_apply_changes`) are
+destructive; proposal/review tools only change the MCP's own queue.
+
 ### Guides, skills and server instructions
 
 `src/mcp/guides.ts` serves the Markdown in `guides/` and `skills/*/SKILL.md`

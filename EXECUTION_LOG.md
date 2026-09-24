@@ -1662,3 +1662,19 @@ Known gaps:
   - a service location's alternative name and entrances
 - A service's instructions (toimintaohjeet) are still not in the domain
   model.
+
+## 2026-09-24 — Tool titles and annotations
+
+- Every MCP tool now has a Finnish `title` and behaviour hints from one
+  table, `TOOL_METADATA` (`src/mcp/toolAnnotations.ts`). Registering a tool
+  without an entry throws.
+- Hints:
+  - read-only: search, get, list and check tools, plus `ptv_my_tasks` and
+    `ptv_validate_changes`;
+  - `destructiveHint: true`: only `ptv_resolve_proposal` and
+    `ptv_apply_changes`, the tools that can write to PTV;
+  - `destructiveHint: false`: propose, comment, sign-off, export and
+    review-campaign tools, which change only the MCP's own queue;
+  - `openWorldHint: true`: tools that call PTV.
+- Clients group tools by `readOnlyHint` and can ask for confirmation
+  before destructive tools.
