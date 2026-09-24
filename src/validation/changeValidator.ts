@@ -49,6 +49,7 @@ export class V11ChangeValidator implements ChangeValidator {
     this.validateRequiredClassifications(proposed, errors);
     this.validateNotOnlyMainServiceClasses(proposed, errors);
     this.validateWritablePublishingStatus(proposed, errors);
+    this.validateIndustrialClassTargetGroups(proposed, errors);
 
     return {
       valid: errors.length === 0,
@@ -162,10 +163,10 @@ export class V11ChangeValidator implements ChangeValidator {
   private validateIndustrialClassesCode(proposed: Service, errors: ValidationError[]): void {
     if (Array.isArray(proposed.industrialClasses)) {
       proposed.industrialClasses.forEach((entry, index) => {
-        if (!entry.code || typeof entry.code !== 'string' || entry.code.trim() === '') {
+        if (!entry.code?.trim() && !entry.uri?.trim()) {
           errors.push({
             field: `industrialClasses[${index}]`,
-            message: 'Entry must have a non-empty `code` to be written to PTV',
+            message: 'Entry must have a non-empty `code` or `uri` to be written to PTV',
           });
         }
       });
@@ -247,6 +248,25 @@ export class V11ChangeValidator implements ChangeValidator {
       errors.push({
         field: 'publishingStatus',
         message: 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
+      });
+    }
+  }
+
+  /**
+   * Rule 13: industrial classes need target group KR2 (businesses and
+   * non-government organisations) and one of its subgroups (live 400s:
+   * "Target group 'Businesses and non-government organizations (KR2)' or
+   * one of the sub target groups is required if industrial classes are
+   * attached" and "... one of the sub target groups is required").
+   */
+  private validateIndustrialClassTargetGroups(proposed: Service, errors: ValidationError[]): void {
+    if (!proposed.industrialClasses?.length) return;
+    const codes = (proposed.targetGroups ?? []).map((entry) => entry.code ?? '');
+    if (!codes.includes('KR2') || !codes.some((code) => code.startsWith('KR2.'))) {
+      errors.push({
+        field: 'targetGroups',
+        message:
+          'Industrial classes require target group KR2 (businesses and non-government organizations) and one of its subgroups (KR2.x)',
       });
     }
   }

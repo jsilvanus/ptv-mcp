@@ -65,7 +65,7 @@ export function serviceChangesToV11Body(
   applyUriListField(body, 'Service', 'ontologyTerms', changes.ontologyTerms);
   applyUriListField(body, 'Service', 'targetGroups', changes.targetGroups);
   applyUriListField(body, 'Service', 'lifeEvents', changes.lifeEvents);
-  applyCodeListField(body, 'Service', 'industrialClasses', changes.industrialClasses);
+  applyIndustrialClassField(body, changes.industrialClasses);
 
   if (current) {
     for (const field of REQUIRED_WITHOUT_GENERAL_DESCRIPTION) {
@@ -144,21 +144,39 @@ function applyUriListField(
   body[fieldName] = entries.map((entry) => entry.uri).filter((uri): uri is string => !!uri);
 }
 
-/** industrialClasses is written as an array of codes, not URIs — confirmed against v11's write schema. */
-function applyCodeListField(
+/**
+ * Statistics Finland's TOL 2008 URI prefix. v11's schema says
+ * industrialClasses takes codes, but a plain code (e.g. "94910") makes PTV
+ * answer 500; the full URI is what it accepts (verified live 2026-09-24).
+ */
+const INDUSTRIAL_CLASS_URI_PREFIX = 'http://www.stat.fi/meta/luokitukset/toimiala/001-2008/';
+
+/**
+ * Built from the code when there is one: a v12-read entry's `uri` is a
+ * koodistot.suomi.fi URI (.../toimiala_1_20080101/code/55109) that v11
+ * doesn't know.
+ */
+function industrialClassUri(entry: CodeListEntry): string | undefined {
+  const code = entry.code?.trim();
+  if (code) return code.startsWith('http') ? code : `${INDUSTRIAL_CLASS_URI_PREFIX}${code}`;
+  if (entry.uri?.startsWith(INDUSTRIAL_CLASS_URI_PREFIX)) return entry.uri;
+  const lastSegment = entry.uri?.split('/').pop();
+  return lastSegment ? `${INDUSTRIAL_CLASS_URI_PREFIX}${lastSegment}` : undefined;
+}
+
+/** industrialClasses is written as TOL 2008 URIs (see INDUSTRIAL_CLASS_URI_PREFIX). */
+function applyIndustrialClassField(
   body: Record<string, unknown>,
-  entityType: Parameters<typeof needsDeleteFlag>[0],
-  fieldName: string,
   entries: CodeListEntry[] | undefined,
 ): void {
   if (entries === undefined) return;
   if (entries.length === 0) {
-    setDeleteFlag(body, entityType, fieldName, () => {
-      body[fieldName] = [];
+    setDeleteFlag(body, 'Service', 'industrialClasses', () => {
+      body.industrialClasses = [];
     });
     return;
   }
-  body[fieldName] = entries.map((entry) => entry.code).filter((code): code is string => !!code);
+  body.industrialClasses = entries.map(industrialClassUri).filter((uri): uri is string => !!uri);
 }
 
 /**

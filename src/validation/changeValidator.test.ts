@@ -17,7 +17,10 @@ function validService(): Service {
       { uri: 'http://example.com/class2', names: { fi: 'Class 2' } },
     ],
     ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p1', names: { fi: 'Term 1' } }],
-    targetGroups: [{ uri: 'http://example.com/group1', names: { fi: 'Group 1' } }],
+    targetGroups: [
+      { code: 'KR2', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2008', names: {} },
+      { code: 'KR2.3', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2011', names: {} },
+    ],
     lifeEvents: [{ uri: 'http://example.com/event1', names: { fi: 'Event 1' } }],
     industrialClasses: [{ code: 'CODE1', names: { fi: 'Industrial 1' } }],
     languages: ['fi', 'en'],
@@ -240,6 +243,7 @@ describe('V11ChangeValidator', () => {
         serviceClasses: [],
         ontologyTerms: [],
         targetGroups: [],
+        industrialClasses: [],
       });
       expect(result.valid).toBe(true);
     });
@@ -331,12 +335,10 @@ describe('V11ChangeValidator', () => {
   });
 
   describe('industrialClasses code validation (Rule 8)', () => {
-    it('fails when industrialClasses entry has no code', () => {
+    it('fails when industrialClasses entry has neither code nor uri', () => {
       const service = {
         ...validService(),
-        industrialClasses: [
-          { uri: 'http://example.com/industrial1', names: { fi: 'Industrial without code' } },
-        ],
+        industrialClasses: [{ names: { fi: 'Industrial without code' } }],
       };
       const result = validator.validate(service);
       expect(result.valid).toBe(false);
@@ -369,7 +371,7 @@ describe('V11ChangeValidator', () => {
         industrialClasses: [
           { code: 'VALID1', names: { fi: 'Valid' } },
           { code: '', names: { fi: 'Invalid at index 1' } },
-          { uri: 'http://example.com', names: { fi: 'Invalid at index 2' } },
+          { names: { fi: 'Invalid at index 2' } },
         ],
       };
       const result = validator.validate(service);
@@ -453,6 +455,30 @@ describe('V11ChangeValidator', () => {
 
     it.each(['Draft', 'Published', 'Archived'] as const)('passes for %s', (publishingStatus) => {
       const result = validator.validate({ ...validService(), publishingStatus });
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('industrial classes need target group KR2 and a subgroup (Rule 13)', () => {
+    const kr1 = { code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} };
+    const kr2 = { code: 'KR2', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2008', names: {} };
+
+    it('fails without KR2', () => {
+      const result = validator.validate({ ...validService(), targetGroups: [kr1] });
+      expect(result.errors.some((e) => e.field === 'targetGroups')).toBe(true);
+    });
+
+    it('fails with KR2 but no subgroup', () => {
+      const result = validator.validate({ ...validService(), targetGroups: [kr1, kr2] });
+      expect(result.errors.some((e) => e.field === 'targetGroups')).toBe(true);
+    });
+
+    it('passes without industrial classes', () => {
+      const result = validator.validate({
+        ...validService(),
+        targetGroups: [kr1],
+        industrialClasses: [],
+      });
       expect(result.valid).toBe(true);
     });
   });
