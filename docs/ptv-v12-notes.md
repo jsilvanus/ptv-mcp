@@ -13,6 +13,12 @@
 > generate types) would let this doc be rewritten the way
 > `ptv-v11-notes.md` was: from the spec, not from inference.
 
+> **Update 2026-09-24:** most of the gaps described below were fixed and
+> verified against the live v12 API and the now-vendored spec
+> (`docs/ptv-api-documentation.json`). See
+> [Live verification and fixes](#live-verification-and-fixes-2026-09-2324)
+> at the end of this file before relying on the older sections.
+
 ## Status summary
 
 `PtvV12Adapter` is wired into `DbPtvAdapterRegistry`'s default adapter
@@ -214,3 +220,55 @@ the v12 search API may still change during the transition. The exact
 server-side filter parameter names should therefore be verified against the
 live Scalar specification before replacing the adapter's client-side filtering
 with server-side filters.
+
+## Live verification and fixes (2026-09-23/24)
+
+Every read tool was exercised against the live v12 API (test data:
+Riihimäen seurakunta, Tampere associations, Inarin kunta) and checked
+against the vendored spec `docs/ptv-api-documentation.json`
+(OpenAPI 3.1.1, v12 beta 0.1.0). Fixed in PRs #22–#28:
+
+- **Pagination.** Paginated responses carry `page`, `pageSize`,
+  `totalItems`, `totalPages` (`PaginatedType`). The adapter read only
+  `totalCount`/`totalElements`/`total`, so every catalogue scan stopped
+  after the first 100 items — organisation name search could not find
+  most organisations. Pages 2..`totalPages` are now fetched with bounded
+  concurrency (6).
+- **Server-side filters used where v12 has them:** `organizationContentIds`
+  (services, channels, collections, general descriptions),
+  `serviceContentIds`/`channelContentIds` (connections, max 20 each),
+  `codes`/`uris` (reference data, max 20 each), `name` (ontology terms).
+  Organisation name search and free-text search remain client-side:
+  v12 has no name/text filter on those `/search` endpoints.
+- **Wire field names** confirmed from the spec:
+  `parentOrganizationContentId` (hierarchy), `generalDescriptionContentId`,
+  `serviceLanguages`, `serviceChannelType` values `EService` /
+  `TelephoneService` (→ `EChannel` / `Phone`), service type
+  `PermitOrOtherObligation` (→ `PermitOrObligation`), service-collection
+  members in `items[]` with `itemType` (only on the detail endpoint, so
+  the returned page is hydrated), connection `publishedAt`.
+- **`serviceChannelIds`** is filled from `/connection/search`, since v12
+  services carry no channel list (matches v11's shape).
+- **Classifications.** v12 returns them as a bare code (service classes,
+  target groups, life events) or a bare URI (ontology terms, industrial
+  classes). Entries are completed from the reference-data endpoints into
+  v11's `{code, uri, names}` shape — which the v11 write path needs, since
+  a connection may read via v12 and write via v11. Resolved entries live
+  in a process-wide in-memory cache (`src/ptv/v12/codeNameCache.ts`):
+  30-day TTL, 1 day for codes PTV does not recognise. It is lost on
+  restart.
+- **Empty translations.** PTV sends `""` for missing translations (e.g.
+  MAO-only KOKO concepts have Finnish labels only); these are dropped.
+- **Ontology term search** (`ptv_search_ontology_terms`,
+  `PtvAdapter.searchOntologyTerms`) uses `/api/v12/ontology-terms?name=`
+  with `isValid=true`. Terms are KOKO concepts: KOKO URIs are what PTV
+  stores and what v11 writes (`ontologyTerms` = list of KOKO URLs). KOKO
+  numbers differ from YSO numbers (e.g. `koko/p32775` "koti" ↔
+  `yso/p5473`), so a YSO URI cannot be converted by string replacement.
+  v11 has no ontology endpoint and throws
+  `OntologySearchUnsupportedError`.
+
+Still open: write support (v12 has no write endpoints in this spec), and
+the in-memory code cache could move to Postgres if restart cold-starts
+matter.
+

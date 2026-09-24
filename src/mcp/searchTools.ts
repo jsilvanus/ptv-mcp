@@ -154,6 +154,15 @@ export async function searchConnections(
   return adapter.getConnectionsFor(entityId);
 }
 
+export async function searchOntologyTerms(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  params: SearchParams,
+): Promise<PaginatedResult<CodeListEntry>> {
+  const adapter = await resolveReadAdapter(registry, ctx);
+  return adapter.searchOntologyTerms(params);
+}
+
 export async function listCodes(
   registry: PtvAdapterRegistry,
   ctx: ToolContext,

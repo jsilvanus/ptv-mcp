@@ -430,6 +430,32 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
+    'ptv_search_ontology_terms',
+    withOAuthSecurity({
+      description:
+        'Search PTV ontology terms (asiasanat) by name, e.g. "kaste" or "rippikoulu". ' +
+        'Terms are KOKO concepts, which cover YSO, MAO and other Finto ontologies; each ' +
+        "result's `uri` (http://www.yso.fi/onto/koko/p…) is the value a service's " +
+        '`ontologyTerms` must use. KOKO numbers differ from YSO numbers, so use these URIs ' +
+        'rather than YSO ones. Only valid terms are returned. Requires the v12 read API.',
+      inputSchema: {
+        query: z.string().min(1).describe('Term name or part of it, e.g. "siunaus".'),
+        page: z.number().int().min(1).optional(),
+        pageSize: z.number().int().min(1).max(100).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await searchTools.searchOntologyTerms(registry, toolContext(extra), searchParams(args)),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
     'ptv_list_codes',
     withOAuthSecurity({
       description: 'List entries in a PTV code list (e.g. "languages", "service-classes").',

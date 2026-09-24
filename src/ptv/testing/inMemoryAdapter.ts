@@ -115,6 +115,22 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return this.codeLists[codeListName] ?? [];
   }
 
+  async searchOntologyTerms(params: SearchParams): Promise<PaginatedResult<CodeListEntry>> {
+    const needle = params.query?.trim().toLocaleLowerCase('fi-FI') ?? '';
+    const terms = (this.codeLists.ontologyTerms ?? []).filter((term) =>
+      Object.values(term.names).some((name) => name?.toLocaleLowerCase('fi-FI').includes(needle)),
+    );
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const start = (page - 1) * pageSize;
+    return {
+      items: terms.slice(start, start + pageSize),
+      page,
+      pageSize,
+      totalCount: terms.length,
+    };
+  }
+
   async applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
     if (!this.capabilities.supportsWrite) {
       throw new Error(

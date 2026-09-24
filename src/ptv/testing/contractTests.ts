@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { PtvAdapter } from '../adapter.js';
+import { OntologySearchUnsupportedError, type PtvAdapter } from '../adapter.js';
 import type { PtvContentId } from '../domain.js';
 
 export interface PtvAdapterContractFixtures {
@@ -104,6 +104,17 @@ export function runPtvAdapterContractTests(
     it('listCodes returns at least one entry for a known code list', async () => {
       const codes = await adapter.listCodes(fixtures.knownCodeListName);
       expect(codes.length).toBeGreaterThan(0);
+    });
+
+    it('searchOntologyTerms returns a paginated result or reports it is unsupported', async () => {
+      try {
+        const result = await adapter.searchOntologyTerms({ query: 'a', page: 1, pageSize: 5 });
+        expect(Array.isArray(result.items)).toBe(true);
+        expect(result.items.length).toBeLessThanOrEqual(5);
+        expect(typeof result.totalCount).toBe('number');
+      } catch (err) {
+        expect(err).toBeInstanceOf(OntologySearchUnsupportedError);
+      }
     });
 
     it('applyServiceChange respects its own declared write capability', async () => {

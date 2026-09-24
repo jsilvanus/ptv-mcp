@@ -6,6 +6,7 @@ import type {
   PtvEnvironment,
   ServiceChangeProposal,
 } from '../adapter.js';
+import { OntologySearchUnsupportedError } from '../adapter.js';
 import type {
   CodeListEntry,
   Connection,
@@ -407,6 +408,10 @@ export class PtvV11Adapter implements PtvAdapter {
     }
     const items = await this.client.get<V11ReferenceCodeItem[]>(path);
     return items.map(referenceCodeWireToDomain);
+  }
+
+  async searchOntologyTerms(_params: SearchParams): Promise<PaginatedResult<CodeListEntry>> {
+    throw new OntologySearchUnsupportedError('v11');
   }
 
   async applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
