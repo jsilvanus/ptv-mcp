@@ -25,10 +25,12 @@ log() { printf '[deploy %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
 # `npm install` on the server rewrites package-lock.json; the committed
 # lockfile is authoritative (npm ci below), so drop that drift.
-if ! git diff --quiet -- package-lock.json; then
-  log "discarding local package-lock.json changes"
-  git checkout -- package-lock.json
-fi
+for lockfile in package-lock.json web/package-lock.json; do
+  if ! git diff --quiet -- "$lockfile"; then
+    log "discarding local $lockfile changes"
+    git checkout -- "$lockfile"
+  fi
+done
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   log "working tree has local changes; refusing to deploy over them:"
@@ -49,6 +51,23 @@ if [ -d node_modules ] && git diff --quiet "$before" "$after" -- package.json pa
 else
   log "installing dependencies"
   npm ci --no-audit --no-fund
+fi
+
+# The web UI is served from web/dist, so rebuild it whenever web/ changed
+# since the commit it was last built from (recorded in web/.dist-commit).
+built_from="$(cat web/.dist-commit 2>/dev/null || true)"
+if [ -d web/dist ] && [ -n "$built_from" ] && git cat-file -e "$built_from^{commit}" 2>/dev/null \
+  && git diff --quiet "$built_from" "$after" -- web; then
+  log "web UI unchanged; skipping web build"
+else
+  if [ ! -d web/node_modules ] || [ -z "$built_from" ] \
+    || ! git diff --quiet "$built_from" "$after" -- web/package.json web/package-lock.json 2>/dev/null; then
+    log "installing web dependencies"
+    npm --prefix web ci --no-audit --no-fund
+  fi
+  log "building web UI"
+  npm --prefix web run build
+  echo "$after" > web/.dist-commit
 fi
 
 log "running migrations"
