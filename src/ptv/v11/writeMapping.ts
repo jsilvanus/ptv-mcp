@@ -1,31 +1,59 @@
 import type { CodeListEntry, LocalizedText, Service } from '../domain.js';
 import { needsDeleteFlag } from './deleteFlags.js';
-import type { V11LocalizedItem } from './wireModel.js';
+import type { V11CodeListItem, V11LocalizedItem, V11ServiceWire } from './wireModel.js';
 
 /**
- * Translates a domain-level partial Service change into the flat body
- * v11's `PUT /api/v11/Service/{id}` expects, applying the right strategy
- * per field: some fields are always sent whole ("full replace" — see
- * deleteFlags.ts), others need an explicit `deleteX: true` flag set when
- * the caller wants to clear them, since PUT is otherwise a partial update
- * that leaves omitted fields untouched.
+ * Translates a domain-level partial Service change into the body v11's
+ * `PUT /api/v11/Service/{id}` expects.
+ *
+ * Verified live against the test environment (2026-09-24), the PUT is not
+ * a plain partial update:
+ * - `publishingStatus` is always required.
+ * - `serviceClasses`, `ontologyTerms` and `targetGroups` are required
+ *   whenever the service has no general description.
+ * - `serviceDescriptions` is replaced as a whole list and must still carry
+ *   a `Summary`, so changing only the description has to resend the rest.
+ *
+ * So the body starts from `current`, the raw wire record the change is
+ * applied to: those required fields are always sent (from `changes` when
+ * it touches them, otherwise unchanged from `current`), and the localized
+ * lists keep the entry types the domain model doesn't carry
+ * (`AlternativeName`, `UserInstruction`, ...).
  *
  * Field presence in `changes` (via `in`, not just truthiness) is what
- * signals "the proposal touches this field" — an explicit empty
- * array/undefined means "clear it," while a key absent from `changes`
- * entirely means "leave it alone" and is never sent.
+ * signals "the proposal touches this field": an explicit empty
+ * array/undefined means "clear it", while an absent key means "leave it
+ * alone".
  */
-export function serviceChangesToV11Body(changes: Partial<Service>): Record<string, unknown> {
+export function serviceChangesToV11Body(
+  changes: Partial<Service>,
+  current?: V11ServiceWire,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {};
 
+  const publishingStatus = changes.publishingStatus ?? current?.publishingStatus;
+  if (publishingStatus) body.publishingStatus = publishingStatus;
+
   if ('names' in changes) {
-    body.serviceNames = localizedTextToWireList(changes.names, 'Name');
+    body.serviceNames = [
+      ...keptWireItems(current?.serviceNames, ['Name']),
+      ...localizedTextToWireList(changes.names, 'Name'),
+    ];
   }
 
   if ('summaries' in changes || 'descriptions' in changes) {
+    const summaries =
+      'summaries' in changes
+        ? localizedTextToWireList(changes.summaries, 'Summary')
+        : wireItemsOfType(current?.serviceDescriptions, 'Summary');
+    const descriptions =
+      'descriptions' in changes
+        ? localizedTextToWireList(changes.descriptions, 'Description')
+        : wireItemsOfType(current?.serviceDescriptions, 'Description');
     body.serviceDescriptions = [
-      ...localizedTextToWireList(changes.summaries, 'Summary'),
-      ...localizedTextToWireList(changes.descriptions, 'Description'),
+      ...keptWireItems(current?.serviceDescriptions, ['Summary', 'Description']),
+      ...summaries,
+      ...descriptions,
     ];
   }
 
@@ -34,6 +62,12 @@ export function serviceChangesToV11Body(changes: Partial<Service>): Record<strin
   applyUriListField(body, 'Service', 'targetGroups', changes.targetGroups);
   applyUriListField(body, 'Service', 'lifeEvents', changes.lifeEvents);
   applyCodeListField(body, 'Service', 'industrialClasses', changes.industrialClasses);
+
+  if (current) {
+    for (const field of REQUIRED_WITHOUT_GENERAL_DESCRIPTION) {
+      if (!(field in changes)) body[field] = wireUris(current[field]);
+    }
+  }
 
   if ('languages' in changes) {
     body.languages = changes.languages ?? [];
@@ -50,12 +84,38 @@ export function serviceChangesToV11Body(changes: Partial<Service>): Record<strin
   return body;
 }
 
+/** Full-replace lists PTV requires on every PUT of a service without a general description. */
+const REQUIRED_WITHOUT_GENERAL_DESCRIPTION = [
+  'serviceClasses',
+  'ontologyTerms',
+  'targetGroups',
+] as const;
+
+function wireUris(items: V11CodeListItem[] | null | undefined): string[] {
+  return (items ?? []).map((item) => item.uri).filter((uri): uri is string => !!uri);
+}
+
+/** Wire entries whose type the change leaves alone; PTV's empty-text `null`s are dropped. */
+function keptWireItems(
+  items: V11LocalizedItem[] | null | undefined,
+  replacedTypes: string[],
+): V11LocalizedItem[] {
+  return (items ?? []).filter((item) => !!item.value && !replacedTypes.includes(item.type ?? ''));
+}
+
+function wireItemsOfType(
+  items: V11LocalizedItem[] | null | undefined,
+  type: string,
+): V11LocalizedItem[] {
+  return (items ?? []).filter((item) => !!item.value && item.type === type);
+}
+
 function localizedTextToWireList(
   text: LocalizedText | undefined,
   type: string,
 ): V11LocalizedItem[] {
   return Object.entries(text ?? {})
-    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .filter((entry): entry is [string, string] => !!entry[1])
     .map(([language, value]) => ({ language, value, type }));
 }
 

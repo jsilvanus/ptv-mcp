@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Service } from '../domain.js';
 import { serviceChangesToV11Body } from './writeMapping.js';
+import type { V11ServiceWire } from './wireModel.js';
 
 describe('serviceChangesToV11Body', () => {
   it('sends serviceNames whenever names is present', () => {
@@ -64,5 +65,74 @@ describe('serviceChangesToV11Body', () => {
     const changes: Partial<Service> = { languages: ['fi', 'sv'] };
     const body = serviceChangesToV11Body(changes);
     expect(body.languages).toEqual(['fi', 'sv']);
+  });
+
+  describe('with the current wire record (live PUT requirements)', () => {
+    const current: V11ServiceWire = {
+      id: 'c67da57e-ea12-4c90-bd53-1fa5f82e26af',
+      type: 'Service',
+      generalDescriptionId: null,
+      publishingStatus: 'Published',
+      serviceNames: [
+        { language: 'fi', value: 'Hautauspalvelu', type: 'Name' },
+        { language: 'fi', value: 'Hautaus', type: 'AlternativeName' },
+      ],
+      serviceDescriptions: [
+        { language: 'fi', value: 'Tiivistelmä', type: 'Summary' },
+        { language: 'fi', value: null, type: 'UserInstruction' },
+        { language: 'fi', value: 'Kuvaus', type: 'Description' },
+        { language: 'fi', value: 'Ohje', type: 'ChargeTypeAdditionalInfo' },
+      ],
+      serviceClasses: [{ name: [], code: 'P11', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1105' }],
+      ontologyTerms: [{ name: [], code: null, uri: 'http://www.yso.fi/onto/koko/p34462' }],
+      targetGroups: [{ name: [], code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001' }],
+      lifeEvents: [],
+      industrialClasses: [],
+      languages: ['fi'],
+      organizations: [],
+      serviceChannels: null,
+      modified: '2026-04-09T12:25:48.494962',
+    };
+
+    it('always sends publishingStatus, from the change or else the current record', () => {
+      expect(serviceChangesToV11Body({ names: { fi: 'X' } }, current).publishingStatus).toBe(
+        'Published',
+      );
+      expect(serviceChangesToV11Body({ publishingStatus: 'Draft' }, current).publishingStatus).toBe(
+        'Draft',
+      );
+    });
+
+    it('resends the classifications PTV requires when there is no general description', () => {
+      const body = serviceChangesToV11Body({ names: { fi: 'X' } }, current);
+      expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1105']);
+      expect(body.ontologyTerms).toEqual(['http://www.yso.fi/onto/koko/p34462']);
+      expect(body.targetGroups).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v2001']);
+    });
+
+    it('keeps the summary and other description types when only the description changes', () => {
+      const body = serviceChangesToV11Body({ descriptions: { fi: 'Uusi kuvaus' } }, current);
+      expect(body.serviceDescriptions).toEqual([
+        { language: 'fi', value: 'Ohje', type: 'ChargeTypeAdditionalInfo' },
+        { language: 'fi', value: 'Tiivistelmä', type: 'Summary' },
+        { language: 'fi', value: 'Uusi kuvaus', type: 'Description' },
+      ]);
+    });
+
+    it('keeps alternative names when the name changes', () => {
+      const body = serviceChangesToV11Body({ names: { fi: 'Uusi' } }, current);
+      expect(body.serviceNames).toEqual([
+        { language: 'fi', value: 'Hautaus', type: 'AlternativeName' },
+        { language: 'fi', value: 'Uusi', type: 'Name' },
+      ]);
+    });
+
+    it('lets a change replace a required classification list', () => {
+      const body = serviceChangesToV11Body(
+        { ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p1', names: {} }] },
+        current,
+      );
+      expect(body.ontologyTerms).toEqual(['http://www.yso.fi/onto/koko/p1']);
+    });
   });
 });

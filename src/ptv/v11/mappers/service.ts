@@ -47,9 +47,11 @@ export function serviceWireToDomain(wire: V11ServiceWire): Service {
     targetGroups: toCodeListEntries(wire.targetGroups),
     lifeEvents: toCodeListEntries(wire.lifeEvents),
     industrialClasses: toCodeListEntries(wire.industrialClasses),
-    languages: wire.languages,
+    languages: wire.languages ?? [],
     ...(wire.generalDescriptionId ? { generalDescriptionId: wire.generalDescriptionId } : {}),
-    serviceChannelIds: wire.serviceChannels.map((relation) => relation.serviceChannel.id),
+    // v11 sends `serviceChannels: null` (not []) for a service with no
+    // connections — seen live on organisation 15's test services.
+    serviceChannelIds: (wire.serviceChannels ?? []).map((relation) => relation.serviceChannel.id),
     modifiedAt: wire.modified,
   };
 }

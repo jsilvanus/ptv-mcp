@@ -25,7 +25,7 @@ export function serviceChannelWireToDomain(wire: V11ServiceChannelWire): Service
     publishingStatus: toPublishingStatus(wire.publishingStatus),
     names: toLocalizedText(wire.serviceChannelNames, ['Name']),
     descriptions: toLocalizedText(wire.serviceChannelDescriptions, ['Description', 'Summary']),
-    languages: wire.languages,
+    languages: wire.languages ?? [],
     modifiedAt: wire.modified,
   };
 }
