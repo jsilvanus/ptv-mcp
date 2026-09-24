@@ -20,8 +20,8 @@ is upgraded**, so never keep anything there you want to keep.
 
 DVV publishes the usernames and passwords in
 [PTV-asiakastestiympäristön testitunnukset (XLSX)](https://cdn.verkkopalvelu.suomi.fi/files/PTV-koulutusympäristön_testitunnukset_fi-9f2b374d805e50ac4289a01fdc7a65f9%20(2)-1f8f9aae472be5e085268cd363ed2572.xlsx).
-They are public, but they aren't copied here: DVV can change them, and the
-spreadsheet is the source of truth. Each organisation has:
+They are public. DVV can change them, so the spreadsheet is the source of
+truth. Each organisation has:
 
 - `paakayttaja*` — main users, for the web UI
 - `yllapitaja*` — maintainers, for the web UI
@@ -29,6 +29,11 @@ spreadsheet is the source of truth. Each organisation has:
   the tenant's v11 API user (web UI: *PTV connections → Connect a PTV v11 API
   user*, environment `test`).
 - `API-ASTI*` — ASTI-register integration only. Out of scope; don't use.
+
+The web UI's test organisation picker fills in the API username and password
+from `PTV_TEST_API_ACCOUNTS` in `web/src/ptv/testOrganisations.ts`, keyed by
+organisation id. Add a row for each organisation from DVV's list; an
+organisation without a row falls back to manual entry.
 
 A test-environment token is bound to exactly one organisation (no
 `apiUserOrganisation`), so an API user can only write to its own

@@ -8,6 +8,7 @@ import type {
 } from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 import {
+  PTV_TEST_API_ACCOUNTS,
   PTV_TEST_ORGANISATIONS,
   TEST_ACCOUNTS_URL,
   testOrganisationLabel,
@@ -330,7 +331,15 @@ export function PtvConnectionsPage() {
           {apiUserEnvironment === 'test' && (
             <select
               value={testOrganisationId}
-              onChange={(e) => setTestOrganisationId(e.target.value)}
+              onChange={(e) => {
+                const organisationId = e.target.value;
+                setTestOrganisationId(organisationId);
+                const account = PTV_TEST_API_ACCOUNTS[organisationId];
+                if (account) {
+                  setApiUsername(account.username);
+                  setApiPassword(account.password);
+                }
+              }}
               aria-label="Test organisation"
             >
               <option value="">Pick a test organisation…</option>

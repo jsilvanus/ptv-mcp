@@ -1,8 +1,7 @@
 /**
  * DVV's fictional organisations in the PTV test environment
  * (asiakastestiympäristö). Mirrors docs/ptv-test-environment.md — update
- * both together. Usernames and passwords are published by DVV in
- * TEST_ACCOUNTS_URL and deliberately not copied here.
+ * both together. DVV publishes the test accounts in TEST_ACCOUNTS_URL.
  */
 export interface PtvTestOrganisation {
   id: string;
@@ -62,6 +61,24 @@ export const PTV_TEST_ORGANISATIONS: readonly PtvTestOrganisation[] = [
   { id: '53859dac-fbfa-4836-83bb-347ded4fcbe8', name: 'Testiorganisaatio 18', type: 'Yritykset' },
   { id: '30e5a664-95fd-496c-9d33-c40c13131ceb', name: 'Testiorganisaatio 19', type: 'Yritykset' },
 ];
+
+export interface PtvTestApiAccount {
+  username: string;
+  password: string;
+}
+
+/**
+ * The API user (`API…@testi.fi`, not `API-ASTI…`) of each test
+ * organisation, keyed by organisation id, from DVV's public test account
+ * list (TEST_ACCOUNTS_URL). Picking an organisation in the v11 API-user
+ * form fills these in. Organisations missing here fall back to manual
+ * entry. Test environment only; DVV may change these when the test
+ * environment is reset.
+ *
+ * Example entry:
+ *   'ae788356-6950-48fc-b3ff-63243f74fe53': { username: 'API…@testi.fi', password: '…' },
+ */
+export const PTV_TEST_API_ACCOUNTS: Readonly<Record<string, PtvTestApiAccount>> = {};
 
 export function testOrganisationLabel(id: string | null | undefined): string | undefined {
   const organisation = PTV_TEST_ORGANISATIONS.find((item) => item.id === id);
