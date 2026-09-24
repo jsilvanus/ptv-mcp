@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, ApiError } from '../api/client';
-import type { ConnectionStatus, PtvEnvironment, PtvV12ConnectionStatus } from '../api/types';
+import type {
+  ConnectionStatus,
+  PtvEnvironment,
+  PtvV11ApiUserStatus,
+  PtvV12ConnectionStatus,
+} from '../api/types';
 import { useTenants } from '../tenants/TenantContext';
 
 export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
@@ -19,6 +24,13 @@ export function PtvConnectionsPage() {
   const [v12ApiKey, setV12ApiKey] = useState('');
   const [v12Busy, setV12Busy] = useState(false);
   const [v12Status, setV12Status] = useState<string | null>(null);
+  const [v11ApiUsers, setV11ApiUsers] = useState<PtvV11ApiUserStatus[]>([]);
+  const [apiUserEnvironment, setApiUserEnvironment] = useState<PtvEnvironment>('test');
+  const [apiUsername, setApiUsername] = useState('');
+  const [apiPassword, setApiPassword] = useState('');
+  const [apiUserOrganisation, setApiUserOrganisation] = useState('');
+  const [apiUserBusy, setApiUserBusy] = useState(false);
+  const [apiUserStatus, setApiUserStatus] = useState<string | null>(null);
 
   async function loadConnections(): Promise<void> {
     setLoading(true);
@@ -32,16 +44,23 @@ export function PtvConnectionsPage() {
             `/tenants/${currentTenant.tenantId}/ptv/v12`,
           );
           setV12Connections(v12);
+          setV11ApiUsers(
+            await apiFetch<PtvV11ApiUserStatus[]>(
+              `/tenants/${currentTenant.tenantId}/ptv/v11/api-user`,
+            ),
+          );
         } catch (err) {
-          // v12 configuration is tenant-admin only; don't let it hide
+          // Tenant PTV configuration is tenant-admin only; don't let it hide
           // the user's v11 connections when the current tenant is not admin.
           if (err instanceof ApiError && err.status !== 403) {
             throw err;
           }
           setV12Connections([]);
+          setV11ApiUsers([]);
         }
       } else {
         setV12Connections([]);
+        setV11ApiUsers([]);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load PTV connections.');
@@ -112,6 +131,41 @@ export function PtvConnectionsPage() {
     }
   }
 
+  async function saveAndTestApiUser(): Promise<void> {
+    if (!currentTenant || !apiUsername.trim() || !apiPassword) return;
+    setApiUserBusy(true);
+    setApiUserStatus(null);
+    setError(null);
+    try {
+      await apiFetch<void>(`/tenants/${currentTenant.tenantId}/ptv/v11/api-user`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          environment: apiUserEnvironment,
+          username: apiUsername,
+          password: apiPassword,
+          ...(apiUserEnvironment === 'production' && apiUserOrganisation.trim()
+            ? { apiUserOrganisation: apiUserOrganisation.trim() }
+            : {}),
+        }),
+      });
+      await apiFetch<{ ok: boolean }>(
+        `/tenants/${currentTenant.tenantId}/ptv/v11/api-user/${apiUserEnvironment}/test`,
+        { method: 'POST' },
+      );
+      setV11ApiUsers(
+        await apiFetch<PtvV11ApiUserStatus[]>(
+          `/tenants/${currentTenant.tenantId}/ptv/v11/api-user`,
+        ),
+      );
+      setApiPassword('');
+      setApiUserStatus(`Connected to PTV v11 as API user (${apiUserEnvironment}).`);
+    } catch (err) {
+      setApiUserStatus(err instanceof ApiError ? err.message : 'PTV v11 API login failed.');
+    } finally {
+      setApiUserBusy(false);
+    }
+  }
+
   function activeConnectionFor(environment: PtvEnvironment): ConnectionStatus | undefined {
     return connections.find(
       (c) => c.apiVersion === 'v11' && c.environment === environment && !c.revokedAt,
@@ -175,13 +229,26 @@ export function PtvConnectionsPage() {
                 <td>Read access</td>
               </tr>
             ))}
-            {connections.length === 0 && v12Connections.length === 0 && (
-              <tr>
-                <td colSpan={7} className="muted">
-                  No PTV connections yet — connect one below.
-                </td>
+            {v11ApiUsers.map((c) => (
+              <tr key={`v11-api-${c.environment}`}>
+                <td>v11 (API user)</td>
+                <td>{c.environment}</td>
+                <td>{c.username ?? 'Configured'}</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td>{c.supportsWrite ? 'Read & write' : 'Read access'}</td>
               </tr>
-            )}
+            ))}
+            {connections.length === 0 &&
+              v12Connections.length === 0 &&
+              v11ApiUsers.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="muted">
+                    No PTV connections yet — connect one below.
+                  </td>
+                </tr>
+              )}
           </tbody>
         </table>
       )}
@@ -222,6 +289,60 @@ export function PtvConnectionsPage() {
       )}
       {v12Status && (
         <p className={v12Status.startsWith('Connected') ? 'muted' : 'error'}>{v12Status}</p>
+      )}
+
+      <h2 style={{ marginTop: 24 }}>Connect a PTV v11 API user</h2>
+      <p className="muted">
+        The organisation&apos;s PTV API user (issued by DVV for IN-API access) is used for writes.
+        It is stored encrypted and belongs to the selected tenant. For the test environment, use one
+        of the API users from DVV&apos;s public test account list (see
+        docs/ptv-test-environment.md).
+      </p>
+      {currentTenant ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong>{currentTenant.tenantName}</strong>
+          <select
+            value={apiUserEnvironment}
+            onChange={(e) => setApiUserEnvironment(e.target.value as PtvEnvironment)}
+          >
+            <option value="test">test</option>
+            <option value="production">production</option>
+          </select>
+          <input
+            value={apiUsername}
+            onChange={(e) => setApiUsername(e.target.value)}
+            placeholder="API username"
+            autoComplete="off"
+          />
+          <input
+            type="password"
+            value={apiPassword}
+            onChange={(e) => setApiPassword(e.target.value)}
+            placeholder="Password"
+            autoComplete="new-password"
+          />
+          {apiUserEnvironment === 'production' && (
+            <input
+              value={apiUserOrganisation}
+              onChange={(e) => setApiUserOrganisation(e.target.value)}
+              placeholder="apiUserOrganisation (optional)"
+              autoComplete="off"
+              style={{ minWidth: 280 }}
+            />
+          )}
+          <button
+            className="primary"
+            onClick={() => void saveAndTestApiUser()}
+            disabled={apiUserBusy || !apiUsername.trim() || !apiPassword}
+          >
+            {apiUserBusy ? 'Testing…' : 'Save & test'}
+          </button>
+        </div>
+      ) : (
+        <p className="muted">Select a tenant first.</p>
+      )}
+      {apiUserStatus && (
+        <p className={apiUserStatus.startsWith('Connected') ? 'muted' : 'error'}>{apiUserStatus}</p>
       )}
 
       <h2 style={{ marginTop: 24 }}>Connect a PTV v11 account</h2>

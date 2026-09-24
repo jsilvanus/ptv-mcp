@@ -80,3 +80,12 @@ export interface ProposalDetails extends ProposalSummary {
   diff: ServiceDiffEntry[];
   queuedDiff: ServiceDiffEntry[];
 }
+
+/** Tenant's PTV v11 organisation API user (IN-API write credential); the password is never returned. */
+export interface PtvV11ApiUserStatus {
+  environment: PtvEnvironment;
+  username: string | null;
+  apiUserOrganisation: string | null;
+  supportsRead: boolean;
+  supportsWrite: boolean;
+}

@@ -356,6 +356,34 @@ describe('DbPtvAdapterRegistry', () => {
     ).rejects.toMatchObject({ reason: 'credential_missing_or_expired' });
   });
 
+  it('resolves a write-capable v11 adapter from a tenant-scoped API user', async () => {
+    const { tenantId, userId } = await setUp('publisher');
+    await configService.upsert(tenantId, 'test', 'v11', {
+      authMode: 'api_login',
+      credentialScope: 'tenant',
+      supportsRead: true,
+      supportsWrite: true,
+      supportsDraftRead: false,
+    });
+    await tenantEnvironmentService.storeCredentials(tenantId, 'test', 'v11', {
+      username: 'API1@testi.fi',
+      password: 'not-a-real-password',
+    });
+
+    const adapter = await buildRegistry().resolve({
+      tenantId,
+      environment: 'test',
+      apiVersion: 'v11',
+      operation: 'write',
+      actingUserId: userId,
+    });
+    expect(adapter.getCapabilities()).toMatchObject({
+      apiVersion: 'v11',
+      credentialScope: 'tenant',
+      supportsWrite: true,
+    });
+  });
+
   it('checkV11Liveness reports live:true against the real test environment', async () => {
     const registry = buildRegistry();
     const result = await registry.checkV11Liveness('test');

@@ -36,6 +36,48 @@ show what's already sitting in PTV as a draft before your own proposal
 flow touches it) or you're building the write adapter anyway and want to
 verify a write against v11's own view of the entity.
 
+## Update 2026-09-24: IN-API writes use an organisation API user, not per-user OAuth
+
+> **This supersedes the "Auth model" conclusions below for writes.**
+> DVV's own IN-integration documentation
+> ([Lisätietoa IN-integraation toteuttajalle](https://kehittajille.suomi.fi/palvelut/palvelutietovaranto/ptv-tietojen-hyodyntaminen/tekninen-dokumentaatio-integraation-toteuttajalle/lisatietoa-in-integraation-toteuttajalle))
+> describes a different mechanism from the implicit grant inferred from the
+> swagger and OIDC discovery document. The IN integration is **per
+> organisation**: DVV grants an **API user** (username + password) after an
+> IN-API permit application, and it is exchanged for a bearer token.
+>
+> | | Login | Body | Response |
+> |---|---|---|---|
+> | production | `POST https://palveluhallinta.suomi.fi/api/auth/api-login` | `{username, password, apiUserOrganisation?}` | `{serviceToken}` |
+> | test | `POST https://palvelutietovaranto.trn.suomi.fi/connect/token` | `{username, password}` | `{ptvToken}` |
+>
+> - The credential is **tenant-scoped** (like v12's API key), stored in
+>   `TenantEnvironment` and configured by a tenant admin
+>   (`/tenants/:tenantId/ptv/v11/api-user`, web UI *PTV connections*).
+>   `PtvAdapterConfig` for v11 becomes `credentialScope: 'tenant'`,
+>   `authMode: 'api_login'`.
+> - `src/ptv/v11/auth/apiLogin.ts` does the login, reads `exp` from the JWT
+>   and caches the token per process until 60 s before expiry. Tokens are only
+>   sent on POST/PUT; public GETs stay anonymous (see the 500-on-bad-token
+>   finding at the end of this file). On a 401 the client logs in once more
+>   and retries.
+> - `apiUserOrganisation` is needed in production only when one API user is
+>   linked to several organisations. A test token is bound to exactly one
+>   organisation.
+> - The test environment's swagger declares the security scheme as a plain
+>   `Authorization: Bearer` apiKey, not the implicit flow production's swagger
+>   shows. That matches the API-login mechanism.
+> - The per-user implicit-grant path (`auth/oauth.ts`, `/ptv-connections/v11/*`)
+>   is kept for now (`credentialScope: 'user'`) but is not DVV's documented
+>   IN-integration path. Review whether to retire it once API-user writes
+>   are verified.
+> - Accountability is unchanged: writes still need a Publisher-approved
+>   proposal, and the audit log records the acting user. PTV itself will
+>   attribute the write to the API user.
+>
+> Test environment details and organisation ids:
+> [docs/ptv-test-environment.md](ptv-test-environment.md).
+
 ## Auth model — confirmed against the live OIDC discovery document
 
 v11 declares a single security scheme:
