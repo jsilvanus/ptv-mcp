@@ -16,8 +16,20 @@ export interface V11ClientOptions {
   environment: PtvEnvironment;
   /** Bearer access token from the user's PTV connection. Omit for v11's unauthenticated public reads. */
   accessToken?: string;
+  /**
+   * Organisation API-user token source (see auth/apiLogin.ts), used for
+   * POST/PUT only: public GETs stay anonymous, since v11 500s an
+   * otherwise-public GET that carries a bad token.
+   */
+  writeTokenProvider?: WriteTokenProvider;
   fetchImpl?: typeof fetch;
   maxRetries?: number;
+}
+
+export interface WriteTokenProvider {
+  getToken(): Promise<string>;
+  /** Called when PTV answers 401, before one retry with a fresh token. */
+  invalidate(): void;
 }
 
 export class PtvV11ApiError extends Error {
@@ -41,12 +53,14 @@ export class PtvV11ApiError extends Error {
 export class PtvV11Client {
   private readonly baseUrl: string;
   private readonly accessToken: string | undefined;
+  private readonly writeTokenProvider: WriteTokenProvider | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
 
   constructor(options: V11ClientOptions) {
     this.baseUrl = V11_BASE_URLS[options.environment];
     this.accessToken = options.accessToken;
+    this.writeTokenProvider = options.writeTokenProvider;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.maxRetries = options.maxRetries ?? 3;
   }
@@ -82,19 +96,30 @@ export class PtvV11Client {
     const url = this.buildUrl(path, query);
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const tokenProvider = method === 'GET' ? undefined : this.writeTokenProvider;
     if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
 
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
 
     let lastError: unknown;
+    let reauthenticated = false;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // Outside the try: a failed login is not a transient network error.
+      if (tokenProvider) headers.Authorization = `Bearer ${await tokenProvider.getToken()}`;
       try {
         const response = await this.fetchImpl(url, init);
 
         if (response.ok) {
           if (response.status === 204) return undefined as T;
           return (await response.json()) as T;
+        }
+
+        if (response.status === 401 && tokenProvider && !reauthenticated) {
+          reauthenticated = true;
+          tokenProvider.invalidate();
+          attempt--;
+          continue;
         }
 
         if (!isRetryable(response.status) || attempt === this.maxRetries) {

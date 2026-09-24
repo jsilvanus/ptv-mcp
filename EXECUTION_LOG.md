@@ -1382,3 +1382,23 @@ process.
 - `scripts/deploy.sh`: pull (fast-forward only), `npm ci` when
   dependencies change, `db:migrate`, optional `PTV_MCP_RESTART_CMD`,
   health check. The previous Farcmd deploy didn't run migrations.
+
+## 2026-09-24 — v11 writes: organisation API user (test environment first)
+
+- DVV's IN-integration docs show v11 writes authenticate with an
+  **organisation API user** (username + password → token), not the per-user
+  implicit grant assumed in `docs/ptv-v11-notes.md`. The notes now carry an
+  update section at the top of "Auth model".
+- New `src/ptv/v11/auth/apiLogin.ts`: login per environment, JWT-`exp`-based
+  process-wide token cache, and one shared in-flight login. `PtvV11Client`
+  takes a `writeTokenProvider` used for POST/PUT only, and retries once
+  with a fresh login on 401. `v11Factory` accepts tenant-scoped credentials
+  `{username, password, apiUserOrganisation?}`.
+- New tenant-admin routes `GET/PUT /tenants/:tenantId/ptv/v11/api-user` and
+  `POST .../api-user/:environment/test`, plus a web UI section. Saving sets the
+  v11 adapter config to `credentialScope: 'tenant'`, `authMode: 'api_login'`,
+  with write enabled.
+- `docs/ptv-test-environment.md`: DVV's test organisations and endpoints.
+  The public test passwords are linked (DVV's XLSX), not copied.
+- Known gap: credential changes on these routes (and the v12 API-key routes)
+  aren't audited yet.

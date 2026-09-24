@@ -17,6 +17,7 @@ import type {
   PtvAdapterConfigService,
 } from '../credentials/ptvAdapterConfigService.js';
 import { PtvV11Adapter } from './v11/adapter.js';
+import { parseV11ApiUserCredentials } from './v11/auth/apiLogin.js';
 import { PtvV12Adapter } from './v12/adapter.js';
 import type { CodeNameCache } from './v12/codeNameCache.js';
 import type { PtvAdapter, PtvEnvironment } from './adapter.js';
@@ -46,18 +47,27 @@ export interface AdapterConstructionOptions {
 
 export type AdapterFactory = (options: AdapterConstructionOptions) => PtvAdapter;
 
+/**
+ * v11 takes either credential scope: 'tenant' is the organisation API
+ * user DVV issues for IN-API writes (username + password → token, see
+ * src/ptv/v11/auth/apiLogin.ts); 'user' is the older per-user token path.
+ */
 function v11Factory(options: AdapterConstructionOptions): PtvAdapter {
-  if (options.credential.scope !== 'user') {
-    throw new Error(
-      `v11 adapter requires a user-scoped credential, got '${options.credential.scope}'`,
-    );
+  const { credential } = options;
+  const apiUser =
+    credential.scope === 'tenant' ? parseV11ApiUserCredentials(credential.credentials) : undefined;
+  if (credential.scope === 'tenant' && credential.credentials && !apiUser) {
+    throw new Error('v11 tenant credentials must contain username and password');
   }
   return new PtvV11Adapter({
     environment: options.environment,
     canWrite: options.canWrite,
     ...(options.tenantId ? { tenantId: options.tenantId } : {}),
     ...(options.organizationCache ? { organizationCache: options.organizationCache } : {}),
-    ...(options.credential.accessToken ? { accessToken: options.credential.accessToken } : {}),
+    ...(credential.scope === 'user' && credential.accessToken
+      ? { accessToken: credential.accessToken }
+      : {}),
+    ...(apiUser ? { apiUser } : {}),
   });
 }
 

@@ -24,6 +24,7 @@ import { auditLogRoutes } from './routes/auditLog.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { webUiRoutes } from './routes/webUi.js';
 import { ptvV12Routes } from './routes/ptvV12.js';
+import { ptvV11ApiUserRoutes } from './routes/ptvV11ApiUser.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 import { mcpOAuthRoutes } from './mcp/oauthRoutes.js';
 import { OAuthService } from './mcp/oauthService.js';
@@ -138,6 +139,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     validator,
   });
   await app.register(ptvV12Routes, {
+    tenantEnvironmentService,
+    adapterConfigService,
+    db,
+    jwtSecret: config.jwtSecret,
+  });
+  await app.register(ptvV11ApiUserRoutes, {
     tenantEnvironmentService,
     adapterConfigService,
     db,

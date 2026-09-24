@@ -37,6 +37,11 @@ import { serviceCollectionWireToDomain } from './mappers/serviceCollection.js';
 import { connectionsFromChannel, connectionsFromService } from './mappers/connection.js';
 import { referenceCodeWireToDomain, V11_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
 import { serviceChangesToV11Body } from './writeMapping.js';
+import {
+  sharedV11ApiTokenCache,
+  type V11ApiTokenCache,
+  type V11ApiUserCredentials,
+} from './auth/apiLogin.js';
 import type {
   V11GeneralDescriptionWire,
   V11IdNamePair,
@@ -58,9 +63,17 @@ export interface PtvV11AdapterOptions {
    * decision should never silently be able to write.
    */
   canWrite?: boolean;
+  /**
+   * Organisation API user (tenant-scoped credential) for IN-API writes;
+   * exchanged for a bearer token via auth/apiLogin.ts.
+   */
+  apiUser?: V11ApiUserCredentials;
+  /** Defaults to the process-wide cache; tests pass their own. */
+  apiTokenCache?: V11ApiTokenCache;
   /** Tenant-scoped persistent organization catalogue cache. Omit for public reads. */
   organizationCache?: PtvOrganizationCacheService;
   tenantId?: string;
+  fetchImpl?: typeof fetch;
 }
 
 export class PtvV11Adapter implements PtvAdapter {
@@ -72,14 +85,25 @@ export class PtvV11Adapter implements PtvAdapter {
   constructor(options: PtvV11AdapterOptions) {
     this.organizationCache = options.organizationCache;
     this.tenantId = options.tenantId;
+    const { apiUser, environment } = options;
+    const tokenCache = options.apiTokenCache ?? sharedV11ApiTokenCache;
     this.client = new PtvV11Client({
-      environment: options.environment,
+      environment,
       ...(options.accessToken ? { accessToken: options.accessToken } : {}),
+      ...(apiUser
+        ? {
+            writeTokenProvider: {
+              getToken: () => tokenCache.getToken(environment, apiUser),
+              invalidate: () => tokenCache.invalidate(environment, apiUser),
+            },
+          }
+        : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     });
     this.capabilities = {
       apiVersion: 'v11',
       environment: options.environment,
-      credentialScope: 'user',
+      credentialScope: apiUser ? 'tenant' : 'user',
       supportsRead: true,
       supportsWrite: options.canWrite ?? false,
       // v11's Service/active and ServiceChannel/active endpoints expose
