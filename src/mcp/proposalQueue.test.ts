@@ -233,6 +233,55 @@ describe('proposalQueue', () => {
     expect(rows[0]?.status).toBe('applied');
   });
 
+  it('returns the applied proposal when the archived service can no longer be read', async () => {
+    const adapter = new InMemoryPtvAdapter({
+      services: [{ ...service }],
+      capabilities: {
+        apiVersion: 'v11',
+        environment: 'test',
+        credentialScope: 'user',
+        supportsRead: true,
+        supportsWrite: true,
+        supportsDraftRead: false,
+      },
+    });
+    // PTV answers 404 for an archived service, public and active reads alike.
+    let archived = false;
+    const getService = adapter.getService.bind(adapter);
+    vi.spyOn(adapter, 'getService').mockImplementation(async (id) =>
+      archived ? null : getService(id),
+    );
+    const applyServiceChange = adapter.applyServiceChange.bind(adapter);
+    vi.spyOn(adapter, 'applyServiceChange').mockImplementation(async (proposal) => {
+      const result = await applyServiceChange(proposal);
+      archived = true;
+      return result;
+    });
+    const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+    const audit = fakeAuditService();
+    const { rows, api } = fakeProposalService();
+
+    const queued = await queueProposal(readerResolver, registry, audit, api, ctx, 'svc-1', {
+      publishingStatus: 'Archived',
+    });
+    const resolved = await resolveProposal(
+      publisherResolver,
+      registry,
+      api,
+      audit,
+      new V11ChangeValidator(),
+      writeCtx,
+      queued.proposalId,
+      'approve_and_apply',
+    );
+
+    expect(resolved).toMatchObject({ status: 'applied', current: null, proposed: null, diff: [] });
+    expect(resolved.queuedDiff).toEqual(queued.diff);
+    expect(rows[0]?.status).toBe('applied');
+    const details = await getProposal(editorResolver, registry, api, audit, ctx, queued.proposalId);
+    expect(details.status).toBe('applied');
+  });
+
   describe('service_create proposals', () => {
     const newService: Partial<Service> = { ...service };
     delete newService.id;
