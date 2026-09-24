@@ -125,11 +125,8 @@ describe('ptv v11 API user routes', () => {
     expect(test.statusCode).toBe(200);
     expect(test.json()).toMatchObject({ ok: true, environment: 'test', apiVersion: 'v11' });
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(String(url)).toBe('https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login');
-    expect(JSON.parse(String(init?.body))).toEqual({
-      username: 'API1@testi.fi',
-      password: 'pw-123',
-    });
+    expect(String(url)).toBe('https://palvelutietovaranto.trn.suomi.fi/connect/token');
+    expect(String(init?.body)).toBe('username=API1%40testi.fi&password=pw-123');
   });
 
   it('reports a rejected login as 502', async () => {

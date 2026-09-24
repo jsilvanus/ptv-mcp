@@ -76,6 +76,24 @@ export function parseV11ApiUserCredentials(
   };
 }
 
+interface LoginAttempt {
+  url: string;
+  form: boolean;
+}
+
+/**
+ * Test environment: DVV documents `/connect/token`, which parses a form
+ * body (JSON makes it answer 500); `/api/auth/api-login` takes JSON like
+ * production. Both are tried, documented one first.
+ */
+const LOGIN_ATTEMPTS: Record<PtvEnvironment, LoginAttempt[]> = {
+  production: [{ url: V11_API_LOGIN_URLS.production, form: false }],
+  test: [
+    { url: 'https://palvelutietovaranto.trn.suomi.fi/connect/token', form: true },
+    { url: V11_API_LOGIN_URLS.test, form: false },
+  ],
+};
+
 export async function fetchV11ApiToken(
   environment: PtvEnvironment,
   credentials: V11ApiUserCredentials,
@@ -83,40 +101,60 @@ export async function fetchV11ApiToken(
 ): Promise<V11ApiToken> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? Date.now;
-  const body: Record<string, string> = {
+  const fields: Record<string, string> = {
     username: credentials.username,
     password: credentials.password,
   };
   if (environment === 'production' && credentials.apiUserOrganisation) {
-    body.apiUserOrganisation = credentials.apiUserOrganisation;
+    fields.apiUserOrganisation = credentials.apiUserOrganisation;
   }
 
-  let response: Response;
-  try {
-    response = await fetchImpl(V11_API_LOGIN_URLS[environment], {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw new V11ApiLoginError(
-      `PTV ${environment} API login failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  const failures: string[] = [];
+  let status: number | undefined;
+  for (const attempt of LOGIN_ATTEMPTS[environment]) {
+    const path = new URL(attempt.url).pathname;
+    let response: Response;
+    try {
+      response = await fetchImpl(attempt.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': attempt.form ? 'application/x-www-form-urlencoded' : 'application/json',
+          Accept: 'application/json',
+        },
+        body: attempt.form ? new URLSearchParams(fields).toString() : JSON.stringify(fields),
+      });
+    } catch (err) {
+      failures.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const payload = (await response.json().catch(() => undefined)) as
+      Record<string, unknown> | undefined;
+    if (!response.ok) {
+      status ??= response.status;
+      // PTV's own error `message` (e.g. "credentails are wrong") says why; it
+      // names the user, never the password. Nothing else is echoed.
+      const reason =
+        typeof payload?.message === 'string'
+          ? `: ${payload.message.replaceAll(credentials.password, '***')}`
+          : '';
+      failures.push(`${path} HTTP ${response.status}${reason}`);
+      continue;
+    }
+    const token =
+      payload?.serviceToken ?? payload?.ptvToken ?? payload?.access_token ?? payload?.token;
+    if (typeof token !== 'string' || !token) {
+      // Field names only, never values.
+      failures.push(
+        `${path} returned no token (fields: ${Object.keys(payload ?? {}).join(', ') || 'none'})`,
+      );
+      continue;
+    }
+    return { token, expiresAt: jwtExpiry(token) ?? now() + FALLBACK_TOKEN_LIFETIME_MS };
   }
-  if (!response.ok) {
-    // The body is deliberately not echoed: it may repeat the submitted username.
-    throw new V11ApiLoginError(
-      `PTV ${environment} API login was rejected (HTTP ${response.status})`,
-      response.status,
-    );
-  }
-
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  const token = payload.serviceToken ?? payload.ptvToken ?? payload.access_token;
-  if (typeof token !== 'string' || !token) {
-    throw new V11ApiLoginError(`PTV ${environment} API login returned no token`);
-  }
-  return { token, expiresAt: jwtExpiry(token) ?? now() + FALLBACK_TOKEN_LIFETIME_MS };
+  throw new V11ApiLoginError(
+    `PTV ${environment} API login was rejected (${failures.join('; ')})`,
+    status,
+  );
 }
 
 /** `exp` of a JWT in epoch milliseconds, without verifying the signature. */

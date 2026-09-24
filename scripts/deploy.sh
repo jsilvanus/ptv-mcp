@@ -19,8 +19,7 @@
 #                            http://127.0.0.1:5173/)
 #
 # Without PTV_MCP_RESTART_CMD the script runs the dev deployment itself:
-#   - API: `npm run dev` (tsx watch). Started if not running, restarted
-#     when dependencies changed; otherwise tsx watch reloads by itself.
+#   - API: `npm run dev` (tsx watch). Restarted on every deploy.
 #   - Web: `npm --prefix web run dev` (Vite, port 5173, which the public
 #     domain points at). Restarted on every deploy, so it never serves
 #     outdated pre-bundled dependencies.
@@ -162,16 +161,11 @@ if [ -n "${PTV_MCP_RESTART_CMD:-}" ]; then
   eval "$PTV_MCP_RESTART_CMD"
   wait_for api "$health_url"
 else
-  api_pids="$(find_pids 'tsx.* watch src/server.ts' "$repo")"
-  if [ -z "$api_pids" ]; then
-    start_detached api "$repo" npm run dev
-  elif [ -n "${api_deps_changed:-}" ]; then
-    log "dependencies changed; restarting API"
-    stop_pids $api_pids
-    start_detached api "$repo" npm run dev
-  else
-    log "API running (tsx watch reloads code changes)"
-  fi
+  # Restarted every deploy: tsx watch's own reload isn't something to
+  # rely on when verifying a fix.
+  log "restarting API"
+  stop_pids $(find_pids 'tsx.* watch src/server.ts' "$repo")
+  start_detached api "$repo" npm run dev
 
   log "restarting web dev server"
   stop_pids $(find_pids 'vite' "$repo/web")
