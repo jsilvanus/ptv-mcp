@@ -13,11 +13,19 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
-import { applyChannelChanges, prepareChannelProposal } from './channelProposal.js';
+import {
+  applyChannelChanges,
+  ChannelNotFoundError,
+  prepareChannelProposal,
+} from './channelProposal.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { applyChanges, exportForManualPublish } from './applyOrExport.js';
-import { prepareProposal, type ProposeChangesResult } from './proposeChanges.js';
+import {
+  prepareProposal,
+  ServiceNotFoundError,
+  type ProposeChangesResult,
+} from './proposeChanges.js';
 
 export type ResolveProposalAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 
@@ -44,9 +52,14 @@ export interface ProposalDetails extends ProposalSummary {
   changes: Partial<Service>;
   queuedDiff: ProposeChangesResult['diff'];
   diff: ProposeChangesResult['diff'];
-  /** `null` for a service_create proposal: there is nothing to diff against. */
+  /**
+   * `null` for a service_create proposal (there is nothing to diff against)
+   * and when the service or channel can no longer be read, e.g. after an
+   * approved archive: PTV then returns 404 for it.
+   */
   current: Service | ServiceChannel | null;
-  proposed: Service | NewService | ServiceChannel;
+  /** `null` when the service or channel can no longer be read (see `current`). */
+  proposed: Service | NewService | ServiceChannel | null;
 }
 
 export class InvalidResolveActionError extends Error {
@@ -75,6 +88,28 @@ function toSummary(proposal: ProposalRecord): ProposalSummary {
 }
 
 async function proposalDetails(
+  registry: PtvAdapterRegistry,
+  proposal: ProposalRecord,
+  ctx: ToolContext,
+): Promise<ProposalDetails> {
+  try {
+    return await liveProposalDetails(registry, proposal, ctx);
+  } catch (err) {
+    if (!(err instanceof ServiceNotFoundError || err instanceof ChannelNotFoundError)) throw err;
+    // The target is gone (archived services and channels 404), but the
+    // proposal record itself is still reviewable.
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: [],
+      current: null,
+      proposed: null,
+    };
+  }
+}
+
+async function liveProposalDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
