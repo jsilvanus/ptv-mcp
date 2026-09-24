@@ -24,6 +24,7 @@ import { auditLogRoutes } from './routes/auditLog.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { webUiRoutes } from './routes/webUi.js';
+import { registerSpaNavigation } from './routes/spaNavigation.js';
 import { ptvV12Routes } from './routes/ptvV12.js';
 import { ptvV11ApiUserRoutes } from './routes/ptvV11ApiUser.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
@@ -42,6 +43,7 @@ export interface BuildAppOptions {
     | 'ptvV11OAuthClientSecret'
     | 'ptvV11OAuthRedirectUri'
     | 'mcpPublicUrl'
+    | 'webDevUrl'
   >;
   db?: Database;
   mailer?: Mailer;
@@ -101,6 +103,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       }
     },
   );
+  registerSpaNavigation(app, {
+    nodeEnv: config.nodeEnv,
+    webDevUrl: config.webDevUrl ?? 'http://127.0.0.1:5173',
+  });
   await app.register(healthRoutes);
   await app.register(authRoutes, { authService, jwtSecret: config.jwtSecret });
   await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });

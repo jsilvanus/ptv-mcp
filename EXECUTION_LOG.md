@@ -1768,3 +1768,21 @@ Four-eyes was switched off in the test tenant for this test.
   - The web preview renders only text.
   - Every propose path now refuses names, summaries and descriptions that
     are not `{ language: text }`, so such a proposal can't be stored again.
+
+## 2026-09-24 — Reloading a web UI page under /tenants gave API JSON
+
+Opening or reloading a web UI page such as `/tenants/:id/reviews`,
+`/proposals` or `/members` returned API JSON (404 or 401) instead of the
+page. These paths are both web UI pages and API routes.
+
+- Vite's dev proxy splits them by the Accept header, but the live nginx
+  sends `/tenants` straight to the API. The production `webUi.ts` fallback
+  skipped API prefixes as well.
+- New `src/routes/spaNavigation.ts` fixes this: an onRequest hook that
+  answers a GET under `/tenants` or `/ptv-connections` asking for
+  `text/html` with the web UI. Production serves `web/dist/index.html`;
+  development serves the Vite dev server's index (`WEB_DEV_URL`, default
+  `http://127.0.0.1:5173`).
+- The web app's own API calls use fetch's default Accept (`*/*`), so they
+  still reach the API. If no index is available, the request falls
+  through to the API.

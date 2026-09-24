@@ -23,6 +23,11 @@ export interface AppConfig {
   ptvV11OAuthClientSecret: string;
   ptvV11OAuthRedirectUri: string;
   mcpPublicUrl: string;
+  /**
+   * Development: the Vite dev server (web/), whose index.html the API serves
+   * for browser page loads under /tenants and /ptv-connections.
+   */
+  webDevUrl?: string;
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
@@ -85,5 +90,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ptvV11OAuthClientSecret: env.PTV_V11_OAUTH_CLIENT_SECRET ?? '',
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
     mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
+    webDevUrl: env.WEB_DEV_URL ?? 'http://127.0.0.1:5173',
   };
 }
