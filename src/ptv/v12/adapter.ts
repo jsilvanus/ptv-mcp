@@ -423,16 +423,21 @@ export class PtvV12Adapter implements PtvAdapter {
     }
     const items = (await this.fetchAllRaw<unknown>(path, 100)).map(referenceCodeToDomain);
     if (isCodeListKind(codeListName)) {
-      for (const item of items) this.cacheCodeName(codeListName, item);
+      for (const item of items) this.cacheCodeEntry(codeListName, item);
     }
     return items;
   }
 
   /**
-   * Fill `names` on classification entries, which v12 returns as bare
-   * codes/URIs. Only codes not already cached are fetched, via the
-   * reference-data endpoints' `codes`/`uris` filters (max 20 per request).
-   * A failed lookup leaves names empty rather than failing the read.
+   * Complete classification entries, which v12 returns as a bare code or
+   * URI: fill `names`, and whichever of `code`/`uri` is missing, from the
+   * reference-data endpoints, so entries match v11's `{code, uri, names}`.
+   * The v11 write path sends `uri` (and `code` for industrial classes),
+   * so this also makes v12-read entries writable through v11.
+   *
+   * Only entries not already cached are fetched, via the endpoints'
+   * `codes`/`uris` filters (max 20 per request). A failed lookup leaves
+   * the entry as-is rather than failing the read.
    */
   private async withCodeNames<T extends CodeCarrier>(items: T[]): Promise<T[]> {
     const environment = this.capabilities.environment;
@@ -441,9 +446,9 @@ export class PtvV12Adapter implements PtvAdapter {
         const missing = new Set<string>();
         for (const item of items) {
           for (const entry of item[kind]) {
-            const key = entry.code ?? entry.uri;
-            if (key && Object.keys(entry.names).length === 0) {
-              if (!this.codeNames.get(environment, kind, key)) missing.add(key);
+            const key = lookupKey(entry);
+            if (key && isIncomplete(kind, entry) && !this.codeNames.get(environment, kind, key)) {
+              missing.add(key);
             }
           }
         }
@@ -463,38 +468,50 @@ export class PtvV12Adapter implements PtvAdapter {
                   [param]: values,
                 })
               ).map(referenceCodeToDomain);
-              for (const entry of found) this.cacheCodeName(kind, entry);
+              for (const entry of found) this.cacheCodeEntry(kind, entry);
               // Cache misses too, so an unknown code isn't re-requested on every read.
               for (const value of values) {
                 if (!this.codeNames.get(environment, kind, value)) {
-                  this.codeNames.set(environment, kind, value, {}, MISSING_CODE_NAME_TTL_MS);
+                  this.codeNames.set(
+                    environment,
+                    kind,
+                    value,
+                    { names: {} },
+                    MISSING_CODE_NAME_TTL_MS,
+                  );
                 }
               }
             } catch {
-              // Leave these names empty; the next read retries.
+              // Leave these entries as they are; the next read retries.
             }
           }),
         );
       }),
     );
     return items.map((item) => {
-      const withNames = { ...item };
+      const completed = { ...item };
       for (const kind of CODE_LIST_KINDS) {
-        withNames[kind] = item[kind].map((entry) => {
-          const key = entry.code ?? entry.uri;
-          if (!key || Object.keys(entry.names).length > 0) return entry;
-          const names = this.codeNames.get(environment, kind, key);
-          return names && Object.keys(names).length > 0 ? { ...entry, names } : entry;
+        completed[kind] = item[kind].map((entry) => {
+          const key = lookupKey(entry);
+          const cached = key ? this.codeNames.get(environment, kind, key) : undefined;
+          if (!cached) return entry;
+          const code = entry.code ?? cached.code;
+          const uri = entry.uri ?? cached.uri;
+          return {
+            ...(code ? { code } : {}),
+            ...(uri ? { uri } : {}),
+            names: Object.keys(entry.names).length > 0 ? entry.names : cached.names,
+          };
         });
       }
-      return withNames;
+      return completed;
     });
   }
 
-  private cacheCodeName(kind: CodeListKind, entry: CodeListEntry): void {
+  private cacheCodeEntry(kind: CodeListKind, entry: CodeListEntry): void {
     const environment = this.capabilities.environment;
     for (const key of [entry.code, entry.uri]) {
-      if (key) this.codeNames.set(environment, kind, key, entry.names);
+      if (key) this.codeNames.set(environment, kind, key, entry);
     }
   }
   /**
@@ -626,6 +643,18 @@ type CodeCarrier = Record<CodeListKind, CodeListEntry[]>;
 
 function isCodeListKind(name: string): name is CodeListKind {
   return (CODE_LIST_KINDS as readonly string[]).includes(name);
+}
+
+/** Look entries up by URI when v12 gave one (ontology terms, industrial classes). */
+function lookupKey(entry: CodeListEntry): string | undefined {
+  return entry.uri ?? entry.code;
+}
+
+/** Ontology terms have no code in PTV; every other kind has both code and uri. */
+function isIncomplete(kind: CodeListKind, entry: CodeListEntry): boolean {
+  return (
+    Object.keys(entry.names).length === 0 || !entry.uri || (kind !== 'ontologyTerms' && !entry.code)
+  );
 }
 
 function isUri(value: string): boolean {
@@ -994,7 +1023,11 @@ function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
   if (!values) return [];
 
   return values.map((value) => {
-    if (typeof value === 'string') return { code: value, names: {} };
+    // v12 sends bare strings: a URI for ontology terms and industrial
+    // classes, a code for the rest. withCodeNames fills in the other half.
+    if (typeof value === 'string') {
+      return isUri(value) ? { uri: value, names: {} } : { code: value, names: {} };
+    }
     if (!value || typeof value !== 'object') return { names: {} };
 
     const v = value as Record<string, unknown>;
