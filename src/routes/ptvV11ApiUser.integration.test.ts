@@ -74,7 +74,12 @@ describe('ptv v11 API user routes', () => {
       method: 'PUT',
       url: `/tenants/${tenantId}/ptv/v11/api-user`,
       headers,
-      payload: { environment: 'test', username: ' API1@testi.fi ', password: 'pw-123' },
+      payload: {
+        environment: 'test',
+        username: ' API1@testi.fi ',
+        password: 'pw-123',
+        organisationId: 'AE788356-6950-48FC-B3FF-63243F74FE53',
+      },
     });
     expect(put.statusCode).toBe(204);
 
@@ -96,6 +101,7 @@ describe('ptv v11 API user routes', () => {
         environment: 'test',
         username: 'API1@testi.fi',
         apiUserOrganisation: null,
+        organisationId: 'ae788356-6950-48fc-b3ff-63243f74fe53',
         supportsRead: true,
         supportsWrite: true,
       },
@@ -154,5 +160,13 @@ describe('ptv v11 API user routes', () => {
       payload: { environment: 'test', username: 'u' },
     });
     expect(res.statusCode).toBe(400);
+
+    const badOrganisation = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/ptv/v11/api-user`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { environment: 'test', username: 'u', password: 'p', organisationId: 'not-a-uuid' },
+    });
+    expect(badOrganisation.statusCode).toBe(400);
   });
 });

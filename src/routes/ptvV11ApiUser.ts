@@ -17,7 +17,11 @@ interface ConfigBody {
   username: string;
   password: string;
   apiUserOrganisation?: string;
+  /** PTV organisation this API user writes to (informational; a test token is bound to one). */
+  organisationId?: string;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface PtvV11ApiUserRoutesOptions {
   tenantEnvironmentService: TenantEnvironmentService;
@@ -64,6 +68,7 @@ export async function ptvV11ApiUserRoutes(
           // use; the password never leaves the server.
           username: credentials?.username ?? null,
           apiUserOrganisation: credentials?.apiUserOrganisation ?? null,
+          organisationId: credentials?.organisationId ?? null,
           supportsRead: config.supportsRead,
           supportsWrite: config.supportsWrite,
         });
@@ -77,18 +82,23 @@ export async function ptvV11ApiUserRoutes(
     { preHandler: [authenticate, requireTenantAdmin] },
     async (request, reply) => {
       const { tenantId } = request.params;
-      const { environment, username, password, apiUserOrganisation } = request.body ?? {};
+      const { environment, username, password, apiUserOrganisation, organisationId } =
+        request.body ?? {};
       if (!isEnvironment(environment)) {
         return reply.badRequest('environment must be test or production');
       }
       if (!username?.trim() || !password) {
         return reply.badRequest('username and password are required');
       }
+      if (organisationId && !UUID.test(organisationId)) {
+        return reply.badRequest('organisationId must be a PTV organisation id (UUID)');
+      }
 
       await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v11', {
         username: username.trim(),
         password,
         ...(apiUserOrganisation?.trim() ? { apiUserOrganisation: apiUserOrganisation.trim() } : {}),
+        ...(organisationId ? { organisationId: organisationId.toLowerCase() } : {}),
       });
       await options.adapterConfigService.upsert(tenantId, environment, 'v11', {
         authMode: 'api_login',

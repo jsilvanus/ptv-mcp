@@ -86,6 +86,8 @@ export interface PtvV11ApiUserStatus {
   environment: PtvEnvironment;
   username: string | null;
   apiUserOrganisation: string | null;
+  /** PTV organisation the API user writes to, when chosen (test environment). */
+  organisationId: string | null;
   supportsRead: boolean;
   supportsWrite: boolean;
 }
