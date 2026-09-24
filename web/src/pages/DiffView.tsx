@@ -1,15 +1,6 @@
 import type { CodeListEntry, ServiceDiffEntry } from '../api/types';
 import { CODE_LIST_FIELDS, codeEntryKey, codeEntryLabel, fieldLabel } from './ptvLabels';
-
-function formatValue(value: unknown): string {
-  if (value === undefined) return '(ei arvoa)';
-  if (value === null) return '(tyhjä)';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-    return value.join(', ');
-  }
-  return JSON.stringify(value);
-}
+import { formatFieldValue } from './fieldFormat';
 
 function isCodeListField(field: string): boolean {
   return (CODE_LIST_FIELDS as readonly string[]).includes(field);
@@ -76,9 +67,11 @@ export function DiffView({ diff }: { diff: ServiceDiffEntry[] }) {
             <tr key={entry.field}>
               <td title={entry.field}>{fieldLabel(entry.field)}</td>
               <td className="muted" style={{ whiteSpace: 'pre-wrap' }}>
-                {formatValue(entry.before)}
+                {formatFieldValue(entry.field, entry.before)}
               </td>
-              <td style={{ whiteSpace: 'pre-wrap' }}>{formatValue(entry.after)}</td>
+              <td style={{ whiteSpace: 'pre-wrap' }}>
+                {formatFieldValue(entry.field, entry.after)}
+              </td>
             </tr>
           ),
         )}
