@@ -11,14 +11,18 @@ import type {
 import { useTenants } from '../tenants/TenantContext';
 import { DiffView } from './DiffView';
 import { ProposalComments } from './ProposalComments';
+import { ProposalReviewers } from './ProposalReviewers';
 import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
+/** Filter value for pending proposals waiting for the user's own sign-off. */
+const WAITING_FOR_ME = 'waiting';
+type StatusFilter = ProposalStatus | typeof WAITING_FOR_ME;
 
 export function ProposalQueuePage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const { currentTenant } = useTenants();
-  const [status, setStatus] = useState<ProposalStatus>('pending');
+  const [status, setStatus] = useState<StatusFilter>('pending');
   const [items, setItems] = useState<ProposalSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<ProposalDetails | null>(null);
@@ -45,7 +49,9 @@ export function ProposalQueuePage() {
     setForbidden(false);
     try {
       const list = await apiFetch<ProposalSummary[]>(
-        `/tenants/${tenantId}/proposals?status=${status}`,
+        status === WAITING_FOR_ME
+          ? `/tenants/${tenantId}/proposals?waitingForMe=true`
+          : `/tenants/${tenantId}/proposals?status=${status}`,
       );
       setItems(list);
       if (list.length === 0) {
@@ -144,8 +150,9 @@ export function ProposalQueuePage() {
       <select
         id="proposal-status"
         value={status}
-        onChange={(e) => setStatus(e.target.value as ProposalStatus)}
+        onChange={(e) => setStatus(e.target.value as StatusFilter)}
       >
+        <option value={WAITING_FOR_ME}>waiting for my review</option>
         {STATUSES.map((value) => (
           <option key={value} value={value}>
             {value}
@@ -161,7 +168,11 @@ export function ProposalQueuePage() {
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Proposals</h2>
             {items.length === 0 ? (
-              <p className="muted">No proposals with status "{status}".</p>
+              <p className="muted">
+                {status === WAITING_FOR_ME
+                  ? 'Nothing is waiting for your review.'
+                  : `No proposals with status "${status}".`}
+              </p>
             ) : (
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
                 {items.map((proposal) => (
@@ -198,6 +209,14 @@ export function ProposalQueuePage() {
                   <strong>Correlation:</strong> {selected.correlationId}
                 </p>
                 <DiffView diff={selected.diff} />
+                {tenantId && (
+                  <ProposalReviewers
+                    tenantId={tenantId}
+                    proposal={selected}
+                    canResolve={canResolve}
+                    onChanged={loadSelected}
+                  />
+                )}
                 {tenantId && (
                   <ProposalComments
                     tenantId={tenantId}

@@ -53,7 +53,12 @@ keep their meaning). `viewer` is new.
 5. **Required reviewers.** `proposal_reviewers` table (proposal, user,
    decision, comment, decided_at), MCP tools to request a review and to sign
    off, the gate in `resolveProposal`, and a "waiting for you" list in the
-   web UI and `ptv_list_proposals`.
+   web UI and `ptv_list_proposals`. Done: `ptv_request_review` (reviewers by
+   email or id; without any it lists the possible ones) and
+   `ptv_sign_off_proposal`; REST `POST .../reviewers`, `POST .../sign-off`,
+   `GET /tenants/:id/review-candidates`, `?waitingForMe=true`. A sign-off
+   can be changed while the proposal is pending; the proposer cannot be a
+   reviewer.
 6. **Diff view.** Classification names instead of raw JSON, a per-language
    export preview on the proposal page, and a readable preview of a new
    service.

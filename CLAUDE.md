@@ -151,7 +151,10 @@ tenant/environment (Publisher-only, enforced by `PtvAdapterRegistry`, not
 by the proposal code itself). Four-eyes (`tenants.require_four_eyes`, on by
 default) additionally refuses approving your own proposal and the direct
 `ptv_export_for_manual_publish`/`ptv_apply_changes` tools; integration tests
-that exercise those direct tools create their tenant with it off.
+that exercise those direct tools create their tenant with it off. Required
+reviewers (`proposal_reviewers`, `ptv_request_review`/`ptv_sign_off_proposal`)
+must all have `approved` before either approve action; reject is always
+allowed.
 
 ### MCP layer
 

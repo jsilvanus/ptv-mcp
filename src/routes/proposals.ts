@@ -8,18 +8,25 @@ import {
   commentOnProposal,
   getProposal,
   InvalidCommentError,
+  InvalidReviewRequestError,
   listProposals,
+  listReviewCandidates,
+  requestReview,
   resolveProposal,
+  ReviewsPendingError,
+  signOffProposal,
+  type SignOffDecision,
   type ResolveProposalAction,
 } from '../mcp/proposalQueue.js';
 import {
+  NotARequestedReviewerError,
   ProposalAlreadyResolvedError,
   ProposalNotFoundError,
   ProposalService,
   type ProposalStatus,
 } from '../proposals/proposalService.js';
-import { FourEyesError } from '../mcp/authorization.js';
-import { tenantRequiresFourEyes } from '../tenants/tenantService.js';
+import { FourEyesError, NotAuthorizedError } from '../mcp/authorization.js';
+import { TenantService, tenantRequiresFourEyes } from '../tenants/tenantService.js';
 
 export interface ProposalRoutesOptions {
   db: Database;
@@ -32,6 +39,8 @@ export interface ProposalRoutesOptions {
 
 interface ListProposalQuery {
   status?: ProposalStatus;
+  /** `true` lists only pending proposals waiting for the caller's sign-off. */
+  waitingForMe?: string;
   environment?: 'test' | 'production';
 }
 
@@ -52,6 +61,8 @@ export async function proposalRoutes(
   const requireApprover = createRequireRole(options.db, 'approver');
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(options.db, tenantId, userId);
+  const tenantService = new TenantService(options.db, options.auditService);
+  const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
   const contextFrom = (
     tenantId: string,
     userId: string,
@@ -72,6 +83,7 @@ export async function proposalRoutes(
         options.proposalService,
         contextFrom(tenantId, request.userId!, request.query),
         request.query.status,
+        request.query.waitingForMe === 'true',
       );
     },
   );
@@ -126,6 +138,9 @@ export async function proposalRoutes(
         if (err instanceof FourEyesError) {
           return reply.forbidden(err.message);
         }
+        if (err instanceof ReviewsPendingError) {
+          return reply.conflict(err.message);
+        }
         throw err;
       }
     },
@@ -148,6 +163,84 @@ export async function proposalRoutes(
         return reply.code(201).send(comment);
       } catch (err) {
         if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
+        if (err instanceof InvalidCommentError) return reply.badRequest(err.message);
+        throw err;
+      }
+    },
+  );
+
+  app.get<{ Querystring: ProposalRequestQuery }>(
+    '/tenants/:tenantId/review-candidates',
+    { preHandler: [authenticate, requireContributor] },
+    async (request) => {
+      const { tenantId } = request.params as { tenantId: string };
+      return listReviewCandidates(
+        resolveRole,
+        listMembers,
+        contextFrom(tenantId, request.userId!, request.query),
+      );
+    },
+  );
+
+  app.post<{ Body: { reviewers?: unknown }; Querystring: ProposalRequestQuery }>(
+    '/tenants/:tenantId/proposals/:proposalId/reviewers',
+    { preHandler: [authenticate, requireContributor] },
+    async (request, reply) => {
+      const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
+      const reviewers = request.body?.reviewers;
+      if (!Array.isArray(reviewers) || !reviewers.every((entry) => typeof entry === 'string')) {
+        return reply.badRequest('reviewers must be an array of emails or user ids');
+      }
+      try {
+        const result = await requestReview(
+          resolveRole,
+          listMembers,
+          options.proposalService,
+          options.auditService,
+          contextFrom(tenantId, request.userId!, request.query),
+          proposalId,
+          reviewers,
+        );
+        return reply.code(201).send(result);
+      } catch (err) {
+        if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
+        if (err instanceof ProposalAlreadyResolvedError) return reply.conflict(err.message);
+        if (err instanceof InvalidReviewRequestError) return reply.badRequest(err.message);
+        if (err instanceof NotAuthorizedError) return reply.forbidden(err.message);
+        throw err;
+      }
+    },
+  );
+
+  app.post<{
+    Body: { decision?: unknown; comment?: unknown };
+    Querystring: ProposalRequestQuery;
+  }>(
+    '/tenants/:tenantId/proposals/:proposalId/sign-off',
+    { preHandler: [authenticate, requireContributor] },
+    async (request, reply) => {
+      const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
+      const { decision, comment } = request.body ?? {};
+      if (decision !== 'approved' && decision !== 'changes_requested') {
+        return reply.badRequest('decision must be approved or changes_requested');
+      }
+      if (comment !== undefined && typeof comment !== 'string') {
+        return reply.badRequest('comment must be a string');
+      }
+      try {
+        return await signOffProposal(
+          resolveRole,
+          options.proposalService,
+          options.auditService,
+          contextFrom(tenantId, request.userId!, request.query),
+          proposalId,
+          decision satisfies SignOffDecision,
+          comment,
+        );
+      } catch (err) {
+        if (err instanceof ProposalNotFoundError) return reply.notFound(err.message);
+        if (err instanceof ProposalAlreadyResolvedError) return reply.conflict(err.message);
+        if (err instanceof NotARequestedReviewerError) return reply.forbidden(err.message);
         if (err instanceof InvalidCommentError) return reply.badRequest(err.message);
         throw err;
       }
