@@ -13,26 +13,50 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('fetchV11ApiToken', () => {
-  it('logs in to the test environment without apiUserOrganisation and reads ptvToken', async () => {
-    const calls: Array<{ url: string; body: unknown }> = [];
+  it('tries the test /connect/token form first, then api-login JSON, and reports both on failure', async () => {
+    const calls: Array<{ url: string; type: string | null; body: string }> = [];
     const token = jwt(2_000);
     const result = await fetchV11ApiToken(
       'test',
       { username: 'API1@testi.fi', password: 'pw', apiUserOrganisation: 'ignored' },
       {
         fetchImpl: async (input, init) => {
-          calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
-          return json({ ptvToken: token });
+          calls.push({
+            url: String(input),
+            type: new Headers(init?.headers).get('Content-Type'),
+            body: String(init?.body),
+          });
+          return calls.length === 1 ? json({}, 500) : json({ serviceToken: token });
         },
       },
     );
     expect(calls).toEqual([
       {
+        url: 'https://palvelutietovaranto.trn.suomi.fi/connect/token',
+        type: 'application/x-www-form-urlencoded',
+        body: 'username=API1%40testi.fi&password=pw',
+      },
+      {
         url: 'https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login',
-        body: { username: 'API1@testi.fi', password: 'pw' },
+        type: 'application/json',
+        body: JSON.stringify({ username: 'API1@testi.fi', password: 'pw' }),
       },
     ]);
     expect(result).toEqual({ token, expiresAt: 2_000_000 });
+
+    const error = await fetchV11ApiToken(
+      'test',
+      { username: 'u', password: 'pw' },
+      {
+        fetchImpl: async (input) =>
+          String(input).endsWith('/connect/token')
+            ? json({ error: 0, message: "TokenService> User 'u', credentails are wrong." }, 403)
+            : json({}, 500),
+      },
+    ).catch((err: unknown) => err);
+    expect((error as V11ApiLoginError).status).toBe(403);
+    expect((error as Error).message).toContain('/connect/token HTTP 403: TokenService');
+    expect((error as Error).message).toContain('/api/auth/api-login HTTP 500');
   });
 
   it('logs in to production with apiUserOrganisation and reads serviceToken', async () => {
