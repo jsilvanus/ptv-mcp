@@ -45,7 +45,7 @@ describe('audit log routes', () => {
     createdUserIds.length = 0;
   });
 
-  async function setUp(role: 'reader' | 'tenant_admin') {
+  async function setUp(role: 'contributor' | 'tenant_admin') {
     const tenantId = randomUUID();
     const userId = randomUUID();
     await db
@@ -86,7 +86,7 @@ describe('audit log routes', () => {
   });
 
   it('rejects a reader (audit log viewing is a tenant_admin capability)', async () => {
-    const { tenantId, token } = await setUp('reader');
+    const { tenantId, token } = await setUp('contributor');
     const res = await app.inject({
       method: 'GET',
       url: `/tenants/${tenantId}/audit-entries`,

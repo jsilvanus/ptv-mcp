@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTenants } from '../tenants/TenantContext';
+import { ROLE_LABELS, roleAtLeast } from '../auth/roles';
 
 export function Layout() {
   const { logout } = useAuth();
@@ -12,10 +13,7 @@ export function Layout() {
     navigate('/login');
   }
 
-  const canReviewProposals =
-    currentTenant?.role === 'editor' ||
-    currentTenant?.role === 'publisher' ||
-    currentTenant?.role === 'tenant_admin';
+  const canReviewProposals = roleAtLeast(currentTenant?.role, 'contributor');
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -43,7 +41,7 @@ export function Layout() {
             {tenants.length === 0 && <option value="">No tenants yet</option>}
             {tenants.map((t) => (
               <option key={t.tenantId} value={t.tenantId}>
-                {t.tenantName} ({t.role})
+                {t.tenantName} ({ROLE_LABELS[t.role]})
               </option>
             ))}
           </select>

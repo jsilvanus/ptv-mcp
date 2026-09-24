@@ -517,7 +517,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_new_service',
     withOAuthSecurity({
       description:
-        'Queue a proposal to create a new PTV service. Nothing is written until an Editor+ resolves it with approve_and_apply (which also needs Publisher-level write access); PTV then assigns the id, recorded on the proposal. `service` is a Service without id: organizationId, serviceType (default Service), publishingStatus (Draft by default, or Published), names, summaries, descriptions (each keyed by language, e.g. {"fi": "..."}), languages, serviceClasses (at least one subclass, e.g. P25.6), ontologyTerms (KOKO URIs), targetGroups, optionally lifeEvents, industrialClasses (needs target groups KR2 + KR2.x), generalDescriptionId, serviceChannelIds. Classification entries need a `uri` (or `code` for industrial classes). The service area is copied from the organisation. Returns the validation result right away.',
+        'Queue a proposal to create a new PTV service. Needs the Contributor role (Ehdottaja). Nothing is written until an Approver+ resolves it with approve_and_apply (which also needs Publisher-level write access); PTV then assigns the id, recorded on the proposal. `service` is a Service without id: organizationId, serviceType (default Service), publishingStatus (Draft by default, or Published), names, summaries, descriptions (each keyed by language, e.g. {"fi": "..."}), languages, serviceClasses (at least one subclass, e.g. P25.6), ontologyTerms (KOKO URIs), targetGroups, optionally lifeEvents, industrialClasses (needs target groups KR2 + KR2.x), generalDescriptionId, serviceChannelIds. Classification entries need a `uri` (or `code` for industrial classes). The service area is copied from the organisation. Returns the validation result right away.',
       inputSchema: {
         service: z
           .record(z.string(), z.unknown())
@@ -548,7 +548,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_channel_changes',
     withOAuthSecurity({
       description:
-        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Never writes anything; an Editor+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
+        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
       inputSchema: {
         channelId: z.string(),
         changes: z
@@ -583,7 +583,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_proposals',
     withOAuthSecurity({
       description:
-        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). Requires Editor+ role.',
+        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
       },
@@ -603,7 +603,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_get_proposal',
     withOAuthSecurity({
       description:
-        'Read one proposal and re-diff it against the current service state for review. Requires Editor+ role.',
+        'Read one proposal and re-diff it against the current service state for review. Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
         proposalId: z.string(),
       },
@@ -630,7 +630,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_resolve_proposal',
     withOAuthSecurity({
       description:
-        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires Editor+; apply still requires Publisher-level write access.',
+        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija).',
       inputSchema: {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),

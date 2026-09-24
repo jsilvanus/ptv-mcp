@@ -131,7 +131,7 @@ export async function queueProposal(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<QueuedProposeChangesResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'reader');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const prepared = await prepareProposal(registry, ctx, serviceId, changes);
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,
@@ -167,7 +167,7 @@ export async function listProposals(
   ctx: ToolContext,
   status?: ProposalStatus,
 ): Promise<ProposalSummary[]> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposals = await proposalService.listForTenant(ctx.tenantId, {
     ...(status ? { status } : {}),
   });
@@ -182,7 +182,7 @@ export async function getProposal(
   ctx: ToolContext,
   proposalId: string,
 ): Promise<ProposalDetails> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   await auditService.record({
     tenantId: ctx.tenantId,
@@ -206,7 +206,7 @@ export async function resolveProposal(
   proposalId: string,
   action: ResolveProposalAction,
 ): Promise<ProposalDetails> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'editor');
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
 

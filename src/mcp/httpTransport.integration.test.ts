@@ -91,7 +91,7 @@ describe('MCP HTTP transport', () => {
       .values({ id: tenantId, name: 'MCP Test Tenant', slug: `mcp-${tenantId}` });
     createdTenantIds.push(tenantId);
     await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role: 'reader' });
+      await tx.insert(memberships).values({ tenantId, userId, role: 'contributor' });
     });
 
     const token = await oauthService.issueAccessToken(

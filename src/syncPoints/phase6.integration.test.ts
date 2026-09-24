@@ -156,7 +156,7 @@ describe('Phase 6 sync point', () => {
   async function addMembership(
     tenantId: string,
     userId: string,
-    role: 'reader' | 'editor' | 'publisher' | 'tenant_admin',
+    role: 'contributor' | 'approver' | 'publisher' | 'tenant_admin',
   ): Promise<void> {
     await withContext(db, { tenantId }, async (tx) => {
       await tx.insert(memberships).values({ tenantId, userId, role });
@@ -200,8 +200,8 @@ describe('Phase 6 sync point', () => {
       registerUser('Tenant Admin'),
     ]);
     await Promise.all([
-      addMembership(tenantId, readerUser.userId, 'reader'),
-      addMembership(tenantId, editorUser.userId, 'editor'),
+      addMembership(tenantId, readerUser.userId, 'contributor'),
+      addMembership(tenantId, editorUser.userId, 'approver'),
       addMembership(tenantId, publisherUser.userId, 'publisher'),
       addMembership(tenantId, tenantAdminUser.userId, 'tenant_admin'),
     ]);
@@ -413,7 +413,7 @@ describe('Phase 6 sync point', () => {
     // resolution — a *member* whose role is too low is what produces the registry's
     // own `reason: 'not_authorized'` (see the Editor-can't-apply case above).
     expect((forbiddenWrite.content as Array<{ text: string }>)[0]?.text).toContain(
-      "requires at least 'editor' role",
+      "requires at least 'approver' role",
     );
 
     const forbiddenRead = await clientC.callTool({

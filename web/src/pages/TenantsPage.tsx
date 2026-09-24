@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { apiFetch, ApiError } from '../api/client';
 import { useTenants } from '../tenants/TenantContext';
+import { ROLE_LABELS } from '../auth/roles';
 
 function slugify(name: string): string {
   return name
@@ -55,7 +56,7 @@ export function TenantsPage() {
               <tr key={t.tenantId}>
                 <td>{t.tenantName}</td>
                 <td>{t.tenantSlug}</td>
-                <td>{t.role}</td>
+                <td>{ROLE_LABELS[t.role]}</td>
               </tr>
             ))}
             {tenants.length === 0 && (

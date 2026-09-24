@@ -6,7 +6,12 @@ import {
   type TenantService,
   UserNotFoundError,
 } from '../tenants/tenantService.js';
-import { createAuthenticate, createRequireRole, type MembershipRole } from '../auth/rbac.js';
+import {
+  createAuthenticate,
+  createRequireRole,
+  ROLE_RANK,
+  type MembershipRole,
+} from '../auth/rbac.js';
 
 export interface TenantRoutesOptions {
   tenantService: TenantService;
@@ -78,6 +83,7 @@ export async function tenantRoutes(
       if (!email || !role) {
         return reply.badRequest('email and role are required');
       }
+      if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
       try {
         await tenantService.addMember(tenantId, email, role, request.userId!);
         return reply.code(204).send();
@@ -99,6 +105,7 @@ export async function tenantRoutes(
       if (!role) {
         return reply.badRequest('role is required');
       }
+      if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
       try {
         await tenantService.updateMemberRole(tenantId, userId, role, request.userId!);
         return reply.code(204).send();
@@ -120,4 +127,10 @@ export async function tenantRoutes(
       return reply.code(204).send();
     },
   );
+}
+
+const INVALID_ROLE_MESSAGE = `role must be one of: ${Object.keys(ROLE_RANK).join(', ')}`;
+
+function isMembershipRole(value: unknown): value is MembershipRole {
+  return typeof value === 'string' && Object.hasOwn(ROLE_RANK, value);
 }

@@ -23,8 +23,8 @@ import { queueChannelProposal } from './channelProposal.js';
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
 const writeCtx = { ...ctx, writeApiVersion: 'v11' };
-const readerResolver: MembershipRoleResolver = async () => 'reader';
-const editorResolver: MembershipRoleResolver = async () => 'editor';
+const readerResolver: MembershipRoleResolver = async () => 'contributor';
+const editorResolver: MembershipRoleResolver = async () => 'approver';
 const publisherResolver: MembershipRoleResolver = async () => 'publisher';
 
 const service: Service = {

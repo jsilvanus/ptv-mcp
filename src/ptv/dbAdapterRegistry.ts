@@ -148,7 +148,7 @@ export class DbPtvAdapterRegistry implements PtvAdapterRegistry {
       return factory({ environment, canWrite: false, credential: { scope: 'user' } });
     }
 
-    const minRole: MembershipRole = operation === 'write' ? 'publisher' : 'reader';
+    const minRole: MembershipRole = operation === 'write' ? 'publisher' : 'viewer';
     const membership = await withContext(this.db, { tenantId, userId: actingUserId }, async (tx) =>
       tx.query.memberships.findFirst({
         where: and(eq(memberships.tenantId, tenantId), eq(memberships.userId, actingUserId)),

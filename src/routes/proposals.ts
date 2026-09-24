@@ -44,7 +44,8 @@ export async function proposalRoutes(
   options: ProposalRoutesOptions,
 ): Promise<void> {
   const authenticate = createAuthenticate(options.jwtSecret);
-  const requireEditor = createRequireRole(options.db, 'editor');
+  const requireContributor = createRequireRole(options.db, 'contributor');
+  const requireApprover = createRequireRole(options.db, 'approver');
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(options.db, tenantId, userId);
   const contextFrom = (
@@ -59,7 +60,7 @@ export async function proposalRoutes(
 
   app.get<{ Querystring: ListProposalQuery }>(
     '/tenants/:tenantId/proposals',
-    { preHandler: [authenticate, requireEditor] },
+    { preHandler: [authenticate, requireContributor] },
     async (request) => {
       const { tenantId } = request.params as { tenantId: string };
       return listProposals(
@@ -73,7 +74,7 @@ export async function proposalRoutes(
 
   app.get<{ Querystring: ProposalRequestQuery }>(
     '/tenants/:tenantId/proposals/:proposalId',
-    { preHandler: [authenticate, requireEditor] },
+    { preHandler: [authenticate, requireContributor] },
     async (request, reply) => {
       const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
       try {
@@ -96,7 +97,7 @@ export async function proposalRoutes(
 
   app.post<{ Body: ResolveProposalBody; Querystring: ProposalRequestQuery }>(
     '/tenants/:tenantId/proposals/:proposalId/resolve',
-    { preHandler: [authenticate, requireEditor] },
+    { preHandler: [authenticate, requireApprover] },
     async (request, reply) => {
       const { tenantId, proposalId } = request.params as { tenantId: string; proposalId: string };
       try {

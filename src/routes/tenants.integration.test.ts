@@ -76,6 +76,28 @@ describe('tenant routes', () => {
     ]);
   });
 
+  it('rejects an unknown or retired role name with 400', async () => {
+    const admin = await createUserWithToken();
+    const member = await createUserWithToken();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: 'Role Tenant', slug: `role-${randomUUID()}` },
+    });
+    const { tenantId } = createRes.json() as { tenantId: string };
+    createdTenantIds.push(tenantId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/tenants/${tenantId}/members`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { email: member.email, role: 'reader' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('viewer, contributor, approver, publisher, tenant_admin');
+  });
+
   it('rejects tenant creation without authentication', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -104,14 +126,14 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: reader.email, role: 'reader' },
+      payload: { email: reader.email, role: 'contributor' },
     });
 
     const forbiddenRes = await app.inject({
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${reader.token}` },
-      payload: { email: newMember.email, role: 'editor' },
+      payload: { email: newMember.email, role: 'approver' },
     });
     expect(forbiddenRes.statusCode).toBe(403);
 
@@ -119,7 +141,7 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: newMember.email, role: 'editor' },
+      payload: { email: newMember.email, role: 'approver' },
     });
     expect(addRes.statusCode).toBe(204);
 
@@ -149,7 +171,7 @@ describe('tenant routes', () => {
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
       headers: { authorization: `Bearer ${admin.token}` },
-      payload: { email: member.email, role: 'reader' },
+      payload: { email: member.email, role: 'contributor' },
     });
 
     const patchRes = await app.inject({
