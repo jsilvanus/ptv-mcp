@@ -46,6 +46,8 @@ export class V11ChangeValidator implements ChangeValidator {
     this.validateUriFields(proposed, errors);
     this.validateIndustrialClassesCode(proposed, errors);
     this.validateOntologyTermUris(proposed, errors);
+    this.validateRequiredClassifications(proposed, errors);
+    this.validateNotOnlyMainServiceClasses(proposed, errors);
 
     return {
       valid: errors.length === 0,
@@ -189,6 +191,42 @@ export class V11ChangeValidator implements ChangeValidator {
         message: `Ontology term URI must be a KOKO URI of the form http://www.yso.fi/onto/koko/p<number> (got "${entry.uri}").${hint}`,
       });
     });
+  }
+
+  /**
+   * Rule 10: without a general description, PTV requires serviceClasses,
+   * ontologyTerms and targetGroups (live 400: "The field is required when
+   * 'GeneralDescriptionId' has value 'null'").
+   */
+  private validateRequiredClassifications(proposed: Service, errors: ValidationError[]): void {
+    if (proposed.generalDescriptionId) return;
+    for (const field of ['serviceClasses', 'ontologyTerms', 'targetGroups'] as const) {
+      if (!Array.isArray(proposed[field]) || proposed[field].length === 0) {
+        errors.push({
+          field,
+          message: 'Required when the service has no general description',
+        });
+      }
+    }
+  }
+
+  /**
+   * Rule 11: at least one service class must be a subclass (a code with a
+   * dot, e.g. P11.6); PTV rejects only main classes such as P11 (live 400:
+   * "All the service classes are main service classes. Not allowed!").
+   * Entries without a code can't be classified here and let the rule pass.
+   */
+  private validateNotOnlyMainServiceClasses(proposed: Service, errors: ValidationError[]): void {
+    const classes = proposed.serviceClasses ?? [];
+    if (classes.length === 0) return;
+    const onlyMain = classes.every((entry) => !!entry.code && !entry.code.includes('.'));
+    if (onlyMain) {
+      errors.push({
+        field: 'serviceClasses',
+        message:
+          'At least one service class must be a subclass (e.g. P11.6), not only main classes (e.g. P11)',
+      });
+    }
   }
 }
 

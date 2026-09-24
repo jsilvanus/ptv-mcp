@@ -186,7 +186,7 @@ describe('V11ChangeValidator', () => {
     });
 
     it('passes when ontologyTerms has fewer than 10 entries', () => {
-      const service = { ...validService(), ontologyTerms: [] };
+      const service = validService();
       const result = validator.validate(service);
       expect(result.errors.some((e) => e.field === 'ontologyTerms')).toBe(false);
     });
@@ -215,9 +215,51 @@ describe('V11ChangeValidator', () => {
     });
 
     it('passes when serviceClasses has fewer than 4 entries', () => {
-      const service = { ...validService(), serviceClasses: [] };
+      const service = validService();
       const result = validator.validate(service);
       expect(result.errors.some((e) => e.field === 'serviceClasses')).toBe(false);
+    });
+  });
+
+  describe('classifications required without a general description (Rule 10)', () => {
+    it.each(['serviceClasses', 'ontologyTerms', 'targetGroups'] as const)(
+      'fails when %s is empty and there is no general description',
+      (field) => {
+        const result = validator.validate({ ...validService(), [field]: [] });
+        expect(result.errors).toContainEqual({
+          field,
+          message: 'Required when the service has no general description',
+        });
+      },
+    );
+
+    it('passes with empty classifications when a general description is linked', () => {
+      const result = validator.validate({
+        ...validService(),
+        generalDescriptionId: 'gd-1',
+        serviceClasses: [],
+        ontologyTerms: [],
+        targetGroups: [],
+      });
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('not only main service classes (Rule 11)', () => {
+    const mainClass = { code: 'P11', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1105', names: {} };
+    const subClass = { code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} };
+
+    it('fails when every service class is a main class', () => {
+      const result = validator.validate({ ...validService(), serviceClasses: [mainClass] });
+      expect(result.errors.some((e) => e.field === 'serviceClasses')).toBe(true);
+    });
+
+    it('passes when at least one service class is a subclass', () => {
+      const result = validator.validate({
+        ...validService(),
+        serviceClasses: [mainClass, subClass],
+      });
+      expect(result.valid).toBe(true);
     });
   });
 

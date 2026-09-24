@@ -1,5 +1,5 @@
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { LocalizedText, PtvContentId, Service } from '../ptv/domain.js';
+import type { CodeListEntry, LocalizedText, PtvContentId, Service } from '../ptv/domain.js';
 import type { AuditService } from '../audit/auditService.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
@@ -47,6 +47,26 @@ export interface ProposeChangesResult {
 }
 
 const LOCALIZED_FIELDS = ['names', 'summaries', 'descriptions'] as const;
+
+const CODE_LIST_FIELDS = [
+  'serviceClasses',
+  'ontologyTerms',
+  'targetGroups',
+  'lifeEvents',
+  'industrialClasses',
+] as const;
+
+/**
+ * Classifications are compared as sets of their identity (uri, else code):
+ * PTV returns names in every language and in its own order, so comparing
+ * whole entries would report a change that isn't one.
+ */
+function codeListKey(value: unknown): string {
+  if (!Array.isArray(value)) return JSON.stringify(value ?? []);
+  return JSON.stringify(
+    (value as CodeListEntry[]).map((entry) => entry.uri ?? entry.code ?? '').sort(),
+  );
+}
 
 /**
  * Merges `changes` onto `current` using the same "field presence, not
@@ -102,6 +122,12 @@ export function diffService(current: Service, changes: Partial<Service>): Servic
 
     const before = current[field];
     const after = changes[field];
+    if (CODE_LIST_FIELDS.includes(field as (typeof CODE_LIST_FIELDS)[number])) {
+      if (codeListKey(before) !== codeListKey(after)) {
+        entries.push({ field, before, after });
+      }
+      continue;
+    }
     if (JSON.stringify(before) !== JSON.stringify(after)) {
       entries.push({ field, before, after });
     }
