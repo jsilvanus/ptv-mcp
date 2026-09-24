@@ -29,7 +29,11 @@ export function ProposalPreview({
     ]),
   ];
   const [language, setLanguage] = useState(languages[0] ?? 'fi');
-  const text = (field: 'names' | 'summaries' | 'descriptions') => entity[field]?.[language];
+  // Only text renders: a malformed stored proposal may hold other values.
+  const text = (field: 'names' | 'summaries' | 'descriptions') => {
+    const value: unknown = entity[field]?.[language];
+    return typeof value === 'string' ? value : undefined;
+  };
 
   return (
     <section>

@@ -1,3 +1,4 @@
+import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkChannel, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult } from '../ptv/adapter.js';
@@ -133,6 +134,7 @@ export async function queueChannelProposal(
   reviewItemId?: string,
 ): Promise<QueuedChannelProposalResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  assertLocalizedTextFields(changes);
   const prepared = await prepareChannelProposal(registry, ctx, channelId, changes);
   const validation = validateChannel(prepared.proposed);
   const auditEntry = await auditService.record({

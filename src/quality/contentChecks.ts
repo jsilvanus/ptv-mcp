@@ -289,6 +289,10 @@ export function classificationCode(entry: CodeListEntry): string {
   );
 }
 
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function textFieldFindings(
   names: LocalizedText,
   summaries: LocalizedText | undefined,
@@ -300,9 +304,10 @@ function textFieldFindings(
 
   const withSummaries = summaries ?? {};
   for (const language of languagesOf(names, withSummaries, descriptions)) {
-    const name = names[language]?.trim() ?? '';
-    const summary = withSummaries[language]?.trim() ?? '';
-    const description = descriptions[language]?.trim() ?? '';
+    // Anything but text (a malformed stored proposal) counts as missing.
+    const name = textOf(names[language]);
+    const summary = textOf(withSummaries[language]);
+    const description = textOf(descriptions[language]);
 
     if (!name) {
       error('Q-LANG-2', 'names', language, 'Language version has no name.');

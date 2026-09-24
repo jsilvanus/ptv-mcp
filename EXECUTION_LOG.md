@@ -1760,3 +1760,11 @@ Four-eyes was switched off in the test tenant for this test.
   created `f937ac35-3779-4412-b6da-8d80b721d20a` as a Draft. Read back,
   every field matches, and the Mon–Fri range was stored as five day
   entries. It is a test channel ("Älä julkaise") and can be archived.
+- **Rejected proposals page crashed** with "names[language]?.trim is not
+  a function". An early test proposal (`27c8ff62`, service_create) had
+  been stored with `names` in some other shape than `{ language: text }`,
+  and the quality checks assumed text.
+  - The checks now treat non-text as missing (Q-LANG-2).
+  - The web preview renders only text.
+  - Every propose path now refuses names, summaries and descriptions that
+    are not `{ language: text }`, so such a proposal can't be stored again.
