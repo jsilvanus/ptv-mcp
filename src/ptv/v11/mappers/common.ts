@@ -58,20 +58,42 @@ export function toPublishingStatus(status: V11PublishingStatus): PublishingStatu
 }
 
 /**
- * v11's write model accepts Draft, Published, Modified and Deleted. A
- * published service can't go back to Draft (live 400: "You cannot set
- * Publishing status as Draft when current one is Published"); `Modified`
- * saves an unpublished version on top of it instead. Archiving is `Deleted`.
+ * v11's write model lists Draft, Published, Modified and Deleted, but only
+ * Draft, Published and Deleted (archive) are usable (verified live):
+ * - a published service can't go back to Draft ("You cannot set
+ *   Publishing status as Draft when current one is Published");
+ * - `Modified` is accepted once, but then every further API write of that
+ *   service fails ("You cannot update entity with status Modified") until
+ *   someone publishes or discards the version in PTV's own UI.
  */
 export function toV11WritePublishingStatus(status: PublishingStatus): V11PublishingStatus {
   switch (status) {
     case 'Archived':
       return 'Deleted';
+    case 'Draft':
+    case 'Published':
+      return status;
+    case 'Modified':
+      throw new Error(
+        'PTV v11 publishingStatus Modified is not writable through the API: it locks the ' +
+          'service against further API updates. Keep it Published (edits publish ' +
+          'immediately) or use Draft for a service that has never been published.',
+      );
     case 'Withdrawn':
       throw new Error(
         'PTV v11 cannot set publishingStatus Withdrawn; use Archived to archive the service',
       );
-    default:
-      return status;
+  }
+}
+
+/** Thrown before a PUT that PTV would refuse because the latest version is Modified. */
+export class V11ModifiedVersionLockedError extends Error {
+  constructor(public readonly entityId: string) {
+    super(
+      `PTV has an unpublished modified version of ${entityId}, and the v11 API refuses ` +
+        `to update it ("You cannot update entity with status Modified"). Publish or ` +
+        `discard that version in PTV's web UI first, then propose the change again.`,
+    );
+    this.name = 'V11ModifiedVersionLockedError';
   }
 }

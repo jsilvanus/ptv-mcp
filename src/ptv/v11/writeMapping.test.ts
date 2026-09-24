@@ -104,6 +104,21 @@ describe('serviceChangesToV11Body', () => {
       );
     });
 
+    it('refuses Modified, which locks the service against later API writes', () => {
+      expect(() => serviceChangesToV11Body({ publishingStatus: 'Modified' }, current)).toThrow(
+        /locks the service/,
+      );
+    });
+
+    it('writes Archived as v11 Deleted and refuses Withdrawn', () => {
+      expect(
+        serviceChangesToV11Body({ publishingStatus: 'Archived' }, current).publishingStatus,
+      ).toBe('Deleted');
+      expect(() => serviceChangesToV11Body({ publishingStatus: 'Withdrawn' }, current)).toThrow(
+        /Withdrawn/,
+      );
+    });
+
     it('resends the classifications PTV requires when there is no general description', () => {
       const body = serviceChangesToV11Body({ names: { fi: 'X' } }, current);
       expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1105']);
