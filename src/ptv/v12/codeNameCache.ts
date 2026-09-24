@@ -13,7 +13,16 @@ import type { LocalizedText } from '../domain.js';
 export type CodeListKind =
   'serviceClasses' | 'targetGroups' | 'lifeEvents' | 'industrialClasses' | 'ontologyTerms';
 
-export const DEFAULT_CODE_NAME_TTL_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Classification vocabularies (ontology terms included) change very rarely. */
+export const DEFAULT_CODE_NAME_TTL_MS = 30 * DAY_MS;
+
+/**
+ * Codes PTV didn't recognise are remembered for a shorter time, so a code
+ * added to a vocabulary later gets its name within a day.
+ */
+export const MISSING_CODE_NAME_TTL_MS = DAY_MS;
 
 interface CacheEntry {
   names: LocalizedText;
@@ -39,10 +48,16 @@ export class CodeNameCache {
     return entry.names;
   }
 
-  set(environment: PtvEnvironment, kind: CodeListKind, key: string, names: LocalizedText): void {
+  set(
+    environment: PtvEnvironment,
+    kind: CodeListKind,
+    key: string,
+    names: LocalizedText,
+    ttlMs = this.ttlMs,
+  ): void {
     this.entries.set(keyOf(environment, kind, key), {
       names,
-      expiresAt: this.now() + this.ttlMs,
+      expiresAt: this.now() + ttlMs,
     });
   }
 
