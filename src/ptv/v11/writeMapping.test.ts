@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Service } from '../domain.js';
 import { serviceChangesToV11Body } from './writeMapping.js';
+import { toPublishingStatus } from './mappers/common.js';
 import type { V11ServiceWire } from './wireModel.js';
 
 describe('serviceChangesToV11Body', () => {
@@ -134,5 +135,12 @@ describe('serviceChangesToV11Body', () => {
       );
       expect(body.ontologyTerms).toEqual(['http://www.yso.fi/onto/koko/p1']);
     });
+  });
+});
+
+describe('toPublishingStatus', () => {
+  it('reads Modified as is and Deleted as Archived', () => {
+    expect(toPublishingStatus('Modified')).toBe('Modified');
+    expect(toPublishingStatus('Deleted')).toBe('Archived');
   });
 });

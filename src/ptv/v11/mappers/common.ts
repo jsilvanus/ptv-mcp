@@ -43,13 +43,35 @@ export function toCodeListEntries(items: V11CodeListItem[] | undefined): CodeLis
 const KNOWN_PUBLISHING_STATUSES: readonly PublishingStatus[] = [
   'Draft',
   'Published',
+  'Modified',
   'Archived',
   'Withdrawn',
 ];
 
 export function toPublishingStatus(status: V11PublishingStatus): PublishingStatus {
+  // v11's write model calls archiving `Deleted`.
+  if (status === 'Deleted') return 'Archived';
   if ((KNOWN_PUBLISHING_STATUSES as readonly string[]).includes(status)) {
     return status as PublishingStatus;
   }
   throw new Error(`Unknown v11 publishingStatus: ${status}`);
+}
+
+/**
+ * v11's write model accepts Draft, Published, Modified and Deleted. A
+ * published service can't go back to Draft (live 400: "You cannot set
+ * Publishing status as Draft when current one is Published"); `Modified`
+ * saves an unpublished version on top of it instead. Archiving is `Deleted`.
+ */
+export function toV11WritePublishingStatus(status: PublishingStatus): V11PublishingStatus {
+  switch (status) {
+    case 'Archived':
+      return 'Deleted';
+    case 'Withdrawn':
+      throw new Error(
+        'PTV v11 cannot set publishingStatus Withdrawn; use Archived to archive the service',
+      );
+    default:
+      return status;
+  }
 }

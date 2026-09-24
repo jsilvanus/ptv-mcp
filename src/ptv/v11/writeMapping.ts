@@ -1,5 +1,6 @@
 import type { CodeListEntry, LocalizedText, Service } from '../domain.js';
 import { needsDeleteFlag } from './deleteFlags.js';
+import { toV11WritePublishingStatus } from './mappers/common.js';
 import type { V11CodeListItem, V11LocalizedItem, V11ServiceWire } from './wireModel.js';
 
 /**
@@ -31,8 +32,11 @@ export function serviceChangesToV11Body(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {};
 
-  const publishingStatus = changes.publishingStatus ?? current?.publishingStatus;
-  if (publishingStatus) body.publishingStatus = publishingStatus;
+  if (changes.publishingStatus) {
+    body.publishingStatus = toV11WritePublishingStatus(changes.publishingStatus);
+  } else if (current) {
+    body.publishingStatus = current.publishingStatus;
+  }
 
   if ('names' in changes) {
     body.serviceNames = [

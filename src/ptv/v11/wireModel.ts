@@ -48,7 +48,8 @@ export interface V11IdNamePair {
   name?: string;
 }
 
-export type V11PublishingStatus = 'Draft' | 'Published' | 'Archived' | 'Withdrawn';
+export type V11PublishingStatus =
+  'Draft' | 'Published' | 'Modified' | 'Deleted' | 'Archived' | 'Withdrawn';
 
 export interface V11ServiceOrganizationRole {
   organization: V11IdNamePair;
