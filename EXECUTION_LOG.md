@@ -1409,3 +1409,43 @@ DVV told us by email that v12 writes identify the *integration* with the API key
 *user/organisation* with a token. Recorded in `docs/ptv-v12-notes.md`
 ("v12 write auth") with the design consequences. No code changes; v12
 write goes to beta in October 2026.
+
+## 2026-09-24 — v11 writes verified live (test environment, organisation 15)
+
+Plan: `docs/v11-write-plan.md`. Findings: `docs/ptv-v11-notes.md`, "Live
+write findings". Every step was tested through the PTV-MCP connector
+(propose → `approve_and_apply` → read back), fixed, merged and redeployed
+with Farcmd.
+
+- #39: the service PUT needs `publishingStatus`, the classifications
+  (without a general description) and whole description lists, so the body
+  is built on the current record. `serviceChannels: null` crashed
+  `ptv_get_service`. Adds the plan.
+- #40: PTV's 400 field errors and our validation errors are readable.
+- #41: draft reads through `Service/active` / `ServiceChannel/active`
+  with the API-user token; PUTs build on the latest version.
+- #42: classifications diffed by URI; validator rules 10 (classifications
+  required without a general description) and 11 (not only main service
+  classes).
+- #43, #45: `Modified` status. Reading it no longer throws, but writing it
+  locks the service against API updates. PTV-MCP never writes it, refuses
+  early, and validator rule 12 flags it. *Testipalvelu 7* is left
+  `Modified` and needs publishing or discarding in PTV's UI.
+- #44, #46: connections are written through the Connection endpoint. Its
+  PUT replaces the list (it dropped two connections live, restored
+  straight away), so the full list is sent with extra info kept.
+- #47: industrial classes are written as stat.fi URIs (plain codes → 500);
+  validator rule 13 (KR2 + subgroup).
+- #48: service creation (`ptv_propose_new_service`, proposal kind
+  `service_create`, migration 0017).
+- #49, #51: general description unlink sends `type`, and inherited
+  classifications aren't adopted.
+- #50: channel updates (`ptv_propose_channel_changes`, all five types).
+- #52: credential changes on the v11 API-user and v12 API-key routes are
+  audited, without secrets.
+
+Deviation: creating channels is out of scope for now (type-specific data
+the domain model lacks). Creation and channel updates still need live
+verification: the connector's tool list predates them, so it has to be
+reconnected.
+
