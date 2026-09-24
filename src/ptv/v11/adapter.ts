@@ -106,11 +106,9 @@ export class PtvV11Adapter implements PtvAdapter {
       credentialScope: apiUser ? 'tenant' : 'user',
       supportsRead: true,
       supportsWrite: options.canWrite ?? false,
-      // v11's Service/active and ServiceChannel/active endpoints expose
-      // draft/modified content, but only to an authenticated caller —
-      // see docs/ptv-v11-notes.md. Not yet wired up (tracked separately);
-      // reads in this adapter are currently published-content only.
-      supportsDraftRead: false,
+      // Service/active and ServiceChannel/active return the latest version
+      // (draft or modified included), but only with the API-user token.
+      supportsDraftRead: apiUser !== undefined,
     };
   }
 
@@ -162,7 +160,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async getService(id: PtvContentId): Promise<Service | null> {
-    const wire = await this.getOrNull<V11ServiceWire>(`/api/v11/Service/${id}`);
+    const wire = await this.getLatestOrNull<V11ServiceWire>('Service', id);
     return wire ? serviceWireToDomain(wire) : null;
   }
 
@@ -210,7 +208,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async getChannel(id: PtvContentId): Promise<ServiceChannel | null> {
-    const wire = await this.getOrNull<V11ServiceChannelWire>(`/api/v11/ServiceChannel/${id}`);
+    const wire = await this.getLatestOrNull<V11ServiceChannelWire>('ServiceChannel', id);
     return wire ? serviceChannelWireToDomain(wire) : null;
   }
 
@@ -444,7 +442,9 @@ export class PtvV11Adapter implements PtvAdapter {
     }
     // The PUT has to resend required fields the change doesn't touch (see
     // writeMapping.ts), so it's built on top of PTV's current record.
-    const current = await this.client.get<V11ServiceWire>(`/api/v11/Service/${proposal.serviceId}`);
+    // Built on the latest version, so a PUT never reverts a newer draft.
+    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
+    if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
     const body = serviceChangesToV11Body(proposal.changes, current);
     const updated = await this.client.put<V11ServiceWire>(
       `/api/v11/Service/${proposal.serviceId}`,
@@ -455,6 +455,28 @@ export class PtvV11Adapter implements PtvAdapter {
       publishingStatus: serviceWireToDomain(updated).publishingStatus,
       appliedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * The latest version of a service or channel: `{type}/active/{id}` (drafts
+   * and modified versions included) when an API user is configured, else
+   * the public, published-only `{type}/{id}`. If the restricted read fails
+   * for any reason (including a 404, in case it only covers the API user's
+   * own organisation), the public read decides, so a broken API-user login
+   * never breaks published reads.
+   */
+  private async getLatestOrNull<T>(
+    type: 'Service' | 'ServiceChannel',
+    id: PtvContentId,
+  ): Promise<T | null> {
+    if (this.client.canAuthenticate) {
+      try {
+        return await this.client.getRestricted<T>(`/api/v11/${type}/active/${id}`);
+      } catch {
+        // Fall through to the public read.
+      }
+    }
+    return this.getOrNull<T>(`/api/v11/${type}/${id}`);
   }
 
   private async getOrNull<T>(path: string): Promise<T | null> {
