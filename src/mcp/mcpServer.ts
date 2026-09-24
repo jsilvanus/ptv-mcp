@@ -20,6 +20,7 @@ import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
 import type { ToolContext } from './toolContext.js';
+import { registerGuides, SERVER_INSTRUCTIONS } from './guides.js';
 import {
   getProposal,
   isProposalQueueError,
@@ -212,7 +213,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const { db, registry, auditService, validator, proposalService } = deps;
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(db, tenantId, userId);
-  const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
+  const server = new McpServer(
+    { name: 'ptv-mcp', version: '0.1.0' },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
+  registerGuides(server);
 
   server.registerTool(
     'ptv_search_services',

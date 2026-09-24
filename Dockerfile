@@ -16,5 +16,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist
+# Guides and skills served over MCP (src/mcp/guides.ts reads them at runtime).
+COPY guides ./guides
+COPY skills ./skills
 EXPOSE 3000
 CMD ["node", "dist/server.js"]

@@ -138,6 +138,7 @@ describe('MCP HTTP transport', () => {
         'ptv_list_codes',
         'ptv_search_ontology_terms',
         'ptv_propose_changes',
+        'ptv_get_guide',
         'ptv_list_proposals',
         'ptv_get_proposal',
         'ptv_resolve_proposal',

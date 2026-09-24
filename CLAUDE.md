@@ -186,6 +186,16 @@ A mismatched `resource`/audience between two `OAuthService` instances
 verification — `npm run mcp:token` (`src/mcp/token.ts`) had exactly this
 bug until the same fix.
 
+### Guides, skills and server instructions
+
+`src/mcp/guides.ts` serves the Markdown in `guides/` and `skills/*/SKILL.md`
+(read at runtime from the repo root, so the Dockerfile copies both
+directories) as the `ptv_get_guide` tool, `ptv-guide://` resources, prompts
+and the server's `instructions`. `guides/content-quality.md` condenses
+DVV's kehittajille.suomi.fi content guidelines; its `Q-*` checklist IDs
+are referenced by the prompts and tests. Keep them stable, and update the
+guides rather than hard-coding PTV writing rules in tool descriptions.
+
 ### Everything else
 
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —

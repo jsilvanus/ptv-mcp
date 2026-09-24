@@ -1449,3 +1449,39 @@ the domain model lacks). Creation and channel updates still need live
 verification: the connector's tool list predates them, so it has to be
 reconnected.
 
+
+## 2026-09-24 — Guides, skills and AI-compliance rules served over MCP
+
+The DVV content guidelines (kehittajille.suomi.fi, "Sisällön tuottaminen
+Palvelutietovarantoon" and every page under it, plus "Palvelutietovarannon
+käyttöönotto" and "Työskentelyn organisointi") were crawled and condensed
+into guides. So were the EU AI Act Art. 50 rules (not postponed by the
+Digital Omnibus) and VM's generative AI guidance.
+
+- `guides/`: `getting-started-with-ptv.md`, `content-quality.md` (writing
+  rules plus a review checklist with `Q-*` check ids),
+  `api-credentials.md` and `ai-compliance.md`.
+- `skills/`: `ptv-mcp-admin/SKILL.md` and `ptv-mcp-workflow/SKILL.md`, in
+  Agent Skills format so they can also be installed as client skills.
+- `src/mcp/guides.ts` serves them in four ways:
+  - the read-only `ptv_get_guide` tool
+  - static `ptv-guide://{topic}` resources
+  - three prompts (`ptv_review_content`, `ptv_content_workflow`,
+    `ptv_admin_setup`)
+  - server `instructions` sent at initialize. They carry the
+    non-negotiables: no approve or apply without the user seeing the diff
+    and explicitly asking, no invented facts, no secrets, no personal
+    names.
+- The Dockerfile copies `guides/` and `skills/` into the runtime image,
+  because they are read at runtime rather than compiled.
+
+Known gaps:
+
+- `api-credentials.md` has no v12 key instructions yet. DVV is expected
+  to publish them around late October 2026. v11 is deliberately left
+  undocumented.
+- The quality checklist is guidance for the AI and the approver. The
+  `Q-*` checks aren't implemented in `ChangeValidator`.
+- Approval in chat still depends on the AI following the instructions.
+  The server can't tell whether a human or the model issued
+  `ptv_resolve_proposal`.
