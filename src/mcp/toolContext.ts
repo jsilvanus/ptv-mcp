@@ -15,3 +15,10 @@ export interface ToolContext {
   apiVersion?: string;
   actingUserId: string;
 }
+
+/**
+ * Context for read tools. `tenantId` is absent on a public connection (no
+ * organisation chosen): the registry then serves PTV v11's public,
+ * published-only data, with no drafts and no tenant configuration.
+ */
+export type ReadToolContext = Omit<ToolContext, 'tenantId'> & { tenantId?: string };

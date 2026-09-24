@@ -11,7 +11,7 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../ptv/domain.js';
-import type { ToolContext } from './toolContext.js';
+import type { ReadToolContext } from './toolContext.js';
 
 /**
  * Search/read tools are thin pass-throughs to a registry-resolved
@@ -19,9 +19,9 @@ import type { ToolContext } from './toolContext.js';
  * search criteria are carried separately in SearchParams and never inferred
  * from the tenant or its organisation membership.
  */
-async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ToolContext) {
+async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ReadToolContext) {
   return registry.resolve({
-    tenantId: ctx.tenantId,
+    ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
     environment: ctx.environment,
     apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
     operation: 'read',
@@ -31,7 +31,7 @@ async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ToolContext
 
 export async function searchServices(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<Service>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -40,7 +40,7 @@ export async function searchServices(
 
 export async function getService(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   id: PtvContentId,
 ): Promise<Service | null> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -49,7 +49,7 @@ export async function getService(
 
 export async function searchChannels(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<ServiceChannel>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -58,7 +58,7 @@ export async function searchChannels(
 
 export async function getChannel(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   id: PtvContentId,
 ): Promise<ServiceChannel | null> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -67,7 +67,7 @@ export async function getChannel(
 
 export async function searchOrganisations(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<Organization>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -76,7 +76,7 @@ export async function searchOrganisations(
 
 export async function findOrganisationAndChildren(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   query: string,
 ): Promise<{
   organisation: Organization;
@@ -110,7 +110,7 @@ export async function findOrganisationAndChildren(
 
 export async function getOrganisation(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   id: PtvContentId,
 ): Promise<Organization | null> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -119,7 +119,7 @@ export async function getOrganisation(
 
 export async function getOrganisationHierarchy(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   id: PtvContentId,
 ): Promise<Organization[]> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -128,7 +128,7 @@ export async function getOrganisationHierarchy(
 
 export async function searchServiceCollections(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<ServiceCollection>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -137,7 +137,7 @@ export async function searchServiceCollections(
 
 export async function searchGeneralDescriptions(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<GeneralDescription>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -147,7 +147,7 @@ export async function searchGeneralDescriptions(
 /** "ptv_search_connections" in the phase plan — PtvAdapter exposes this as getConnectionsFor. */
 export async function searchConnections(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   entityId: PtvContentId,
 ): Promise<Connection[]> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -156,7 +156,7 @@ export async function searchConnections(
 
 export async function searchOntologyTerms(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   params: SearchParams,
 ): Promise<PaginatedResult<CodeListEntry>> {
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -165,7 +165,7 @@ export async function searchOntologyTerms(
 
 export async function listCodes(
   registry: PtvAdapterRegistry,
-  ctx: ToolContext,
+  ctx: ReadToolContext,
   codeListName: string,
 ): Promise<CodeListEntry[]> {
   const adapter = await resolveReadAdapter(registry, ctx);
