@@ -1,3 +1,12 @@
+import type {
+  V11AccessibilityClassification,
+  V11DeliveryAddress,
+  V11LanguageItem,
+  V11LocationAddress,
+  V11Phone,
+  V11ServiceHour,
+  V11WebPage,
+} from './channelFields.js';
 /**
  * Hand-typed, narrow views of PTV v11's wire format — only the fields the
  * mappers in ./mappers actually read, verified against the real API
@@ -112,7 +121,22 @@ export interface V11ServiceChannelWire {
   languages: string[];
   /** EChannel only; required on its PUT. */
   requiresAuthentication?: boolean | null;
+  requiresSignature?: boolean | null;
+  signatureQuantity?: number | string | null;
   services?: V11ServiceRelation[];
+  isVisibleForAll?: boolean | null;
+  /** The channel's address (EChannel, WebPage, Phone) or its web pages (others). */
+  webPages?: V11WebPage[] | null;
+  phoneNumbers?: V11Phone[] | null;
+  supportPhones?: V11Phone[] | null;
+  /** Support emails; a service location's contact emails. */
+  supportEmails?: V11LanguageItem[] | null;
+  serviceHours?: V11ServiceHour[] | null;
+  addresses?: V11LocationAddress[] | null;
+  deliveryAddresses?: V11DeliveryAddress[] | null;
+  formIdentifier?: V11LanguageItem[] | null;
+  channelUrls?: V11LocalizedItem[] | null;
+  accessibilityClassification?: V11AccessibilityClassification[] | null;
   modified: string;
 }
 

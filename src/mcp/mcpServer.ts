@@ -11,6 +11,7 @@ import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
+import type { NewChannel } from '../ptv/adapter.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
@@ -21,6 +22,26 @@ import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
 import type { ReadToolContext, ToolContext } from './toolContext.js';
+import { registerGuides, SERVER_INSTRUCTIONS } from './guides.js';
+import { checkQuality } from './qualityTools.js';
+import { listMyTasks } from './myTasks.js';
+import { ReviewService, type ReviewItemView } from '../reviews/reviewService.js';
+import { queueNewChannelProposal } from './newChannelProposal.js';
+import {
+  assignReviewItems,
+  closeReviewCampaign,
+  completeReviewItem,
+  getReviewCampaign,
+  getReviewItem,
+  listMyReviewItems,
+  listReviewCampaigns,
+  attachProposalToReviewItem,
+  linkProposalToReviewItem,
+  reopenReviewItem,
+  requireLinkableReviewItem,
+  startReviewCampaign,
+  type ReviewDeps,
+} from '../reviews/reviewCampaigns.js';
 import {
   getProposal,
   isProposalQueueError,
@@ -233,7 +254,33 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const requireFourEyes = (tenantId: string) => tenantRequiresFourEyes(db, tenantId);
   const tenantService = new TenantService(db, auditService);
   const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
-  const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
+  const reviewDeps: ReviewDeps = {
+    proposalService,
+    resolveRole,
+    registry,
+    auditService,
+    reviewService: new ReviewService(db),
+    listMembers,
+  };
+  const reviewItemIdSchema = z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Review item this proposal answers (from ptv_review_my_items). Links the proposal to the review campaign; the item must be open and assigned to you.',
+    );
+  const linkQueued = async (ctx: ToolContext, item: ReviewItemView, proposalId: string) =>
+    linkProposalToReviewItem(
+      reviewDeps,
+      ctx,
+      item,
+      await proposalService.getById(ctx.tenantId, proposalId),
+    );
+  const server = new McpServer(
+    { name: 'ptv-mcp', version: '0.1.0' },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
+  registerGuides(server);
 
   server.registerTool(
     'ptv_search_services',
@@ -522,22 +569,32 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         serviceId: z.string(),
         changes: changesSchema,
         correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
       },
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await queueProposal(
-            resolveRole,
-            registry,
-            auditService,
-            proposalService,
-            toolContext(extra),
-            args.serviceId,
-            args.changes as Partial<Service>,
-            args.correlationId,
-          ),
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'service_update',
+              targetId: args.serviceId,
+              changes: args.changes as Record<string, unknown>,
+            })
+          : null;
+        const result = await queueProposal(
+          resolveRole,
+          registry,
+          auditService,
+          proposalService,
+          ctx,
+          args.serviceId,
+          args.changes as Partial<Service>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -554,21 +611,29 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .record(z.string(), z.unknown())
           .describe('The new service: a Service without id (see the tool description).'),
         correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
       },
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await queueNewServiceProposal(
-            resolveRole,
-            auditService,
-            proposalService,
-            validator,
-            toolContext(extra),
-            args.service as Partial<Service>,
-            args.correlationId,
-          ),
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'service_create',
+            })
+          : null;
+        const result = await queueNewServiceProposal(
+          resolveRole,
+          auditService,
+          proposalService,
+          validator,
+          ctx,
+          args.service as Partial<Service>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -579,31 +644,78 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_propose_channel_changes',
     withOAuthSecurity({
       description:
-        'Diff a proposed change against a service channel (any type: EChannel, Phone, PrintableForm, ServiceLocation, WebPage) and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, descriptions (the Description texts; summaries are kept), languages, publishingStatus (Published, Draft for a never-published channel, or Archived). A localized field present in `changes` replaces all its languages.',
+        'Diff a proposed change against a service channel and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields by type (see ServiceChannel in the guides): all types names, summaries (max 150), descriptions, languages (languages it serves in), publishingStatus (Published, Draft for a never-published channel, or Archived), isVisibleForAll, serviceHours; EChannel urls, requiresAuthentication, requiresSignature, signatureQuantity, accessibility, supportPhones, supportEmails; WebPage urls, accessibility, supportPhones, supportEmails; Phone phoneNumbers (type Phone/Sms/Fax), urls, supportPhones, supportEmails; PrintableForm formFiles, formIdentifiers, deliveryAddresses, webPages, supportPhones, supportEmails; ServiceLocation addresses, phoneNumbers (Fax as type), emails, webPages. A field present in `changes` replaces all its values (every language, every list entry): read the channel first and send the full list. Phone numbers: number without the leading 0 plus prefixNumber +358, or isFinnishServiceNumber; times HH:mm; dates YYYY-MM-DD.',
       inputSchema: {
         channelId: z.string(),
         changes: z
           .record(z.string(), z.unknown())
           .describe(
-            'Partial<ServiceChannel>: only names, descriptions, languages, publishingStatus.',
+            "Partial<ServiceChannel>: only the channel type's writable fields (see the description).",
           ),
         correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
       },
     }),
     async (args, extra) => {
       try {
-        return textResult(
-          await queueChannelProposal(
-            resolveRole,
-            registry,
-            auditService,
-            proposalService,
-            toolContext(extra),
-            args.channelId,
-            args.changes as Partial<ServiceChannel>,
-            args.correlationId,
-          ),
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'channel_update',
+              targetId: args.channelId,
+            })
+          : null;
+        const result = await queueChannelProposal(
+          resolveRole,
+          registry,
+          auditService,
+          proposalService,
+          ctx,
+          args.channelId,
+          args.changes as Partial<ServiceChannel>,
+          args.correlationId,
+          args.reviewItemId,
         );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_new_channel',
+    withOAuthSecurity({
+      description:
+        'Queue a proposal to create a new service channel. Needs the Contributor role (Ehdottaja). Nothing is written until an Approver+ resolves it with approve_and_apply (Publisher-level write access); PTV then assigns the id, recorded on the proposal. `channel` needs channelType (EChannel, WebPage, Phone, PrintableForm, ServiceLocation) and organizationId, then names, summaries and descriptions (keyed by language, e.g. {"fi": "..."}) for every language version, languages (the languages it serves customers in), and the type\'s fields (see ptv_propose_channel_changes): EChannel and WebPage need urls for every language version; Phone needs phoneNumbers; ServiceLocation needs a street address in addresses; PrintableForm needs formFiles. Optional serviceIds connects it to existing services. Starts as Draft and shared (isVisibleForAll) unless set. Returns validation and automated quality checks right away. Do not describe another organisation\'s channel: connect their shared channel instead.',
+      inputSchema: {
+        channel: z
+          .record(z.string(), z.unknown())
+          .describe('The new channel: a ServiceChannel without id, plus optional serviceIds.'),
+        correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
+      },
+    }),
+    async (args, extra) => {
+      try {
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'channel_create',
+            })
+          : null;
+        const result = await queueNewChannelProposal(
+          resolveRole,
+          auditService,
+          proposalService,
+          ctx,
+          args.channel as Partial<NewChannel>,
+          args.correlationId,
+          args.reviewItemId,
+        );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }
@@ -873,6 +985,271 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
             args.changes as Partial<Service>,
             args.correlationId,
           ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_my_tasks',
+    withOAuthSecurity({
+      description:
+        "Everything waiting for you in this organisation and environment: review items assigned to you, proposals waiting for your sign-off, and for Approvers and above every suggested change that still needs review, resolving or (Publisher+) publishing in PTV, each with its readiness; Publishers also get open review campaigns' progress. Call it at the start of a session and tell the user the `summary` lines. Contributor role (Ehdottaja) or above.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    }),
+    async (_args, extra) => {
+      try {
+        return textResult(
+          await listMyTasks(reviewDeps, proposalService, requireFourEyes, toolContext(extra)),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_check_quality',
+    withOAuthSecurity({
+      description:
+        "Run the deterministic content checks (guides/content-quality.md's Q-* checks that can be decided from the data: contact details or opening hours in free text, missing or too long texts, summary repeating the name, classification limits, missing channels or languages, and Finnish style heuristics such as passive voice) on a published service or channel. Returns findings with severity error (breaks a DVV rule) or warning (heuristic, for a human to judge). The same checks run on every proposal and review item.",
+      inputSchema: {
+        kind: z.enum(['service', 'channel']),
+        id: z.string(),
+      },
+      annotations: { readOnlyHint: true },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(await checkQuality(registry, readToolContext(extra), args.kind, args.id));
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_start_campaign',
+    withOAuthSecurity({
+      description:
+        "Start a review campaign: a full check of an organisation's published PTV content in this environment. Every service, channel and organisation (sub-organisations included unless includeSubOrganisations is false) becomes a review item with its automated check findings. Needs the Publisher role (Julkaisija) or above. One open campaign per organisation. Next: assign items with ptv_review_assign.",
+      inputSchema: {
+        name: z.string().describe('e.g. "Syyskuun 2026 tarkistus"'),
+        organizationId: z.string().uuid().describe('PTV organisation id'),
+        dueDate: z.string().optional().describe('Target date, YYYY-MM-DD'),
+        includeSubOrganisations: z.boolean().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await startReviewCampaign(reviewDeps, toolContext(extra), {
+            name: args.name,
+            organizationId: args.organizationId,
+            ...(args.dueDate ? { dueDate: args.dueDate } : {}),
+            ...(args.includeSubOrganisations !== undefined
+              ? { includeSubOrganisations: args.includeSubOrganisations }
+              : {}),
+          }),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_list_campaigns',
+    withOAuthSecurity({
+      description:
+        'List review campaigns with progress (items open, confirmed, changes proposed, unassigned). Contributor role (Ehdottaja) or above.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    }),
+    async (_args, extra) => {
+      try {
+        return textResult(await listReviewCampaigns(reviewDeps, toolContext(extra)));
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_get_campaign',
+    withOAuthSecurity({
+      description:
+        'One review campaign with its items (reviewer, status, automated findings, linked proposals). assignedToMe: only your items. Contributor role (Ehdottaja) or above.',
+      inputSchema: {
+        campaignId: z.string().uuid(),
+        assignedToMe: z.boolean().optional(),
+        status: z.enum(['open', 'confirmed', 'changes_proposed']).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await getReviewCampaign(reviewDeps, toolContext(extra), args.campaignId, {
+            ...(args.assignedToMe ? { assignedToMe: true } : {}),
+            ...(args.status ? { status: args.status } : {}),
+          }),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_assign',
+    withOAuthSecurity({
+      description:
+        'Assign review items to a reviewer (email or user id; must be Contributor/Ehdottaja or above so they can propose changes). Give itemIds, or select by targetKind (organisation, service, channel) and/or organizationId; a selection only takes unassigned items unless reassign is true. Needs the Publisher role (Julkaisija) or above.',
+      inputSchema: {
+        campaignId: z.string().uuid(),
+        reviewer: z.string(),
+        itemIds: z.array(z.string().uuid()).optional(),
+        targetKind: z.enum(['organisation', 'service', 'channel']).optional(),
+        organizationId: z.string().uuid().optional(),
+        reassign: z.boolean().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await assignReviewItems(reviewDeps, toolContext(extra), {
+            campaignId: args.campaignId,
+            reviewer: args.reviewer,
+            ...(args.itemIds ? { itemIds: args.itemIds } : {}),
+            ...(args.targetKind ? { targetKind: args.targetKind } : {}),
+            ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+            ...(args.reassign ? { reassign: true } : {}),
+          }),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_my_items',
+    withOAuthSecurity({
+      description:
+        'Your open review items in open campaigns, with automated findings and linked proposals. For each: read it with ptv_review_get_item, check that the content is up to date and the proper channels are linked, then either confirm it or propose changes (reviewItemId) and send it on with ptv_review_complete_item.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    }),
+    async (_args, extra) => {
+      try {
+        return textResult(await listMyReviewItems(reviewDeps, toolContext(extra)));
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_get_item',
+    withOAuthSecurity({
+      description:
+        "One review item with the target's current PTV data, fresh automated checks and linked proposals. Contributor role (Ehdottaja) or above.",
+      inputSchema: { itemId: z.string().uuid() },
+      annotations: { readOnlyHint: true },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(await getReviewItem(reviewDeps, toolContext(extra), args.itemId));
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_complete_item',
+    withOAuthSecurity({
+      description:
+        "Record the reviewer's decision on a review item. confirmed: the content is up to date and the proper channels are linked, nothing to change (not allowed while linked proposals are pending). changes_proposed: sends the item to Publishers; needs at least one proposal made with this reviewItemId. Only the item's reviewer or a Publisher+. Call it only when the user has decided.",
+      inputSchema: {
+        itemId: z.string().uuid(),
+        decision: z.enum(['confirmed', 'changes_proposed']),
+        note: z.string().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await completeReviewItem(
+            reviewDeps,
+            toolContext(extra),
+            args.itemId,
+            args.decision,
+            args.note,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_reopen_item',
+    withOAuthSecurity({
+      description:
+        'Send a review item back to its reviewer (status open), e.g. when its proposals were rejected. Needs the Publisher role (Julkaisija) or above.',
+      inputSchema: { itemId: z.string().uuid(), note: z.string().optional() },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await reopenReviewItem(reviewDeps, toolContext(extra), args.itemId, args.note),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_attach_proposal',
+    withOAuthSecurity({
+      description:
+        "Attach an existing pending proposal to a review campaign item, e.g. a draft a Publisher made for a reviewer to check. The proposal must fit the item (its own service or channel; a service change that edits connections fits a channel's item; a new service or channel fits any item). A finished item is reopened, and the item's reviewer becomes a required reviewer of the proposal, so it can't be approved before they sign off. Your own proposal, or any as a Publisher (Julkaisija) or above. Proposing with reviewItemId does the same in one step.",
+      inputSchema: { itemId: z.string().uuid(), proposalId: z.string().uuid() },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await attachProposalToReviewItem(
+            reviewDeps,
+            toolContext(extra),
+            args.itemId,
+            args.proposalId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_review_close_campaign',
+    withOAuthSecurity({
+      description:
+        'Close a review campaign; its items stay as the record. Needs the Publisher role (Julkaisija) or above.',
+      inputSchema: { campaignId: z.string().uuid() },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await closeReviewCampaign(reviewDeps, toolContext(extra), args.campaignId),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);

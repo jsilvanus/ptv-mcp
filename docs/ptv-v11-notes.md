@@ -183,6 +183,37 @@ languages, service hours, addresses, URLs, phone numbers. One quirk: PTV
 may return `serviceHours` in a different order after a save; the content
 is unchanged.
 
+### Channel fields (mapped 2026-09-25, from the schema; needs live verification)
+
+The domain model now carries each channel type's structured fields
+(`src/ptv/domain.ts`), mapped in `src/ptv/v11/channelFields.ts`,
+`mappers/serviceChannel.ts` and `channelWriteMapping.ts`. The GET and In
+schemas differ in ways that were read from `swagger.json` and not yet
+confirmed live:
+
+- An EChannel's, WebPage's and Phone channel's address is `webPages` on
+  GET but `webPage` (a LanguageItem list) on In. Other types' `webPages`
+  are real web page lists.
+- A service location's emails come back as `supportEmails` on GET but
+  are written as `emails`. Its faxes come back in `phoneNumbers` with type
+  `Fax`, but are written to `faxNumbers` (V4VmOpenApiPhone has no type).
+- A delivery address's receiver is `receiver` on GET and `formReceiver` on
+  In. A foreign location address is `locationAbroad` on GET and
+  `foreignAddress` on In.
+- Service hour times come back as `HH:mm:ss`; the domain uses `HH:mm`.
+- An emptied list is written with its `deleteAll*` flag (PTV ignores an
+  empty list on PUT). A service location's emails have no such flag.
+- `POST /ServiceChannel/{type}` needs, per type: ServiceLocation
+  `addresses` and `displayNameType` (sent as Name per language version);
+  EChannel and WebPage `webPage` and `accessibilityClassification` (sent
+  as Unknown unless given); EChannel `requiresAuthentication`;
+  PrintableForm `channelUrls`. `services` connects the new channel to
+  services.
+
+Verify live, per type: read → PUT one structured field → read back (the
+other fields unchanged), and create one channel of each type in the test
+organisation.
+
 ### Errors
 
 A rejected write is a 400 whose body maps fields to messages

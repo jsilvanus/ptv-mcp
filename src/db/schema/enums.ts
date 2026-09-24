@@ -33,15 +33,16 @@ export const proposalStatusEnum = pgEnum('proposal_status', [
 
 /**
  * What a proposal does: update an existing service (the original and
- * default kind), create a new service, or update a service channel. The
- * proposal's `service_id` holds the target entity's id: the service or
- * channel, or for `service_create` the new service's id once applied
- * (empty until then).
+ * default kind), create a new service, update a service channel or create
+ * one. The proposal's `service_id` holds the target entity's id: the
+ * service or channel, or for `service_create`/`channel_create` the new
+ * entity's id once applied (empty until then).
  */
 export const proposalKindEnum = pgEnum('proposal_kind', [
   'service_update',
   'service_create',
   'channel_update',
+  'channel_create',
 ]);
 
 /** A required reviewer's sign-off (docs/roles-and-review-plan.md, step 5). */
@@ -49,4 +50,25 @@ export const reviewDecisionEnum = pgEnum('review_decision', [
   'pending',
   'approved',
   'changes_requested',
+]);
+
+/** A content review campaign: a full check of an organisation's PTV content. */
+export const reviewCampaignStatusEnum = pgEnum('review_campaign_status', ['open', 'closed']);
+
+/** What a review item points at in PTV. */
+export const reviewTargetKindEnum = pgEnum('review_target_kind', [
+  'organisation',
+  'service',
+  'channel',
+]);
+
+/**
+ * A review item's state: `open` until its reviewer decides, then
+ * `confirmed` (up to date, channels linked, nothing to change) or
+ * `changes_proposed` (sent to Publishers with linked proposals).
+ */
+export const reviewItemStatusEnum = pgEnum('review_item_status', [
+  'open',
+  'confirmed',
+  'changes_proposed',
 ]);

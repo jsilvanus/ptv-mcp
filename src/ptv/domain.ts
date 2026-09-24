@@ -75,6 +75,114 @@ export interface Service {
 export type ServiceChannelType =
   'EChannel' | 'Phone' | 'PrintableForm' | 'ServiceLocation' | 'WebPage';
 
+/** One localized value in a list that may hold several per language (e.g. emails). */
+export interface LanguageValue {
+  language: LanguageCode;
+  value: string;
+}
+
+/**
+ * A phone, text message or fax number. Normal numbers carry a country
+ * prefix (e.g. +358) and are written without the leading 0; Finnish
+ * service numbers (e.g. 020202) have no prefix.
+ */
+export interface PhoneNumber {
+  language: LanguageCode;
+  /** Phone channels and service locations; defaults to Phone. */
+  type?: 'Phone' | 'Sms' | 'Fax';
+  prefixNumber?: string;
+  number: string;
+  isFinnishServiceNumber?: boolean;
+  /** e.g. "Vaihde", "Asiakaspalvelu"; never a person's name. */
+  additionalInformation?: string;
+  /** Chargeable = normal call cost, Other = extra charge, FreeOfCharge = free. */
+  chargeType?: 'Chargeable' | 'FreeOfCharge' | 'Other';
+  chargeDescription?: string;
+}
+
+/** A named web link, e.g. a service location's own web page or an attachment. */
+export interface WebLink {
+  language: LanguageCode;
+  url: string;
+  name?: string;
+}
+
+export type Weekday =
+  'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+
+/** One opening time within a service hour: `from`/`to` as HH:mm. */
+export interface OpeningTime {
+  dayFrom: Weekday;
+  /** Only for OverMidnight hours ending on another day. */
+  dayTo?: Weekday;
+  from: string;
+  to: string;
+}
+
+/**
+ * Service hours (palveluajat). DaysOfTheWeek is the normal weekly
+ * schedule; Exceptional overrides it for a date range (isClosed for
+ * closures); OverMidnight spans days. Without openingTimes, isAlwaysOpen
+ * or isReservation (open by appointment) describe the hour.
+ */
+export interface ServiceHour {
+  type: 'DaysOfTheWeek' | 'Exceptional' | 'OverMidnight';
+  /** ISO date (YYYY-MM-DD); omit with validForNow for "until further notice". */
+  validFrom?: string;
+  validTo?: string;
+  validForNow?: boolean;
+  isClosed?: boolean;
+  isAlwaysOpen?: boolean;
+  isReservation?: boolean;
+  /** A short title such as "Kesäaika" (max 150 characters). */
+  additionalInformation?: LocalizedText;
+  openingTimes?: OpeningTime[];
+}
+
+/**
+ * A visiting address (service locations) or a delivery address (printable
+ * forms). `Street` addresses are what map services and Suomi.fi show;
+ * `Other` is coordinates plus a description for places without a street
+ * address; `Foreign` is free text abroad; `PostOfficeBox` and `NoAddress`
+ * (delivery instructions in text) only for delivery addresses.
+ */
+export interface ChannelAddress {
+  kind: 'Street' | 'Other' | 'Foreign' | 'PostOfficeBox' | 'NoAddress';
+  /** Service locations: a visiting address (default) or a postal address. */
+  purpose?: 'Visiting' | 'Postal';
+  street?: LocalizedText;
+  streetNumber?: string;
+  postalCode?: string;
+  /** Municipality code, e.g. 694 (read only; PTV derives it). */
+  municipality?: string;
+  postOfficeBox?: LocalizedText;
+  latitude?: string;
+  longitude?: string;
+  /** Helps the customer find the place, e.g. the entrance (max 150 characters). */
+  additionalInformation?: LocalizedText;
+  /** Foreign addresses, and NoAddress delivery instructions. */
+  text?: LocalizedText;
+  /** Delivery addresses only: who receives the form. */
+  receiver?: LocalizedText;
+}
+
+/** Accessibility assessment of an e-service or web page (saavutettavuus). */
+export type AccessibilityLevel =
+  'FullyCompliant' | 'PartiallyCompliant' | 'NonCompliant' | 'Unknown';
+
+/** A printable form file; one per language and file format. */
+export interface FormFile {
+  language: LanguageCode;
+  format: 'PDF' | 'DOC' | 'Excel';
+  url: string;
+}
+
+/**
+ * A service channel. The common fields are always present; the rest are
+ * optional because not every adapter or channel type carries them (see
+ * CHANNEL_TYPE_FIELDS in src/mcp/channelProposal.ts for which type uses
+ * which).
+ */
 export interface ServiceChannel {
   id: PtvContentId;
   sourceId?: string;
@@ -82,8 +190,38 @@ export interface ServiceChannel {
   channelType: ServiceChannelType;
   publishingStatus: PublishingStatus;
   names: LocalizedText;
+  /** Short summary shown in search results (max 150 characters). */
+  summaries?: LocalizedText;
   descriptions: LocalizedText;
+  /** Languages the channel serves customers in. */
   languages: LanguageCode[];
+  /** Whether other organisations may connect it to their services (default true). */
+  isVisibleForAll?: boolean;
+  /** EChannel and WebPage: the channel's address; Phone: an optional info page. */
+  urls?: LocalizedText;
+  /** Extra links (attachments, additional information pages; a service location's web pages). */
+  webPages?: WebLink[];
+  /** Phone and ServiceLocation. */
+  phoneNumbers?: PhoneNumber[];
+  /** ServiceLocation contact emails. */
+  emails?: LanguageValue[];
+  /** Käytön tuki: support contacts for using the channel (not ServiceLocation). */
+  supportPhones?: PhoneNumber[];
+  supportEmails?: LanguageValue[];
+  serviceHours?: ServiceHour[];
+  /** ServiceLocation visiting addresses. */
+  addresses?: ChannelAddress[];
+  /** PrintableForm: where to send the form, when the form doesn't say. */
+  deliveryAddresses?: ChannelAddress[];
+  /** PrintableForm: the form's own identifier, e.g. "LL 1". */
+  formIdentifiers?: LocalizedText;
+  formFiles?: FormFile[];
+  /** EChannel. */
+  requiresAuthentication?: boolean;
+  requiresSignature?: boolean;
+  signatureQuantity?: number;
+  /** EChannel and WebPage. */
+  accessibility?: AccessibilityLevel;
   modifiedAt?: string;
 }
 

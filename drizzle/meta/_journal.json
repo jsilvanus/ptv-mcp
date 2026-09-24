@@ -148,6 +148,20 @@
       "when": 1790265000000,
       "tag": "0021_proposal_reviewers",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790266000000,
+      "tag": "0022_review_campaigns",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790267000000,
+      "tag": "0023_proposal_kind_channel_create",
+      "breakpoints": true
     }
   ]
 }

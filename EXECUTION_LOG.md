@@ -1518,3 +1518,147 @@ Through the reconnected PTV-MCP connector (test environment, organisation
   +/− lists, and a per-language "Preview after approval" from the
   proposal's `proposed` (updates, new services and channels).
 - This completes docs/roles-and-review-plan.md steps 1–6.
+
+## 2026-09-24 — Guides, skills and AI-compliance rules served over MCP
+
+The DVV content guidelines (kehittajille.suomi.fi, "Sisällön tuottaminen
+Palvelutietovarantoon" and every page under it, plus "Palvelutietovarannon
+käyttöönotto" and "Työskentelyn organisointi") were crawled and condensed
+into guides. So were the EU AI Act Art. 50 rules (not postponed by the
+Digital Omnibus) and VM's generative AI guidance.
+
+- `guides/`: `getting-started-with-ptv.md`, `content-quality.md` (writing
+  rules plus a review checklist with `Q-*` check ids),
+  `api-credentials.md` and `ai-compliance.md`.
+- `skills/`: `ptv-mcp-admin/SKILL.md` and `ptv-mcp-workflow/SKILL.md`, in
+  Agent Skills format so they can also be installed as client skills.
+- `src/mcp/guides.ts` serves them in four ways:
+  - the read-only `ptv_get_guide` tool
+  - static `ptv-guide://{topic}` resources
+  - three prompts (`ptv_review_content`, `ptv_content_workflow`,
+    `ptv_admin_setup`)
+  - server `instructions` sent at initialize. They carry the
+    non-negotiables: no approve or apply without the user seeing the diff
+    and explicitly asking, no invented facts, no secrets, no personal
+    names.
+- The Dockerfile copies `guides/` and `skills/` into the runtime image,
+  because they are read at runtime rather than compiled.
+
+Known gaps:
+
+- `api-credentials.md` has no v12 key instructions yet. DVV is expected
+  to publish them around late October 2026. v11 is deliberately left
+  undocumented.
+- The quality checklist is guidance for the AI and the approver. The
+  `Q-*` checks aren't implemented in `ChangeValidator`.
+- Approval in chat still depends on the AI following the instructions.
+  The server can't tell whether a human or the model issued
+  `ptv_resolve_proposal`.
+
+## 2026-09-24 — Automated quality checks, review campaigns, "waiting for you"
+
+Plan: `docs/review-campaigns-plan.md`.
+
+- `src/quality/contentChecks.ts` makes the checkable `Q-*` rules of
+  `guides/content-quality.md` deterministic (errors vs heuristic
+  warnings). Its results appear:
+  - in `quality` on every propose result and on `ptv_get_proposal`
+    (shown on the web proposal page)
+  - from the new `ptv_check_quality` tool
+  - on each review item
+
+  The guide's section 9 now marks every check *auto* or *manual*, and the
+  workflow skill tells the AI to report the automated results as they are
+  and to hand-check only the manual items. The Finnish passive and
+  participial heuristics exclude common case-form false positives
+  (asioitaan, itsellään, tilanteessasi).
+- Review campaigns: migration `0022_review_campaigns` adds the
+  `review_campaigns` and `review_items` tables (RLS, grant), plus
+  `proposals.review_item_id`.
+  - Code: `src/reviews/reviewService.ts` (persistence) and
+    `src/reviews/reviewCampaigns.ts` (roles and rules).
+  - Nine `ptv_review_*` MCP tools and REST under
+    `/tenants/:id/review-campaigns` and `/review-items`.
+  - `reviewItemId` on the three propose tools.
+  - Web: a "Content review" page.
+- `ptv_my_tasks` / `GET /tenants/:id/my-tasks`: the pull-style inbox, also
+  shown as "Waiting for you" on the Content review page. MCP notifications
+  were considered and not used: the transport is stateless and clients
+  don't show notifications to users.
+- The skills now use the new role names.
+- Tests:
+  - `src/quality/contentChecks.test.ts`
+  - `src/routes/reviews.integration.test.ts`: the full campaign through
+    REST and MCP, and the inbox
+  - RLS coverage for both new tables
+
+Known gaps:
+
+- Checks cover only what the domain model maps: no instructions, channel
+  contact fields or opening hours yet.
+- The v11 adapter has no children query, so sub-organisations come from
+  the cached organisation catalogue.
+- Campaign start reads everything synchronously, which can be slow for
+  very large organisations.
+- The in-memory test adapter ignores `organizationId` filters.
+
+## 2026-09-25 — Full service channels, and Publisher drafts sent to reviewers
+
+- **Channel fields.** The domain `ServiceChannel` now carries:
+  - summaries and `isVisibleForAll`
+  - urls, web pages, phone numbers (Phone/Sms/Fax), emails, support
+    contacts
+  - service hours, visiting and postal addresses, delivery addresses
+  - form files and identifiers
+  - e-service authentication and signatures, and accessibility
+
+  All optional, so v12 and the fakes are unaffected. v11 reads and writes
+  them (`src/ptv/v11/channelFields.ts`). PUTs send only the changed lists,
+  and emptied lists go as `deleteAll*`. `CHANNEL_TYPE_FIELDS` limits each
+  type to its own fields.
+- **New channels.**
+  - `ptv_propose_new_channel` queues a `channel_create` proposal
+    (migration 0023). approve_and_apply POSTs `/ServiceChannel/{type}`
+    through the new `PtvAdapter.createChannel` and records the id;
+    approve_and_export leaves it for manual entry.
+  - `serviceIds` connects the new channel on create.
+  - `CreateChannel` is audited.
+- **Validation and checks.**
+  - `src/validation/channelRules.ts` adds PTV's hard rules: phone
+    format, URLs (and `tunnistautuminen.suomi.fi`), service hours,
+    addresses, the required fields per type, and summary length.
+  - `checkChannel` adds channel summaries and guideline warnings: prices
+    of extra-charge numbers, several numbers without additional info, a
+    service location without a street address, ended exceptional hours,
+    untitled parallel schedules, and e-service accessibility.
+  - The guide's Q-CONTACT-1 and Q-HOURS-1 are now marked mostly/partly
+    auto.
+- **Publisher drafts in review campaigns.**
+  - `ptv_review_attach_proposal` (and REST `…/review-items/:id/attach`,
+    plus an Attach field in the web UI) attaches a pending proposal to an
+    item.
+  - Proposing with `reviewItemId` does the same.
+  - A finished item reopens, and the item's reviewer becomes a required
+    reviewer of the draft.
+  - A service change that edits connections can answer a channel's item.
+- **Web.** The proposal preview shows channel fields (`ChannelDetails`),
+  and there is a "New channel" proposal kind.
+- **Tests.**
+  - Unit: v11 channel read/write mapping, the channel validation rules,
+    the channel checks.
+  - Integration: a Publisher's draft channel goes to the reviewer, waits
+    for their sign-off, and a second Publisher applies it (four-eyes); an
+    existing proposal is attached over REST; a wrong-type field is
+    refused.
+
+Known gaps:
+
+- The channel mapping follows the v11 schema and is **not verified
+  live**. `docs/ptv-v11-notes.md` lists what to check.
+- Not yet written:
+  - channel areas (they inherit from the services)
+  - e-service attachments
+  - accessibility statement links
+  - a service location's alternative name and entrances
+- A service's instructions (toimintaohjeet) are still not in the domain
+  model.

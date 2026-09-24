@@ -105,6 +105,7 @@ function fakeProposalService() {
         correlationId: input.correlationId,
         resolvedByUserId: null,
         resolvedAt: null,
+        reviewItemId: input.reviewItemId ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

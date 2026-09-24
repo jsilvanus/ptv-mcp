@@ -194,6 +194,39 @@ A mismatched `resource`/audience between two `OAuthService` instances
 verification — `npm run mcp:token` (`src/mcp/token.ts`) had exactly this
 bug until the same fix.
 
+### Guides, skills and server instructions
+
+`src/mcp/guides.ts` serves the Markdown in `guides/` and `skills/*/SKILL.md`
+(read at runtime from the repo root, so the Dockerfile copies both
+directories) as the `ptv_get_guide` tool, `ptv-guide://` resources, prompts
+and the server's `instructions`. `guides/content-quality.md` condenses
+DVV's kehittajille.suomi.fi content guidelines; its `Q-*` checklist IDs
+are referenced by the prompts and tests. Keep them stable, and update the
+guides rather than hard-coding PTV writing rules in tool descriptions.
+
+### Automated quality checks, review campaigns and the inbox
+
+`src/quality/contentChecks.ts` is the deterministic implementation of the
+`Q-*` checks marked *auto* in `guides/content-quality.md`; proposals,
+review items and `ptv_check_quality` all use it, so change rules there (and
+the guide's markers) rather than in prompts. Review campaigns
+(`src/reviews/`, `docs/review-campaigns-plan.md`) turn an organisation's
+published content into review items that reviewers confirm or answer with
+proposals linked by `proposals.review_item_id`. `ptv_my_tasks`
+(`src/mcp/myTasks.ts`) is the pull-style inbox: the stateless MCP
+transport has no channel for push notifications.
+
+### Service channels
+
+`ServiceChannel` (`src/ptv/domain.ts`) carries each type's structured
+fields (addresses, phone numbers, emails, URLs, service hours, form files,
+accessibility). `CHANNEL_TYPE_FIELDS` (`src/mcp/channelProposal.ts`) says
+which type writes which. v11 maps them in `src/ptv/v11/channelFields.ts`;
+the GET and In shapes differ (see `docs/ptv-v11-notes.md`, "Channel
+fields"). `validateChannel` (`src/validation/channelRules.ts`) holds PTV's
+hard rules, and `checkChannel` the guideline warnings. New channels are
+`channel_create` proposals (`src/mcp/newChannelProposal.ts`).
+
 ### Everything else
 
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —

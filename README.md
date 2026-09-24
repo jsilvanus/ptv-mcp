@@ -15,6 +15,17 @@ implementation progress against the phase plan — both adapters
 (`PtvV11Adapter`, `PtvV12Adapter`) are live side by side today; see
 `PLAN.md`'s Phase 9 entry for the current state and known gaps.
 
+## Guides and skills
+
+`guides/` holds the PTV content-production rules condensed from DVV's
+guidelines (`content-quality.md`, with a review checklist), PTV onboarding
+(`getting-started-with-ptv.md`), API credentials (`api-credentials.md`)
+and the AI-compliance rules (`ai-compliance.md`). `skills/` holds the
+`ptv-mcp-admin` and `ptv-mcp-workflow` skills. The MCP serves all of them
+through the `ptv_get_guide` tool, `ptv-guide://{topic}` resources and the
+`ptv_review_content` / `ptv_content_workflow` / `ptv_admin_setup` prompts
+(`src/mcp/guides.ts`).
+
 ## Local development
 
 Requires Node.js 22+ and a PostgreSQL 16 instance.

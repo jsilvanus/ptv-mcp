@@ -14,3 +14,4 @@ export * from './emailVerificationToken.js';
 export * from './passwordResetToken.js';
 export * from './proposalComment.js';
 export * from './proposalReviewer.js';
+export * from './reviewCampaign.js';

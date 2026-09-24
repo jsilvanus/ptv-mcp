@@ -1,3 +1,4 @@
+import { checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyServiceChangeResult, NewService } from '../ptv/adapter.js';
 import type { Service } from '../ptv/domain.js';
@@ -51,6 +52,8 @@ export interface QueuedNewServiceResult {
   correlationId: string;
   proposalId: string;
   status: ProposalStatus;
+  /** Automated content checks on the proposed service. */
+  quality: QualityReport;
 }
 
 /**
@@ -66,6 +69,7 @@ export async function queueNewServiceProposal(
   ctx: ToolContext,
   input: Partial<Service>,
   correlationId?: string,
+  reviewItemId?: string,
 ): Promise<QueuedNewServiceResult> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposed = normalizeNewService(input);
@@ -89,6 +93,7 @@ export async function queueNewServiceProposal(
     changes: proposed,
     queuedDiff: diff,
     correlationId: auditEntry.correlationId,
+    ...(reviewItemId ? { reviewItemId } : {}),
   });
   return {
     proposed,
@@ -97,6 +102,7 @@ export async function queueNewServiceProposal(
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
+    quality: checkService(proposed),
   };
 }
 
