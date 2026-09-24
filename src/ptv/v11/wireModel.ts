@@ -49,7 +49,8 @@ export interface V11PagedList<T> {
   pageNumber: number;
   pageSize: number;
   pageCount: number;
-  itemList: T[];
+  /** null, not [], when the list is empty (seen live for organisations without services). */
+  itemList: T[] | null;
 }
 
 export interface V11IdNamePair {

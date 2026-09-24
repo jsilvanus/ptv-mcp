@@ -14,10 +14,10 @@ export async function fetchAllIdNamePairs(
   listPath: string,
 ): Promise<V11IdNamePair[]> {
   const firstPage = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page: 1 });
-  const items = [...firstPage.itemList];
+  const items = [...(firstPage.itemList ?? [])];
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
     const result = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page });
-    items.push(...result.itemList);
+    items.push(...(result.itemList ?? []));
   }
   return items;
 }
@@ -68,7 +68,10 @@ export async function fetchIdWindow(
       pageResult = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page: v11Page });
     }
 
-    const slice = pageResult.itemList.slice(offsetInPage, offsetInPage + (count - ids.length));
+    const slice = (pageResult.itemList ?? []).slice(
+      offsetInPage,
+      offsetInPage + (count - ids.length),
+    );
     ids.push(...slice.map((item) => item.id));
 
     if (v11Page >= pageResult.pageCount) break;
@@ -100,13 +103,13 @@ export async function fetchOrganizationServiceWindow(
     { organizationId, page: 1 },
   );
 
-  const items = [...firstPage.itemList];
+  const items = [...(firstPage.itemList ?? [])];
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
     const result = await client.get<V11PagedList<V11ServiceWire>>(
       '/api/v11/Service/list/organization',
       { organizationId, page },
     );
-    items.push(...result.itemList);
+    items.push(...(result.itemList ?? []));
   }
 
   return { items, totalCount: items.length };
@@ -126,13 +129,13 @@ export async function fetchOrganizationServiceChannelWindow(
     { organizationId, page: 1 },
   );
 
-  const items = [...firstPage.itemList];
+  const items = [...(firstPage.itemList ?? [])];
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
     const result = await client.get<V11PagedList<V11ServiceChannelWire>>(
       '/api/v11/ServiceChannel/list/organization',
       { organizationId, page },
     );
-    items.push(...result.itemList);
+    items.push(...(result.itemList ?? []));
   }
 
   return { items, totalCount: items.length };
@@ -146,13 +149,13 @@ export async function fetchOrganizationServiceCollectionWindow(
     '/api/v11/ServiceCollection/organization',
     { organizationId, page: 1 },
   );
-  const summaries = [...firstPage.itemList];
+  const summaries = [...(firstPage.itemList ?? [])];
   for (let page = 2; page <= firstPage.pageCount; page += 1) {
     const result = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>(
       '/api/v11/ServiceCollection/organization',
       { organizationId, page },
     );
-    summaries.push(...result.itemList);
+    summaries.push(...(result.itemList ?? []));
   }
 
   // The organization endpoint returns V10VmOpenApiServiceCollectionItem,

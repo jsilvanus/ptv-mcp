@@ -49,16 +49,23 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
 }
 
 /**
- * Automated content checks on a proposal's `proposed` entity. Channel
- * proposals don't know the channel's connections, so Q-STRUCT-5 is left
- * to the review item and ptv_check_quality.
+ * Automated content checks on a proposal's `proposed` entity. A channel
+ * update doesn't know the channel's connections, so its Q-STRUCT-5 is left
+ * to the review item and ptv_check_quality; a new channel is connected to
+ * exactly its `serviceIds`.
  */
 export function proposedQuality(
   kind: ProposalKind,
   proposed: Service | NewService | ServiceChannel | null,
 ): QualityReport | null {
   if (!proposed) return null;
-  return kind === 'channel_update' || kind === 'channel_create'
+  if (kind === 'channel_create') {
+    const serviceIds = (proposed as { serviceIds?: string[] }).serviceIds;
+    return checkChannel(proposed as ServiceChannel, {
+      connectedServiceCount: serviceIds?.length ?? 0,
+    });
+  }
+  return kind === 'channel_update'
     ? checkChannel(proposed as ServiceChannel)
     : checkService(proposed as Service | NewService);
 }

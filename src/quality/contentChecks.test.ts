@@ -252,6 +252,59 @@ describe('checkChannel: channel fields', () => {
   });
 });
 
+describe('checkChannel: exceptional hours and short numbers', () => {
+  const base = { summaries: { fi: 'Kerhotilat ja virasto samassa talossa.' } };
+
+  it('treats a past single-day exceptional hour as ended and asks for a date and title', () => {
+    const result = checkChannel(
+      channel({
+        ...base,
+        serviceHours: [
+          { type: 'Exceptional', validFrom: '2025-12-24', isClosed: true },
+          { type: 'Exceptional', isClosed: true, additionalInformation: { fi: 'Remontti' } },
+          {
+            type: 'Exceptional',
+            validFrom: '2026-12-24',
+            isClosed: true,
+            additionalInformation: { fi: 'Jouluaatto' },
+          },
+        ],
+      }),
+      { today: '2026-09-24' },
+    );
+    const messages = result.findings.map((f) => f.message);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('ended on 2025-12-24'),
+        expect.stringContaining('(2025-12-24) has no title'),
+        expect.stringContaining('has no date'),
+      ]),
+    );
+    // The titled future closing is fine.
+    expect(messages.filter((m) => m.includes('2026-12-24'))).toEqual([]);
+  });
+
+  it('warns about implausibly short numbers but not national service numbers', () => {
+    const result = checkChannel(
+      channel({
+        ...base,
+        phoneNumbers: [
+          { language: 'fi', prefixNumber: '+358', number: '1', additionalInformation: 'A' },
+          {
+            language: 'fi',
+            number: '0201',
+            isFinnishServiceNumber: true,
+            additionalInformation: 'B',
+          },
+        ],
+      }),
+    );
+    const short = result.findings.filter((f) => f.message.includes('too short'));
+    expect(short).toHaveLength(1);
+    expect(short[0]!.message).toMatch(/^1:/);
+  });
+});
+
 describe('classificationCode', () => {
   it('reads the code from `code` or the uri', () => {
     expect(classificationCode({ code: 'KR1', names: {} })).toBe('KR1');

@@ -442,14 +442,16 @@ field, language and a suggested fix) or `N/A` for each item.
 - `Q-LANG-2` (*auto: every language version has name, summary and description*): The language versions match each other in content, and all
   of them are published or intentionally drafted.
 - `Q-CONTACT-1` (*mostly auto*: number and URL formats are validation
-  errors; extra-charge numbers without a price, several numbers without
-  additional info, a service location without a street address and an
+  errors; implausibly short numbers, extra-charge numbers without a
+  price, several numbers without additional info, a service location
+  without a street address and an
   e-service without accessibility info are warnings; personal names stay
   manual): phone numbers have no leading 0, include a price type and any
   extra cost in words, and have no personal names in additional info.
   URLs start with http(s):// and aren't `tunnistautuminen.suomi.fi`.
 - `Q-HOURS-1` (*partly auto*: the time format is a validation error; ended
-  exceptional hours and untitled parallel weekly schedules are warnings):
+  hours, exceptional hours without a date or title, and untitled parallel
+  weekly schedules are warnings):
   the times are right, holiday hours are checked for the current church
   and calendar year, and exceptional hours have a clear title. In the MCP,
   times are written `HH:mm` (PTV's UI shows `12.00`).

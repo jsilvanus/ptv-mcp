@@ -1678,3 +1678,43 @@ Known gaps:
   - `openWorldHint: true`: tools that call PTV.
 - Clients group tools by `readOnlyHint` and can ask for confirmation
   before destructive tools.
+
+## 2026-09-24 — Live test of guides, quality checks, review campaigns and channels
+
+Tested through the deployed MCP in PTV's test environment, as a Tenant Admin.
+
+Worked as intended:
+- the guides, as the `ptv_get_guide` tool and as `ptv-guide://` resources;
+- `ptv_my_tasks` (empty, then with review items, a four-eyes proposal and
+  campaign progress);
+- `ptv_check_quality` on services and channels. It found opening hours in
+  a description, a summary repeating the name, passive voice, long
+  paragraphs, unconnected channels and several numbers without
+  additional info;
+- the v11 channel read mapping for all five types: addresses (visiting
+  and postal), phone numbers, web pages, URLs, support emails, weekly and
+  exceptional hours, accessibility and authentication;
+- the review campaign cycle. The tools covered were start, list, get,
+  assign (the error lists possible reviewers), my items, get item,
+  complete, reopen, attach and close. The complete guards held: an item
+  can't be confirmed with a pending linked proposal, and "changes
+  proposed" is refused without one;
+- channel proposals with `reviewItemId`, on structured fields (phone
+  numbers, weekly and exceptional hours) and for a new channel. None was
+  approved or applied.
+
+Fixed after the test:
+- **Campaigns with sub-organisations failed** ("firstPage.itemList is not
+  iterable"). v11 returns `itemList: null` for an organisation without
+  services or channels. The pagination helpers now treat it as empty.
+- Q-HOURS-1 missed a past single-day exceptional hour (it has only
+  `validFrom`). It now also warns about exceptional hours without a date
+  or a title.
+- Q-CONTACT-1 now warns about implausibly short numbers. The test data
+  had a number "1", which PTV accepts.
+- A new-channel proposal without `serviceIds` now gets Q-STRUCT-5.
+- The ai-compliance guide now lists `ptv_propose_new_channel`.
+
+Still to verify live: approving and applying channel field changes and a
+channel create. Four-eyes needs a second member, or an explicit
+decision to apply.
