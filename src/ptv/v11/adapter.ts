@@ -451,7 +451,11 @@ export class PtvV11Adapter implements PtvAdapter {
     if (current.publishingStatus === 'Modified') {
       throw new V11ModifiedVersionLockedError(proposal.serviceId);
     }
-    const body = serviceChangesToV11Body(proposal.changes, current);
+    const body = serviceChangesToV11Body(
+      proposal.changes,
+      current,
+      await this.generalDescriptionUris(current.generalDescriptionId),
+    );
     const updated = await this.client.put<V11ServiceWire>(
       `/api/v11/Service/${proposal.serviceId}`,
       body,
@@ -479,6 +483,24 @@ export class PtvV11Adapter implements PtvAdapter {
       publishingStatus: toPublishingStatus(created.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
+  }
+
+  /** Classification URIs a linked general description brings (see serviceChangesToV11Body). */
+  private async generalDescriptionUris(id: string | null | undefined): Promise<Set<string>> {
+    if (!id) return new Set();
+    const wire = await this.getOrNull<V11GeneralDescriptionWire>(
+      `/api/v11/GeneralDescription/${id}`,
+    );
+    const lists = [
+      wire?.serviceClasses,
+      wire?.ontologyTerms,
+      wire?.targetGroups,
+      wire?.lifeEvents,
+      wire?.industrialClasses,
+    ];
+    return new Set(
+      lists.flatMap((items) => (items ?? []).map((item) => item.uri).filter((uri) => !!uri)),
+    ) as Set<string>;
   }
 
   /** Connections are written through their own endpoint, after the service PUT. */
