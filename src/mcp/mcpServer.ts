@@ -23,6 +23,7 @@ import { validateChanges } from './validateChanges.js';
 import { applyChanges, exportForManualPublish, ValidationFailedError } from './applyOrExport.js';
 import type { ReadToolContext, ToolContext } from './toolContext.js';
 import { registerGuides, SERVER_INSTRUCTIONS } from './guides.js';
+import { useToolMetadata } from './toolAnnotations.js';
 import { checkQuality } from './qualityTools.js';
 import { listMyTasks } from './myTasks.js';
 import { ReviewService, type ReviewItemView } from '../reviews/reviewService.js';
@@ -280,6 +281,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     { name: 'ptv-mcp', version: '0.1.0' },
     { instructions: SERVER_INSTRUCTIONS },
   );
+  useToolMetadata(server);
   registerGuides(server);
 
   server.registerTool(
@@ -998,7 +1000,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         "Everything waiting for you in this organisation and environment: review items assigned to you, proposals waiting for your sign-off, and for Approvers and above every suggested change that still needs review, resolving or (Publisher+) publishing in PTV, each with its readiness; Publishers also get open review campaigns' progress. Call it at the start of a session and tell the user the `summary` lines. Contributor role (Ehdottaja) or above.",
       inputSchema: {},
-      annotations: { readOnlyHint: true },
     }),
     async (_args, extra) => {
       try {
@@ -1020,7 +1021,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         kind: z.enum(['service', 'channel']),
         id: z.string(),
       },
-      annotations: { readOnlyHint: true },
     }),
     async (args, extra) => {
       try {
@@ -1067,7 +1067,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'List review campaigns with progress (items open, confirmed, changes proposed, unassigned). Contributor role (Ehdottaja) or above.',
       inputSchema: {},
-      annotations: { readOnlyHint: true },
     }),
     async (_args, extra) => {
       try {
@@ -1088,7 +1087,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         assignedToMe: z.boolean().optional(),
         status: z.enum(['open', 'confirmed', 'changes_proposed']).optional(),
       },
-      annotations: { readOnlyHint: true },
     }),
     async (args, extra) => {
       try {
@@ -1142,7 +1140,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         'Your open review items in open campaigns, with automated findings and linked proposals. For each: read it with ptv_review_get_item, check that the content is up to date and the proper channels are linked, then either confirm it or propose changes (reviewItemId) and send it on with ptv_review_complete_item.',
       inputSchema: {},
-      annotations: { readOnlyHint: true },
     }),
     async (_args, extra) => {
       try {
@@ -1159,7 +1156,6 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         "One review item with the target's current PTV data, fresh automated checks and linked proposals. Contributor role (Ehdottaja) or above.",
       inputSchema: { itemId: z.string().uuid() },
-      annotations: { readOnlyHint: true },
     }),
     async (args, extra) => {
       try {

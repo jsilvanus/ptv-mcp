@@ -116,7 +116,6 @@ export function registerGuides(server: McpServer): void {
     {
       description: `Read one of ptv-mcp's guides. Topics: ${GUIDE_TOPICS.map((t) => `${t} (${GUIDES[t].title})`).join('; ')}. Read content-quality before drafting or reviewing PTV content, and ai-compliance before any approval.`,
       inputSchema: { topic: z.enum(GUIDE_TOPICS) },
-      annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ topic }): Promise<CallToolResult> => ({
       content: [{ type: 'text', text: readGuide(topic) }],
