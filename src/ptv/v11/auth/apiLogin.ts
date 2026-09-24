@@ -8,15 +8,18 @@ import type { PtvEnvironment } from '../../adapter.js';
  *
  * - production: POST palveluhallinta.suomi.fi/api/auth/api-login
  *   `{username, password, apiUserOrganisation?}` → `{serviceToken}`
- * - test ("asiakastestiympäristö"): POST palvelutietovaranto.trn.suomi.fi/connect/token
- *   `{username, password}` → `{ptvToken}`; a test token is bound to one
- *   organisation and has no apiUserOrganisation.
+ * - test ("asiakastestiympäristö"): POST palvelutietovaranto.trn.suomi.fi/api/auth/api-login
+ *   `{username, password}`; a test token is bound to one organisation and
+ *   has no apiUserOrganisation. DVV's page documents `/connect/token`
+ *   instead, but that endpoint expects a form body and answers our JSON
+ *   with HTTP 500 (verified 2026-09-24); `/api/auth/api-login` accepts JSON
+ *   there too. The response field may be `serviceToken` or `ptvToken`.
  *
  * See docs/ptv-v11-notes.md and docs/ptv-test-environment.md.
  */
 export const V11_API_LOGIN_URLS: Record<PtvEnvironment, string> = {
   production: 'https://palveluhallinta.suomi.fi/api/auth/api-login',
-  test: 'https://palvelutietovaranto.trn.suomi.fi/connect/token',
+  test: 'https://palvelutietovaranto.trn.suomi.fi/api/auth/api-login',
 };
 
 export interface V11ApiUserCredentials {
