@@ -157,6 +157,15 @@ describe('serviceChangesToV11Body', () => {
         expect(body.serviceClasses).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v1105']);
       });
 
+      it("keeps a list whole when every entry is also the general description's", () => {
+        const body = serviceChangesToV11Body(
+          { generalDescriptionId: null as unknown as string },
+          linked,
+          new Set([...inherited, 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001']),
+        );
+        expect(body.targetGroups).toEqual(['http://urn.fi/URN:NBN:fi:au:ptvl:v2001']);
+      });
+
       it('keeps inherited entries out of a list the change sends', () => {
         const body = serviceChangesToV11Body(
           {
