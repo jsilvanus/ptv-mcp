@@ -5,6 +5,7 @@ import type {
 } from '../credentials/tenantEnvironmentService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import type { Database } from '../db/client.js';
+import type { AuditService } from '../audit/auditService.js';
 import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
 import {
   fetchV11ApiToken,
@@ -26,6 +27,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export interface PtvV11ApiUserRoutesOptions {
   tenantEnvironmentService: TenantEnvironmentService;
   adapterConfigService: PtvAdapterConfigService;
+  auditService: AuditService;
   db: Database;
   jwtSecret: string;
   /** Tests inject a fake PTV login endpoint. */
@@ -94,6 +96,11 @@ export async function ptvV11ApiUserRoutes(
         return reply.badRequest('organisationId must be a PTV organisation id (UUID)');
       }
 
+      const previous = parseV11ApiUserCredentials(
+        await options.tenantEnvironmentService
+          .getDecryptedCredentials(tenantId, environment, 'v11')
+          .catch(() => undefined),
+      );
       await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v11', {
         username: username.trim(),
         password,
@@ -106,6 +113,23 @@ export async function ptvV11ApiUserRoutes(
         supportsRead: true,
         supportsWrite: true,
         supportsDraftRead: false,
+      });
+      // Who changed which API user; never the password.
+      await options.auditService.record({
+        tenantId,
+        userId: request.userId ?? null,
+        action: 'SetPtvV11ApiUser',
+        resourceType: 'TenantEnvironment',
+        resourceId: `${environment}/v11`,
+        apiVersion: 'v11',
+        environment,
+        beforeState: previous ? { username: previous.username } : null,
+        afterState: {
+          username: username.trim(),
+          apiUserOrganisation: apiUserOrganisation?.trim() || null,
+          organisationId: organisationId?.toLowerCase() ?? null,
+        },
+        result: previous ? 'Replaced' : 'Created',
       });
 
       return reply.code(204).send();

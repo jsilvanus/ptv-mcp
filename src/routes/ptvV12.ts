@@ -1,3 +1,4 @@
+import type { AuditService } from '../audit/auditService.js';
 import type { FastifyInstance } from 'fastify';
 import type {
   TenantEnvironmentService,
@@ -16,6 +17,7 @@ interface ConfigBody {
 export interface PtvV12RoutesOptions {
   tenantEnvironmentService: TenantEnvironmentService;
   adapterConfigService: PtvAdapterConfigService;
+  auditService: AuditService;
   db: Database;
   jwtSecret: string;
 }
@@ -59,6 +61,10 @@ export async function ptvV12Routes(
         return reply.badRequest('apiKey is required');
       }
 
+      const hadKey = await options.tenantEnvironmentService
+        .getDecryptedCredentials(tenantId, environment, 'v12')
+        .then(() => true)
+        .catch(() => false);
       await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v12', {
         apiKey: apiKey.trim(),
       });
@@ -68,6 +74,17 @@ export async function ptvV12Routes(
         supportsRead: true,
         supportsWrite: false,
         supportsDraftRead: false,
+      });
+      // The key itself is never logged.
+      await options.auditService.record({
+        tenantId,
+        userId: request.userId ?? null,
+        action: 'SetPtvV12ApiKey',
+        resourceType: 'TenantEnvironment',
+        resourceId: `${environment}/v12`,
+        apiVersion: 'v12',
+        environment,
+        result: hadKey ? 'Replaced' : 'Created',
       });
 
       return reply.code(204).send();

@@ -141,12 +141,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(ptvV12Routes, {
     tenantEnvironmentService,
     adapterConfigService,
+    auditService,
     db,
     jwtSecret: config.jwtSecret,
   });
   await app.register(ptvV11ApiUserRoutes, {
     tenantEnvironmentService,
     adapterConfigService,
+    auditService,
     db,
     jwtSecret: config.jwtSecret,
   });

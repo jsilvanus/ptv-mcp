@@ -66,6 +66,45 @@ describe('ptv v11 API user routes', () => {
     return { token, tenantId };
   }
 
+  async function credentialAuditEntries(tenantId: string) {
+    const rows = await withContext(db, { tenantId }, async (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.tenantId, tenantId)),
+    );
+    return rows.filter((row) => row.resourceType === 'TenantEnvironment');
+  }
+
+  it('audits credential changes (v11 API user and v12 API key) without the secrets', async () => {
+    const { token, tenantId } = await adminWithTenant();
+    const headers = { authorization: `Bearer ${token}` };
+    for (const password of ['first-pw', 'second-pw']) {
+      const put = await app.inject({
+        method: 'PUT',
+        url: `/tenants/${tenantId}/ptv/v11/api-user`,
+        headers,
+        payload: { environment: 'test', username: 'API15', password },
+      });
+      expect(put.statusCode).toBe(204);
+    }
+    const v12 = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/ptv/v12`,
+      headers,
+      payload: { environment: 'test', apiKey: 'secret-api-key' },
+    });
+    expect(v12.statusCode).toBe(204);
+
+    const audited = await credentialAuditEntries(tenantId);
+    expect(audited.map((row) => [row.action, row.result, row.beforeState]).sort()).toEqual([
+      ['SetPtvV11ApiUser', 'Created', null],
+      ['SetPtvV11ApiUser', 'Replaced', { username: 'API15' }],
+      ['SetPtvV12ApiKey', 'Created', null],
+    ]);
+    const serialized = JSON.stringify(audited);
+    for (const secret of ['first-pw', 'second-pw', 'secret-api-key']) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
   it('stores the API user, enables tenant-scoped v11 writes, and never returns the password', async () => {
     const { token, tenantId } = await adminWithTenant();
     const headers = { authorization: `Bearer ${token}` };
@@ -82,6 +121,21 @@ describe('ptv v11 API user routes', () => {
       },
     });
     expect(put.statusCode).toBe(204);
+
+    const audited = await credentialAuditEntries(tenantId);
+    expect(audited).toEqual([
+      expect.objectContaining({
+        action: 'SetPtvV11ApiUser',
+        resourceId: 'test/v11',
+        result: 'Created',
+        afterState: {
+          username: 'API1@testi.fi',
+          apiUserOrganisation: null,
+          organisationId: 'ae788356-6950-48fc-b3ff-63243f74fe53',
+        },
+      }),
+    ]);
+    expect(JSON.stringify(audited)).not.toContain('pw-123');
 
     const config = await new PtvAdapterConfigService(db).get(tenantId, 'test', 'v11');
     expect(config).toMatchObject({
