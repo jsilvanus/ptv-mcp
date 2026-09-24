@@ -1402,3 +1402,10 @@ process.
   The public test passwords are linked (DVV's XLSX), not copied.
 - Known gap: credential changes on these routes (and the v12 API-key routes)
   aren't audited yet.
+
+## 2026-09-24 — v12 write auth: API key + token (DVV email)
+
+DVV told us by email that v12 writes identify the *integration* with the API key and the
+*user/organisation* with a token. Recorded in `docs/ptv-v12-notes.md`
+("v12 write auth") with the design consequences. No code changes; v12
+write goes to beta in October 2026.
