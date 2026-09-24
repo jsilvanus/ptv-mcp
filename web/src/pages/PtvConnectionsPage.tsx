@@ -18,6 +18,8 @@ export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
 
 const ENVIRONMENTS: PtvEnvironment[] = ['test', 'production'];
 
+const HAS_TEST_API_ACCOUNTS = Object.keys(PTV_TEST_API_ACCOUNTS).length > 0;
+
 export function PtvConnectionsPage() {
   const [connections, setConnections] = useState<ConnectionStatus[]>([]);
   const [v12Connections, setV12Connections] = useState<PtvV12ConnectionStatus[]>([]);
@@ -343,11 +345,18 @@ export function PtvConnectionsPage() {
               aria-label="Test organisation"
             >
               <option value="">Pick a test organisation…</option>
-              {PTV_TEST_ORGANISATIONS.map((organisation) => (
-                <option key={organisation.id} value={organisation.id}>
-                  {organisation.name} ({organisation.type})
-                </option>
-              ))}
+              {PTV_TEST_ORGANISATIONS.map((organisation) => {
+                // Only organisations with a configured API account can be
+                // picked; if none are configured, all stay open for manual entry.
+                const unavailable =
+                  HAS_TEST_API_ACCOUNTS && !PTV_TEST_API_ACCOUNTS[organisation.id];
+                return (
+                  <option key={organisation.id} value={organisation.id} disabled={unavailable}>
+                    {organisation.name} ({organisation.type})
+                    {unavailable ? ' — no API account configured' : ''}
+                  </option>
+                );
+              })}
             </select>
           )}
           <input

@@ -32,8 +32,9 @@ truth. Each organisation has:
 
 The web UI's test organisation picker fills in the API username and password
 from `PTV_TEST_API_ACCOUNTS` in `web/src/ptv/testOrganisations.ts`, keyed by
-organisation id. Add a row for each organisation from DVV's list; an
-organisation without a row falls back to manual entry.
+organisation id. Add a row for each organisation from DVV's list. Only
+organisations with a row can be picked; while the table is empty, all are
+selectable and the credentials are typed in by hand.
 
 A test-environment token is bound to exactly one organisation (no
 `apiUserOrganisation`), so an API user can only write to its own
