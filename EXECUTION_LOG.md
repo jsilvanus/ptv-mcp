@@ -1786,3 +1786,16 @@ page. These paths are both web UI pages and API routes.
 - The web app's own API calls use fetch's default Accept (`*/*`), so they
   still reach the API. If no index is available, the request falls
   through to the API.
+
+## 2026-09-24 — Readable structured fields in the proposal diff
+
+The Proposal queue's diff table showed phone numbers, service hours,
+addresses, emails, web pages, form files, URLs and yes/no fields as raw
+JSON. It only formatted text and classification lists.
+
+- The formatters from `ChannelDetails` moved into
+  `web/src/pages/fieldFormat.ts`, and now `DiffView` and `ChannelDetails`
+  share them.
+- Weekday entries are grouped into ranges ("ma–pe 09:00–20:00").
+- Exceptional hours show their type and title.
+- Language-keyed values show one line per language.
