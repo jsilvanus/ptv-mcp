@@ -1744,3 +1744,19 @@ decision to apply.
 - **Q-STRUCT-5** is a warning, with the next step, on new-service and
   new-channel proposals. They are created one at a time and linked after.
   It stays an error on published content.
+
+## 2026-09-24 — Live test of writes and manual publishing
+
+Four-eyes was switched off in the test tenant for this test.
+
+- **Manual publishing.** The exported Testimonitoimitalo proposal
+  (`ed200e44`) shows its `manualPublish` sheet. The weekly hours compare
+  equal ("ma–pe 9.00–20.00, la–su 9.00–22.00"), so the sheet lists only
+  the phone info and the new Christmas closure. It is left `approved` for
+  a person to try the manual flow in PTV and confirm.
+- **`approve_and_apply`, channel update** (`8ed80c58`, a WebPage summary):
+  applied. It re-diffs empty right after the write.
+- **`approve_and_apply`, channel create** (`7f1c6398`, a Phone channel):
+  created `f937ac35-3779-4412-b6da-8d80b721d20a` as a Draft. Read back,
+  every field matches, and the Mon–Fri range was stored as five day
+  entries. It is a test channel ("Älä julkaise") and can be archived.

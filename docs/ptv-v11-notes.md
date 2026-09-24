@@ -183,7 +183,17 @@ languages, service hours, addresses, URLs, phone numbers. One quirk: PTV
 may return `serviceHours` in a different order after a save; the content
 is unchanged.
 
-### Channel fields (mapped 2026-09-25, from the schema; needs live verification)
+### Channel fields (mapped 2026-09-25 from the schema; partly verified live 2026-09-24)
+
+Verified live in the test environment on 2026-09-24:
+- GET mapping for all five types (addresses, phones, web pages, URLs,
+  support emails, weekly and exceptional hours, accessibility);
+- a WebPage summary PUT;
+- a Phone channel POST as a Draft, with phone numbers and weekly hours.
+  The hours were written one day per entry and read back identically.
+PUTs of ServiceLocation addresses and hours, and the EChannel, WebPage and
+PrintableForm POSTs, are still unverified.
+
 
 The domain model now carries each channel type's structured fields
 (`src/ptv/domain.ts`), mapped in `src/ptv/v11/channelFields.ts`,
