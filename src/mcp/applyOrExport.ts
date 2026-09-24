@@ -18,7 +18,12 @@ export class WriteApiNotSelectedError extends Error {
 
 export class ValidationFailedError extends Error {
   constructor(public readonly errors: { field: string; message: string }[]) {
-    super(`Proposed changes failed validation: ${errors.map((e) => e.field).join(', ')}`);
+    super(
+      [
+        'Proposed changes failed validation:',
+        ...errors.map((e) => `- ${e.field}: ${e.message}`),
+      ].join('\n'),
+    );
     this.name = 'ValidationFailedError';
   }
 }
