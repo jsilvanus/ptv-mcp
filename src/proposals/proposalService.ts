@@ -1,7 +1,13 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { proposalKindEnum, proposals, proposalStatusEnum } from '../db/schema/index.js';
+import {
+  proposalComments,
+  proposalKindEnum,
+  proposals,
+  proposalStatusEnum,
+  users,
+} from '../db/schema/index.js';
 import type { Service } from '../ptv/domain.js';
 import type { ServiceDiffEntry } from '../mcp/proposeChanges.js';
 
@@ -24,6 +30,15 @@ export interface ProposalRecord {
   resolvedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ProposalComment {
+  id: string;
+  userId: string;
+  /** Display name of the author, for the review page. */
+  userName: string;
+  body: string;
+  createdAt: Date;
 }
 
 export class ProposalNotFoundError extends Error {
@@ -138,5 +153,46 @@ export class ProposalService {
       throw new ProposalNotFoundError(proposalId);
     }
     return row as ProposalRecord;
+  }
+
+  async addComment(
+    tenantId: string,
+    proposalId: string,
+    userId: string,
+    body: string,
+  ): Promise<ProposalComment> {
+    await this.getById(tenantId, proposalId);
+    const row = await withContext(this.db, { tenantId }, async (tx) => {
+      const created = await tx
+        .insert(proposalComments)
+        .values({ tenantId, proposalId, userId, body })
+        .returning();
+      return created[0];
+    });
+    if (!row) throw new Error('Comment insert did not return a row');
+    const [comment] = (await this.listComments(tenantId, proposalId)).filter(
+      (entry) => entry.id === row.id,
+    );
+    return comment!;
+  }
+
+  /** Oldest first, with each author's display name. */
+  async listComments(tenantId: string, proposalId: string): Promise<ProposalComment[]> {
+    return withContext(this.db, { tenantId }, async (tx) =>
+      tx
+        .select({
+          id: proposalComments.id,
+          userId: proposalComments.userId,
+          userName: users.name,
+          body: proposalComments.body,
+          createdAt: proposalComments.createdAt,
+        })
+        .from(proposalComments)
+        .innerJoin(users, eq(users.id, proposalComments.userId))
+        .where(
+          and(eq(proposalComments.tenantId, tenantId), eq(proposalComments.proposalId, proposalId)),
+        )
+        .orderBy(asc(proposalComments.createdAt)),
+    );
   }
 }

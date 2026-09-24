@@ -4,6 +4,7 @@ import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import type { Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import {
+  commentOnProposal,
   getProposal,
   listProposals,
   queueProposal,
@@ -68,6 +69,14 @@ function buildRegistry(supportsWrite = true): PtvAdapterRegistry {
 
 function fakeProposalService() {
   const rows: ProposalRecord[] = [];
+  const comments: Array<{
+    id: string;
+    proposalId: string;
+    userId: string;
+    userName: string;
+    body: string;
+    createdAt: Date;
+  }> = [];
   const api = {
     createPending: vi.fn(async (input) => {
       const row: ProposalRecord = {
@@ -91,6 +100,23 @@ function fakeProposalService() {
     }),
     listForTenant: vi.fn(async (_tenantId: string, options?: { status?: ProposalStatus }) =>
       rows.filter((row) => (options?.status ? row.status === options.status : true)),
+    ),
+    addComment: vi.fn(
+      async (_tenantId: string, proposalId: string, userId: string, body: string) => {
+        const comment = {
+          id: `comment-${comments.length + 1}`,
+          proposalId,
+          userId,
+          userName: `User ${userId}`,
+          body,
+          createdAt: new Date(),
+        };
+        comments.push(comment);
+        return comment;
+      },
+    ),
+    listComments: vi.fn(async (_tenantId: string, proposalId: string) =>
+      comments.filter((comment) => comment.proposalId === proposalId),
     ),
     getById: vi.fn(async (_tenantId: string, proposalId: string) => {
       const row = rows.find((entry) => entry.id === proposalId);
@@ -393,6 +419,55 @@ describe('proposalQueue', () => {
           channelType: 'WebPage',
         }),
       ).rejects.toThrow(/can't be changed/);
+    });
+  });
+
+  describe('comments', () => {
+    it('lets a contributor comment, shows comments on the proposal, and audits them', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'Kommentoitava' },
+      });
+
+      await commentOnProposal(
+        readerResolver,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+        '  Hyvä muutos  ',
+      );
+      const details = await getProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+      );
+
+      expect(details.comments.map((comment) => comment.body)).toEqual(['Hyvä muutos']);
+      expect(audit.recordCalls.find((entry) => entry.action === 'CommentProposal')).toMatchObject({
+        correlationId: queued.correlationId,
+        result: 'Commented',
+      });
+    });
+
+    it('refuses an empty comment and a viewer', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'X' },
+      });
+      await expect(
+        commentOnProposal(readerResolver, api, audit, ctx, queued.proposalId, '   '),
+      ).rejects.toThrow('Comment is empty');
+      await expect(
+        commentOnProposal(async () => 'viewer', api, audit, ctx, queued.proposalId, 'Hei'),
+      ).rejects.toThrow("requires at least 'contributor' role");
     });
   });
 });

@@ -7,6 +7,7 @@ import {
   ProposalAlreadyResolvedError,
   ProposalNotFoundError,
   ProposalService,
+  type ProposalComment,
   type ProposalKind,
   type ProposalRecord,
   type ProposalStatus,
@@ -60,6 +61,8 @@ export interface ProposalDetails extends ProposalSummary {
   current: Service | ServiceChannel | null;
   /** `null` when the service or channel can no longer be read (see `current`). */
   proposed: Service | NewService | ServiceChannel | null;
+  /** Oldest first. */
+  comments: ProposalComment[];
 }
 
 export class InvalidResolveActionError extends Error {
@@ -89,9 +92,22 @@ function toSummary(proposal: ProposalRecord): ProposalSummary {
 
 async function proposalDetails(
   registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
   proposal: ProposalRecord,
   ctx: ToolContext,
 ): Promise<ProposalDetails> {
+  const [details, comments] = await Promise.all([
+    proposalDiffDetails(registry, proposal, ctx),
+    proposalService.listComments(ctx.tenantId, proposal.id),
+  ]);
+  return { ...details, comments };
+}
+
+async function proposalDiffDetails(
+  registry: PtvAdapterRegistry,
+  proposal: ProposalRecord,
+  ctx: ToolContext,
+): Promise<Omit<ProposalDetails, 'comments'>> {
   try {
     return await liveProposalDetails(registry, proposal, ctx);
   } catch (err) {
@@ -113,7 +129,7 @@ async function liveProposalDetails(
   registry: PtvAdapterRegistry,
   proposal: ProposalRecord,
   ctx: ToolContext,
-): Promise<ProposalDetails> {
+): Promise<Omit<ProposalDetails, 'comments'>> {
   if (proposal.kind === 'service_create') {
     return {
       ...toSummary(proposal),
@@ -228,7 +244,56 @@ export async function getProposal(
     result: 'Viewed',
     correlationId: proposal.correlationId,
   });
-  return proposalDetails(registry, proposal, ctx);
+  return proposalDetails(registry, proposalService, proposal, ctx);
+}
+
+export class InvalidCommentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidCommentError';
+  }
+}
+
+/** Longest comment accepted; a review note, not a document. */
+export const MAX_COMMENT_LENGTH = 4000;
+
+/**
+ * Adds a comment to a proposal (Contributor+), whatever its status, so the
+ * reasons for a decision stay with it. Audited under the proposal's
+ * correlation id.
+ */
+export async function commentOnProposal(
+  resolveRole: MembershipRoleResolver,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposalId: string,
+  body: string,
+): Promise<ProposalComment> {
+  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  const text = body.trim();
+  if (text === '') throw new InvalidCommentError('Comment is empty');
+  if (text.length > MAX_COMMENT_LENGTH) {
+    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
+  }
+  const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  const comment = await proposalService.addComment(
+    ctx.tenantId,
+    proposal.id,
+    ctx.actingUserId,
+    text,
+  );
+  await auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action: 'CommentProposal',
+    resourceType: 'Proposal',
+    resourceId: proposal.id,
+    afterState: { commentId: comment.id, body: text },
+    result: 'Commented',
+    correlationId: proposal.correlationId,
+  });
+  return comment;
 }
 
 export async function resolveProposal(
@@ -261,7 +326,7 @@ export async function resolveProposal(
       result: 'Rejected',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, rejected, proposalCtx);
+    return proposalDetails(registry, proposalService, rejected, proposalCtx);
   }
 
   if (proposal.kind === 'channel_update') {
@@ -305,7 +370,7 @@ export async function resolveProposal(
       result: 'ApprovedForManualPublish',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
   if (action === 'approve_and_apply') {
@@ -352,7 +417,7 @@ export async function resolveProposal(
       result: 'Applied',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, applied, proposalCtx);
+    return proposalDetails(registry, proposalService, applied, proposalCtx);
   }
 
   throw new InvalidResolveActionError(action);
@@ -392,7 +457,7 @@ async function resolveNewServiceProposal(
       result: 'ApprovedForManualPublish',
       correlationId: proposal.correlationId,
     });
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
   if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
@@ -442,7 +507,7 @@ async function resolveNewServiceProposal(
     result: 'Applied',
     correlationId: proposal.correlationId,
   });
-  return proposalDetails(registry, applied, proposalCtx);
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
 }
 
 /**
@@ -479,7 +544,7 @@ async function resolveChannelProposal(
       ctx.actingUserId,
     );
     await record('ApprovedForManualPublish');
-    return proposalDetails(registry, approved, proposalCtx);
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
   if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
 
@@ -507,15 +572,20 @@ async function resolveChannelProposal(
     ctx.actingUserId,
   );
   await record('Applied');
-  return proposalDetails(registry, applied, proposalCtx);
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
 }
 
 export function isProposalQueueError(
   err: unknown,
-): err is ProposalNotFoundError | ProposalAlreadyResolvedError | InvalidResolveActionError {
+): err is
+  | ProposalNotFoundError
+  | ProposalAlreadyResolvedError
+  | InvalidResolveActionError
+  | InvalidCommentError {
   return (
     err instanceof ProposalNotFoundError ||
     err instanceof ProposalAlreadyResolvedError ||
-    err instanceof InvalidResolveActionError
+    err instanceof InvalidResolveActionError ||
+    err instanceof InvalidCommentError
   );
 }
