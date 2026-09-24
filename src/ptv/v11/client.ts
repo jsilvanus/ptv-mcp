@@ -69,6 +69,20 @@ export class PtvV11Client {
     return this.request<T>('GET', path, query);
   }
 
+  /** Whether an organisation API user is configured, i.e. `getRestricted` can authenticate. */
+  get canAuthenticate(): boolean {
+    return this.writeTokenProvider !== undefined;
+  }
+
+  /**
+   * GET a restricted endpoint (e.g. `Service/active/{id}`) with the API-user
+   * token. Only for endpoints that require it: v11 500s a public GET that
+   * carries a token it doesn't like.
+   */
+  async getRestricted<T>(path: string): Promise<T> {
+    return this.request<T>('GET', path, undefined, undefined, true);
+  }
+
   async post<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>('POST', path, undefined, body);
   }
@@ -92,11 +106,12 @@ export class PtvV11Client {
     path: string,
     query?: Record<string, string | number | undefined>,
     body?: unknown,
+    restricted = false,
   ): Promise<T> {
     const url = this.buildUrl(path, query);
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const tokenProvider = method === 'GET' ? undefined : this.writeTokenProvider;
+    const tokenProvider = method === 'GET' && !restricted ? undefined : this.writeTokenProvider;
     if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
 
     const init: RequestInit = { method, headers };
