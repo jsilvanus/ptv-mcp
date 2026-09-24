@@ -43,3 +43,10 @@ export const proposalKindEnum = pgEnum('proposal_kind', [
   'service_create',
   'channel_update',
 ]);
+
+/** A required reviewer's sign-off (docs/roles-and-review-plan.md, step 5). */
+export const reviewDecisionEnum = pgEnum('review_decision', [
+  'pending',
+  'approved',
+  'changes_requested',
+]);

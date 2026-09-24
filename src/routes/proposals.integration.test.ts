@@ -262,6 +262,72 @@ describe('proposal routes', () => {
     });
     expect(resolveAsContributor.statusCode).toBe(403);
 
+    // Required reviewer: the approver asks the viewer (refused, below
+    // Contributor), then the contributor; approving waits for the sign-off.
+    const candidates = await app.inject({
+      method: 'GET',
+      url: `/tenants/${editor.tenantId}/review-candidates`,
+      headers: { authorization: 'Bearer ' + editor.token },
+    });
+    expect((candidates.json() as Array<{ userId: string }>).map((c) => c.userId).sort()).toEqual(
+      [editor.userId, readerId].sort(),
+    );
+    const viewerAsReviewer = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/reviewers`,
+      headers: { authorization: 'Bearer ' + editor.token },
+      payload: { reviewers: [`${viewerId}@example.test`] },
+    });
+    expect(viewerAsReviewer.statusCode).toBe(400);
+    // The contributor proposed this one, so they cannot review it; the
+    // approver names themself instead and the contributor gets a 403 on sign-off.
+    const addReviewer = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/reviewers`,
+      headers: { authorization: 'Bearer ' + editor.token },
+      payload: { reviewers: [`${editor.userId}@example.test`] },
+    });
+    expect(addReviewer.statusCode).toBe(201);
+    const waiting = await app.inject({
+      method: 'GET',
+      url: `/tenants/${editor.tenantId}/proposals?waitingForMe=true`,
+      headers: { authorization: 'Bearer ' + editor.token },
+    });
+    expect((waiting.json() as Array<{ id: string }>).map((p) => p.id)).toEqual([first!.id]);
+    const exportBeforeSignOff = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/resolve`,
+      headers: { authorization: 'Bearer ' + editor.token },
+      payload: { action: 'approve_and_export' },
+    });
+    expect(exportBeforeSignOff.statusCode).toBe(409);
+    const signOffAsNonReviewer = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/sign-off`,
+      headers: { authorization: 'Bearer ' + readerToken },
+      payload: { decision: 'approved' },
+    });
+    expect(signOffAsNonReviewer.statusCode).toBe(403);
+    const signOff = await app.inject({
+      method: 'POST',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}/sign-off`,
+      headers: { authorization: 'Bearer ' + editor.token },
+      payload: { decision: 'changes_requested', comment: 'Lisää aukioloajat.' },
+    });
+    expect(signOff.statusCode).toBe(200);
+    const withReviewers = await app.inject({
+      method: 'GET',
+      url: `/tenants/${editor.tenantId}/proposals/${first!.id}`,
+      headers: { authorization: 'Bearer ' + editor.token },
+    });
+    expect((withReviewers.json() as { reviewers: unknown[] }).reviewers).toEqual([
+      expect.objectContaining({
+        userId: editor.userId,
+        decision: 'changes_requested',
+        comment: 'Lisää aukioloajat.',
+      }),
+    ]);
+
     const resolveAsEditor = await app.inject({
       method: 'POST',
       url: `/tenants/${editor.tenantId}/proposals/${first!.id}/resolve`,

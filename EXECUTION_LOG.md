@@ -1492,3 +1492,18 @@ Through the reconnected PTV-MCP connector (test environment, organisation
   audited as `UpdateTenantSettings`); checkbox on the members page.
 - Live testing with one account needs four-eyes switched off for that
   tenant first, or a second account to resolve.
+
+## 2026-09-24 — Roles step 5: required reviewers
+
+- `proposal_reviewers` (migration 0021, RLS + grant, `review_decision`
+  enum). `resolveProposal` refuses `approve_*` until every reviewer has
+  `approved` (`ReviewsPendingError`, REST 409); reject stays allowed.
+- MCP: `ptv_request_review` names reviewers by email or user id (an agent
+  does not know UUIDs; without reviewers it lists the possible ones),
+  `ptv_sign_off_proposal` (approved / changes_requested + comment),
+  `ptv_list_proposals` `waitingForMe`. Only the proposer or an Approver+
+  may add reviewers; reviewers must be Contributor+ and not the proposer.
+- Web: reviewers panel with Hyväksyn / Pyydän muutoksia buttons and a
+  "waiting for my review" filter. The SPA reads its own user id from the
+  access token's `sub` to decide which buttons to show; the server still
+  checks everything.

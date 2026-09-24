@@ -90,11 +90,34 @@ export interface ProposalComment {
   createdAt: string;
 }
 
+export type ReviewDecision = 'pending' | 'approved' | 'changes_requested';
+
+/** Mirrors src/proposals/proposalService.ts's ProposalReviewer. */
+export interface ProposalReviewer {
+  userId: string;
+  userName: string;
+  requestedByUserId: string;
+  decision: ReviewDecision;
+  comment: string | null;
+  requestedAt: string;
+  decidedAt: string | null;
+}
+
+/** Mirrors src/mcp/proposalQueue.ts's ReviewCandidate. */
+export interface ReviewCandidate {
+  userId: string;
+  name: string;
+  email: string;
+  role: MembershipRole;
+}
+
 export interface ProposalDetails extends ProposalSummary {
   diff: ServiceDiffEntry[];
   queuedDiff: ServiceDiffEntry[];
   /** Oldest first. */
   comments: ProposalComment[];
+  /** Required reviewers; approving waits until all have approved. */
+  reviewers: ProposalReviewer[];
 }
 
 /** Tenant's PTV v11 organisation API user (IN-API write credential); the password is never returned. */

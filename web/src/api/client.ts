@@ -16,6 +16,23 @@ export function getAccessToken(): string | null {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
+/**
+ * The signed-in user's id, read from the access token's `sub` claim. Only
+ * used to tailor the UI (e.g. show sign-off buttons); the server checks
+ * every action itself.
+ */
+export function currentUserId(): string | null {
+  const payload = getAccessToken()?.split('.')[1];
+  if (!payload) return null;
+  try {
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const sub = (JSON.parse(json) as { sub?: unknown }).sub;
+    return typeof sub === 'string' ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }

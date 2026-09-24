@@ -4,8 +4,10 @@ import { withContext } from '../db/context.js';
 import {
   proposalComments,
   proposalKindEnum,
+  proposalReviewers,
   proposals,
   proposalStatusEnum,
+  reviewDecisionEnum,
   users,
 } from '../db/schema/index.js';
 import type { Service } from '../ptv/domain.js';
@@ -39,6 +41,26 @@ export interface ProposalComment {
   userName: string;
   body: string;
   createdAt: Date;
+}
+
+export type ReviewDecision = (typeof reviewDecisionEnum.enumValues)[number];
+
+export interface ProposalReviewer {
+  userId: string;
+  /** Display name of the reviewer, for the review page. */
+  userName: string;
+  requestedByUserId: string;
+  decision: ReviewDecision;
+  comment: string | null;
+  requestedAt: Date;
+  decidedAt: Date | null;
+}
+
+export class NotARequestedReviewerError extends Error {
+  constructor(proposalId: string) {
+    super(`You are not a requested reviewer of proposal ${proposalId}`);
+    this.name = 'NotARequestedReviewerError';
+  }
 }
 
 export class ProposalNotFoundError extends Error {
@@ -194,5 +216,95 @@ export class ProposalService {
         )
         .orderBy(asc(proposalComments.createdAt)),
     );
+  }
+
+  /** Adds required reviewers; a user already on the list keeps their decision. */
+  async addReviewers(
+    tenantId: string,
+    proposalId: string,
+    userIds: string[],
+    requestedByUserId: string,
+  ): Promise<ProposalReviewer[]> {
+    if (userIds.length > 0) {
+      await withContext(this.db, { tenantId }, async (tx) => {
+        await tx
+          .insert(proposalReviewers)
+          .values(userIds.map((userId) => ({ tenantId, proposalId, userId, requestedByUserId })))
+          .onConflictDoNothing({
+            target: [proposalReviewers.proposalId, proposalReviewers.userId],
+          });
+      });
+    }
+    return this.listReviewers(tenantId, proposalId);
+  }
+
+  /** In request order, with each reviewer's display name. */
+  async listReviewers(tenantId: string, proposalId: string): Promise<ProposalReviewer[]> {
+    return withContext(this.db, { tenantId }, async (tx) =>
+      tx
+        .select({
+          userId: proposalReviewers.userId,
+          userName: users.name,
+          requestedByUserId: proposalReviewers.requestedByUserId,
+          decision: proposalReviewers.decision,
+          comment: proposalReviewers.comment,
+          requestedAt: proposalReviewers.requestedAt,
+          decidedAt: proposalReviewers.decidedAt,
+        })
+        .from(proposalReviewers)
+        .innerJoin(users, eq(users.id, proposalReviewers.userId))
+        .where(
+          and(
+            eq(proposalReviewers.tenantId, tenantId),
+            eq(proposalReviewers.proposalId, proposalId),
+          ),
+        )
+        .orderBy(asc(proposalReviewers.requestedAt), asc(users.name)),
+    );
+  }
+
+  /** Records (or changes) a requested reviewer's sign-off. */
+  async recordDecision(
+    tenantId: string,
+    proposalId: string,
+    userId: string,
+    decision: Exclude<ReviewDecision, 'pending'>,
+    comment: string | null,
+  ): Promise<ProposalReviewer[]> {
+    const updated = await withContext(this.db, { tenantId }, async (tx) =>
+      tx
+        .update(proposalReviewers)
+        .set({ decision, comment, decidedAt: new Date() })
+        .where(
+          and(
+            eq(proposalReviewers.tenantId, tenantId),
+            eq(proposalReviewers.proposalId, proposalId),
+            eq(proposalReviewers.userId, userId),
+          ),
+        )
+        .returning({ id: proposalReviewers.id }),
+    );
+    if (updated.length === 0) throw new NotARequestedReviewerError(proposalId);
+    return this.listReviewers(tenantId, proposalId);
+  }
+
+  /** Pending proposals where `userId` is a requested reviewer who has not signed off yet. */
+  async listAwaitingReview(tenantId: string, userId: string): Promise<ProposalRecord[]> {
+    return withContext(this.db, { tenantId }, async (tx) => {
+      const rows = await tx
+        .select({ proposal: proposals })
+        .from(proposals)
+        .innerJoin(proposalReviewers, eq(proposalReviewers.proposalId, proposals.id))
+        .where(
+          and(
+            eq(proposals.tenantId, tenantId),
+            eq(proposals.status, 'pending'),
+            eq(proposalReviewers.userId, userId),
+            eq(proposalReviewers.decision, 'pending'),
+          ),
+        )
+        .orderBy(desc(proposals.createdAt));
+      return rows.map((row) => row.proposal as ProposalRecord);
+    });
   }
 }

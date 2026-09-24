@@ -15,7 +15,7 @@ import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
 import type { ProposalService } from '../proposals/proposalService.js';
-import { tenantRequiresFourEyes } from '../tenants/tenantService.js';
+import { TenantService, tenantRequiresFourEyes } from '../tenants/tenantService.js';
 import * as searchTools from './searchTools.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { validateChanges } from './validateChanges.js';
@@ -29,6 +29,9 @@ import {
   resolveProposal,
   commentOnProposal,
   MAX_COMMENT_LENGTH,
+  listReviewCandidates,
+  requestReview,
+  signOffProposal,
 } from './proposalQueue.js';
 
 export interface McpServerDeps {
@@ -228,6 +231,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const resolveRole = (tenantId: string, userId: string) =>
     resolveMembershipRole(db, tenantId, userId);
   const requireFourEyes = (tenantId: string) => tenantRequiresFourEyes(db, tenantId);
+  const tenantService = new TenantService(db, auditService);
+  const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
   const server = new McpServer({ name: 'ptv-mcp', version: '0.1.0' });
 
   server.registerTool(
@@ -609,15 +614,22 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_list_proposals',
     withOAuthSecurity({
       description:
-        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). Requires the Contributor role (Ehdottaja) or above.',
+        'List queued proposals for a tenant (kind: service_update, service_create or channel_update). waitingForMe: true lists only pending proposals waiting for your sign-off as a required reviewer. Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
         status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
+        waitingForMe: z.boolean().optional(),
       },
     }),
     async (args, extra) => {
       try {
         return textResult(
-          await listProposals(resolveRole, proposalService, toolContext(extra), args.status),
+          await listProposals(
+            resolveRole,
+            proposalService,
+            toolContext(extra),
+            args.status,
+            args.waitingForMe ?? false,
+          ),
         );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
@@ -681,10 +693,75 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   server.registerTool(
+    'ptv_request_review',
+    withOAuthSecurity({
+      description:
+        'Name required reviewers (emails or user ids of Contributor+ members) for a pending proposal. Approving then waits until every reviewer has signed off with ptv_sign_off_proposal. The proposer or an Approver (Hyväksyjä) may ask. Without reviewers, lists the possible ones.',
+      inputSchema: {
+        proposalId: z.string(),
+        reviewers: z.array(z.string().min(1)).max(20).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        const ctx = toolContext(extra);
+        if (!args.reviewers || args.reviewers.length === 0) {
+          return textResult({
+            possibleReviewers: await listReviewCandidates(resolveRole, listMembers, ctx),
+          });
+        }
+        return textResult(
+          await requestReview(
+            resolveRole,
+            listMembers,
+            proposalService,
+            auditService,
+            ctx,
+            args.proposalId,
+            args.reviewers,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_sign_off_proposal',
+    withOAuthSecurity({
+      description:
+        'Sign off a pending proposal you were asked to review: approved (Hyväksyn) or changes_requested (Pyydän muutoksia), with an optional comment. You can change your sign-off until the proposal is resolved.',
+      inputSchema: {
+        proposalId: z.string(),
+        decision: z.enum(['approved', 'changes_requested']),
+        comment: z.string().max(MAX_COMMENT_LENGTH).optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await signOffProposal(
+            resolveRole,
+            proposalService,
+            auditService,
+            toolContext(extra),
+            args.proposalId,
+            args.decision,
+            args.comment,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
     'ptv_resolve_proposal',
     withOAuthSecurity({
       description:
-        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it.',
+        'Resolve one proposal as approve_and_export, approve_and_apply, or reject. Requires the Approver role (Hyväksyjä) or above; apply also requires the Publisher role (Julkaisija). With four-eyes on (the default), you cannot approve a proposal you created, only reject it. Approving also waits for every required reviewer to sign off.',
       inputSchema: {
         proposalId: z.string(),
         action: z.enum(['approve_and_export', 'approve_and_apply', 'reject']),
