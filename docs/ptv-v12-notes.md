@@ -83,6 +83,34 @@ v11's ordinary reads need none). Retried with exponential backoff
 header when present (`retryDelayMs()`); non-retryable failures and
 exhausted retries raise `PtvV12ApiError` carrying `status`/`path`.
 
+### v12 write auth (DVV email, 2026-09-24)
+
+DVV told us by email that v12 writes will use **two credentials**:
+
+- the **API key** (`x-api-key`) identifies the *integration*, as it does for
+  reads today;
+- a **token** identifies the *user/organisation* doing the write.
+
+v12 write goes to beta in October 2026. Not yet known: how the token is
+obtained (the same Palveluhallinta `api-login` as v11's organisation API
+user, see `docs/ptv-v11-notes.md`, or something new), its header, and whether
+it is per organisation or per person.
+
+Design consequences for the v12 write adapter:
+
+- Keep the API key tenant-scoped in `TenantEnvironment`, as now. Add the
+  token source to the same credentials blob (e.g.
+  `{apiKey, username, password}`) if it turns out to be an organisation API
+  user. `src/ptv/v11/auth/apiLogin.ts`'s token cache (per environment +
+  user, JWT `exp`, one shared in-flight login) can then be reused or
+  generalised.
+- As with v11, send the token only on writes and keep reads on the API key
+  alone, unless DVV says reads need it too.
+- If the token turns out to be per person, it moves to `UserPtvConnection`
+  (`credentialScope: 'user'`) while the API key stays per tenant. The
+  registry would then need to resolve both scopes for one adapter; today it
+  resolves exactly one.
+
 ## Base URLs
 
 ```
