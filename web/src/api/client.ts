@@ -97,21 +97,26 @@ async function doRefreshAccessToken(): Promise<void> {
 }
 
 /**
- * Fetch wrapper: attaches the bearer token, retries exactly once via
- * `/auth/refresh` on a 401 (matching the backend's short-lived access
- * token + long-lived refresh token design — see src/auth/authService.ts),
- * and throws `ApiError` for any other non-2xx response.
+ * The message to show for a failed request: the server's message for an
+ * `ApiError`, otherwise `fallback`.
  */
-export async function apiFetch<T>(
+export function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
+/**
+ * Attaches the bearer token, retries exactly once via `/auth/refresh` on a
+ * 401 (matching the backend's short-lived access token + long-lived
+ * refresh token design — see src/auth/authService.ts), and throws
+ * `ApiError` for any other non-2xx response.
+ */
+async function authedFetch(
   path: string,
-  options: RequestInit = {},
-  allowRefresh = true,
-): Promise<T> {
+  options: RequestInit,
+  allowRefresh: boolean,
+): Promise<Response> {
   const token = getAccessToken();
   const headers = new Headers(options.headers);
-  if (options.body !== undefined) {
-    headers.set('content-type', 'application/json');
-  }
   if (token) {
     headers.set('authorization', `Bearer ${token}`);
   }
@@ -120,13 +125,30 @@ export async function apiFetch<T>(
 
   if (res.status === 401 && allowRefresh && getRefreshToken()) {
     await refreshAccessToken();
-    return apiFetch<T>(path, options, false);
+    return authedFetch(path, options, false);
   }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
     throw new ApiError(res.status, (body as { message?: string }).message ?? res.statusText);
   }
+  return res;
+}
+
+/**
+ * JSON fetch wrapper over `authedFetch`: sends a JSON content type when
+ * there is a body and returns the parsed response (undefined for a 204).
+ */
+export async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+  allowRefresh = true,
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (options.body !== undefined) {
+    headers.set('content-type', 'application/json');
+  }
+  const res = await authedFetch(path, { ...options, headers }, allowRefresh);
 
   if (res.status === 204) {
     return undefined as T;
@@ -142,18 +164,7 @@ export async function apiDownload(
   path: string,
   allowRefresh = true,
 ): Promise<{ blob: Blob; filename: string | null }> {
-  const token = getAccessToken();
-  const headers = new Headers();
-  if (token) headers.set('authorization', `Bearer ${token}`);
-  const res = await fetch(path, { headers });
-  if (res.status === 401 && allowRefresh && getRefreshToken()) {
-    await refreshAccessToken();
-    return apiDownload(path, false);
-  }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ message: res.statusText }));
-    throw new ApiError(res.status, (body as { message?: string }).message ?? res.statusText);
-  }
+  const res = await authedFetch(path, {}, allowRefresh);
   const disposition = res.headers.get('content-disposition') ?? '';
   const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? null;
   return { blob: await res.blob(), filename };

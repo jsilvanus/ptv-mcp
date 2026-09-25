@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ApiError, apiFetch } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import type { ManualPublishSheet, ProposalDetails } from '../api/types';
 
 /**
@@ -49,7 +49,7 @@ export function ManualPublishPanel({
       );
       onConfirmed(updated);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not confirm the publishing.');
+      setError(errorMessage(err, 'Could not confirm the publishing.'));
     } finally {
       setConfirming(false);
     }

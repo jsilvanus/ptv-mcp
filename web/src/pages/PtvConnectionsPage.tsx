@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiFetch, ApiError } from '../api/client';
+import { apiFetch, ApiError, errorMessage } from '../api/client';
 import type {
   ConnectionStatus,
   PtvEnvironment,
@@ -13,6 +13,7 @@ import {
   TEST_ACCOUNTS_URL,
   testOrganisationLabel,
 } from '../ptv/testOrganisations';
+import { EnvironmentSelect } from '../components/EnvironmentSelect';
 
 export const PTV_CONNECT_ENVIRONMENT_KEY = 'ptv_connect_environment';
 
@@ -72,7 +73,7 @@ export function PtvConnectionsPage() {
         setV11ApiUsers([]);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load PTV connections.');
+      setError(errorMessage(err, 'Could not load PTV connections.'));
     } finally {
       setLoading(false);
     }
@@ -92,7 +93,7 @@ export function PtvConnectionsPage() {
       sessionStorage.setItem(PTV_CONNECT_ENVIRONMENT_KEY, environment);
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start the PTV connection.');
+      setError(errorMessage(err, 'Could not start the PTV connection.'));
       setConnectingEnv(null);
     }
   }
@@ -107,7 +108,7 @@ export function PtvConnectionsPage() {
       await apiFetch<void>(`/ptv-connections/v11/${environment}`, { method: 'DELETE' });
       await loadConnections();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not disconnect the PTV account.');
+      setError(errorMessage(err, 'Could not disconnect the PTV account.'));
     } finally {
       setDisconnectingEnv(null);
     }
@@ -134,7 +135,7 @@ export function PtvConnectionsPage() {
       setV12ApiKey('');
       setV12Status(`Connected to PTV v12 (${v12Environment}).`);
     } catch (err) {
-      setV12Status(err instanceof ApiError ? err.message : 'PTV v12 connection test failed.');
+      setV12Status(errorMessage(err, 'PTV v12 connection test failed.'));
     } finally {
       setV12Busy(false);
     }
@@ -172,7 +173,7 @@ export function PtvConnectionsPage() {
       setApiPassword('');
       setApiUserStatus(`Connected to PTV v11 as API user (${apiUserEnvironment}).`);
     } catch (err) {
-      setApiUserStatus(err instanceof ApiError ? err.message : 'PTV v11 API login failed.');
+      setApiUserStatus(errorMessage(err, 'PTV v11 API login failed.'));
     } finally {
       setApiUserBusy(false);
     }
@@ -280,13 +281,7 @@ export function PtvConnectionsPage() {
       {currentTenant ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>{currentTenant.tenantName}</strong>
-          <select
-            value={v12Environment}
-            onChange={(e) => setV12Environment(e.target.value as PtvEnvironment)}
-          >
-            <option value="production">production</option>
-            <option value="test">test</option>
-          </select>
+          <EnvironmentSelect value={v12Environment} onChange={setV12Environment} />
           <input
             type="password"
             value={v12ApiKey}
@@ -323,13 +318,7 @@ export function PtvConnectionsPage() {
       {currentTenant ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>{currentTenant.tenantName}</strong>
-          <select
-            value={apiUserEnvironment}
-            onChange={(e) => setApiUserEnvironment(e.target.value as PtvEnvironment)}
-          >
-            <option value="test">test</option>
-            <option value="production">production</option>
-          </select>
+          <EnvironmentSelect value={apiUserEnvironment} onChange={setApiUserEnvironment} />
           {apiUserEnvironment === 'test' && (
             <select
               value={testOrganisationId}

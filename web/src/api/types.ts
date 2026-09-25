@@ -3,6 +3,9 @@ export type MembershipRole = 'viewer' | 'contributor' | 'approver' | 'publisher'
 
 export type PtvEnvironment = 'test' | 'production';
 
+/** The environments in the order the UI lists them. */
+export const ENVIRONMENTS: readonly PtvEnvironment[] = ['production', 'test'];
+
 export interface TenantMembership {
   tenantId: string;
   tenantName: string;

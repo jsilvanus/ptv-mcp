@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiFetch, ApiError } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import type { TenantSettings } from '../api/types';
 
 /** Tenant-admin settings shown on the members page; currently just four-eyes. */
@@ -11,9 +11,7 @@ export function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
   useEffect(() => {
     apiFetch<TenantSettings>(`/tenants/${tenantId}/settings`)
       .then(setSettings)
-      .catch((err: unknown) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load settings.'),
-      );
+      .catch((err: unknown) => setError(errorMessage(err, 'Could not load settings.')));
   }, [tenantId]);
 
   async function toggleFourEyes(requireFourEyes: boolean): Promise<void> {
@@ -35,7 +33,7 @@ export function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
         }),
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save settings.');
+      setError(errorMessage(err, 'Could not save settings.'));
     } finally {
       setSaving(false);
     }

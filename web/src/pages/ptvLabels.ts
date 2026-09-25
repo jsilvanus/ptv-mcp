@@ -1,4 +1,15 @@
-import type { CodeListEntry } from '../api/types';
+import type { CodeListEntry, ProposalKind } from '../api/types';
+
+/** What a proposal does, by its kind. */
+export const PROPOSAL_KIND_LABELS: Record<ProposalKind, string> = {
+  service_update: 'Service update',
+  service_create: 'New service',
+  channel_update: 'Channel update',
+  channel_create: 'New channel',
+  connection_update: 'Connection details',
+  organisation_update: 'Organisation update',
+  organisation_create: 'New sub-organisation',
+};
 
 /** Finnish labels for the service/channel fields a proposal can touch. */
 export const FIELD_LABELS: Record<string, string> = {
