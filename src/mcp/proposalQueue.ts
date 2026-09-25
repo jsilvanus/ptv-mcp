@@ -54,6 +54,7 @@ import {
 } from './channelProposal.js';
 import {
   FourEyesError,
+  NotAuthorizedError,
   requireTenantRole,
   type FourEyesResolver,
   type MembershipRoleResolver,
@@ -539,9 +540,33 @@ export async function listReviewCandidates(
   ctx: ToolContext,
 ): Promise<ReviewCandidate[]> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  return (await listMembers(ctx.tenantId))
+  return reviewCandidatesOf(await listMembers(ctx.tenantId));
+}
+
+/** Members who can be named as reviewers: Contributor (Ehdottaja) or above, by name. */
+export function reviewCandidatesOf(members: ReviewCandidate[]): ReviewCandidate[] {
+  return members
     .filter((member) => ROLE_RANK[member.role] >= ROLE_RANK.contributor)
     .sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+}
+
+/** The candidate `ref` (a user id or an email, any case) names, or undefined. */
+export function findReviewCandidate(
+  candidates: ReviewCandidate[],
+  ref: string,
+): ReviewCandidate | undefined {
+  const id = ref.trim();
+  const email = id.toLowerCase();
+  return candidates.find(
+    (candidate) => candidate.userId === id || candidate.email.toLowerCase() === email,
+  );
+}
+
+/** Why `ref` can't be a reviewer, listing who can. */
+export function notAReviewCandidateMessage(ref: string, candidates: ReviewCandidate[]): string {
+  return `${ref} is not a Contributor (Ehdottaja) or above in this organisation. Possible reviewers: ${candidates
+    .map((candidate) => `${candidate.name} <${candidate.email}>`)
+    .join(', ')}`;
 }
 
 /**
@@ -559,26 +584,19 @@ export async function requestReview(
   proposalId: string,
   reviewers: string[],
 ): Promise<ProposalReviewer[]> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
+  const role = await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   requirePending(proposal);
-  if (proposal.proposedByUserId !== ctx.actingUserId) {
-    await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
+  if (proposal.proposedByUserId !== ctx.actingUserId && ROLE_RANK[role] < ROLE_RANK.approver) {
+    throw new NotAuthorizedError(ctx.tenantId, 'approver');
   }
   if (reviewers.length === 0) throw new InvalidReviewRequestError('Name at least one reviewer');
-  const candidates = await listReviewCandidates(resolveRole, listMembers, ctx);
+  const candidates = reviewCandidatesOf(await listMembers(ctx.tenantId));
   const userIds = new Set<string>();
   for (const reviewer of reviewers) {
-    const key = reviewer.trim().toLowerCase();
-    const match = candidates.find(
-      (candidate) => candidate.userId === reviewer.trim() || candidate.email.toLowerCase() === key,
-    );
+    const match = findReviewCandidate(candidates, reviewer);
     if (!match) {
-      throw new InvalidReviewRequestError(
-        `${reviewer} is not a Contributor (Ehdottaja) or above in this organisation. Possible reviewers: ${candidates
-          .map((candidate) => `${candidate.name} <${candidate.email}>`)
-          .join(', ')}`,
-      );
+      throw new InvalidReviewRequestError(notAReviewCandidateMessage(reviewer, candidates));
     }
     if (match.userId === proposal.proposedByUserId) {
       throw new InvalidReviewRequestError('The proposer cannot review their own proposal');

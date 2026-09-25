@@ -9,6 +9,13 @@ import type {
   ServiceChannel,
   ServiceHour,
 } from '../ptv/domain.js';
+import {
+  DESCRIPTION_MAX,
+  MAX_ONTOLOGY_TERMS,
+  MAX_SERVICE_CLASSES,
+  ORGANIZATION_DESCRIPTION_MAX,
+  SUMMARY_MAX,
+} from '../ptv/limits.js';
 import type { NewService } from '../ptv/adapter.js';
 
 /**
@@ -46,12 +53,13 @@ export interface QualityReport {
   warnings: number;
 }
 
-export const SUMMARY_MAX = 150;
-export const DESCRIPTION_MAX = 5000;
-/** DVV's limit for an organisation's description (the API takes 5000). */
-export const ORGANIZATION_DESCRIPTION_MAX = 2500;
-export const MAX_SERVICE_CLASSES = 4;
-export const MAX_ONTOLOGY_TERMS = 10;
+export {
+  DESCRIPTION_MAX,
+  MAX_ONTOLOGY_TERMS,
+  MAX_SERVICE_CLASSES,
+  ORGANIZATION_DESCRIPTION_MAX,
+  SUMMARY_MAX,
+};
 /** Words per sentence before a long-sentence warning. */
 export const LONG_SENTENCE_WORDS = 25;
 /** DVV: one topic and at most four sentences per paragraph. */

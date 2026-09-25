@@ -1,10 +1,10 @@
 import type { NewOrganization } from '../ptv/adapter.js';
 import type { Organization, OrganizationType } from '../ptv/domain.js';
 import type { ValidationError, ValidationResult } from './changeValidator.js';
-import { checkAddress, checkContactDetails, SUMMARY_MAX } from './channelRules.js';
+import { ORGANIZATION_DESCRIPTION_MAX, SUMMARY_MAX } from '../ptv/limits.js';
+import { checkAddress, checkContactDetails } from './channelRules.js';
 
-/** DVV: "Kenttään mahtuu korkeintaan 2500 merkkiä". */
-export const ORGANIZATION_DESCRIPTION_MAX = 2500;
+export { ORGANIZATION_DESCRIPTION_MAX };
 
 /** Types a new organisation can have; SotePublic and SotePrivate are legacy. */
 export const WRITABLE_ORGANIZATION_TYPES: OrganizationType[] = [

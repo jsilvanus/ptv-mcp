@@ -5,6 +5,7 @@ import type {
   ServiceChannel,
   ServiceHour,
 } from '../ptv/domain.js';
+import { SUMMARY_MAX } from '../ptv/limits.js';
 import type { ValidationError, ValidationResult } from './changeValidator.js';
 
 /**
@@ -14,7 +15,6 @@ import type { ValidationError, ValidationResult } from './changeValidator.js';
  * adds the fields PTV requires on POST.
  */
 
-export const SUMMARY_MAX = 150;
 const PHONE_MAX = 20;
 const PHONE_TEXT_MAX = 300;
 const URL_MAX = 500;

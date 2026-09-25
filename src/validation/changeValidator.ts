@@ -1,3 +1,4 @@
+import { MAX_ONTOLOGY_TERMS, MAX_SERVICE_CLASSES } from '../ptv/limits.js';
 import type { Service, ServiceChannel, ServiceType } from '../ptv/domain.js';
 import { validateChannelDetails } from './channelRules.js';
 
@@ -112,20 +113,26 @@ export class V11ChangeValidator implements ChangeValidator {
 
   /** Rule 5: ontologyTerms.length ≤ 10 (PTV v12 beta schema limit). */
   private validateOntologyTermsLimit(proposed: Service, errors: ValidationError[]): void {
-    if (Array.isArray(proposed.ontologyTerms) && proposed.ontologyTerms.length > 10) {
+    if (
+      Array.isArray(proposed.ontologyTerms) &&
+      proposed.ontologyTerms.length > MAX_ONTOLOGY_TERMS
+    ) {
       errors.push({
         field: 'ontologyTerms',
-        message: `Must contain at most 10 entries (current: ${proposed.ontologyTerms.length})`,
+        message: `Must contain at most ${MAX_ONTOLOGY_TERMS} entries (current: ${proposed.ontologyTerms.length})`,
       });
     }
   }
 
   /** Rule 6: serviceClasses.length ≤ 4 (PTV v12 beta schema limit). */
   private validateServiceClassesLimit(proposed: Service, errors: ValidationError[]): void {
-    if (Array.isArray(proposed.serviceClasses) && proposed.serviceClasses.length > 4) {
+    if (
+      Array.isArray(proposed.serviceClasses) &&
+      proposed.serviceClasses.length > MAX_SERVICE_CLASSES
+    ) {
       errors.push({
         field: 'serviceClasses',
-        message: `Must contain at most 4 entries (current: ${proposed.serviceClasses.length})`,
+        message: `Must contain at most ${MAX_SERVICE_CLASSES} entries (current: ${proposed.serviceClasses.length})`,
       });
     }
   }

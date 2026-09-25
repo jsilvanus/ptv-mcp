@@ -13,15 +13,16 @@ import {
   requireTenantRole,
   type MembershipRoleResolver,
 } from '../mcp/authorization.js';
-import type { MemberLister, ReviewCandidate } from '../mcp/proposalQueue.js';
+import {
+  findReviewCandidate,
+  notAReviewCandidateMessage,
+  reviewCandidatesOf,
+  type MemberLister,
+  type ReviewCandidate,
+} from '../mcp/proposalQueue.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import type { PtvAdapter } from '../ptv/adapter.js';
-import type {
-  LocalizedText,
-  Organization,
-  Service,
-  ServiceChannel,
-} from '../ptv/domain.js';
+import type { LocalizedText, Organization, Service, ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   ProposalKind,
@@ -361,19 +362,10 @@ export async function assignReviewItems(
   await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'publisher');
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, input.campaignId);
   requireOpen(campaign);
-  const key = input.reviewer.trim().toLowerCase();
-  const candidates = (await deps.listMembers(ctx.tenantId)).filter(
-    (member) => ROLE_RANK[member.role] >= ROLE_RANK.contributor,
-  );
-  const reviewer = candidates.find(
-    (member) => member.userId === input.reviewer.trim() || member.email.toLowerCase() === key,
-  );
+  const candidates = reviewCandidatesOf(await deps.listMembers(ctx.tenantId));
+  const reviewer = findReviewCandidate(candidates, input.reviewer);
   if (!reviewer) {
-    throw new ReviewCampaignError(
-      `${input.reviewer} is not a Contributor (Ehdottaja) or above in this organisation. Possible reviewers: ${candidates
-        .map((member) => `${member.name} <${member.email}>`)
-        .join(', ')}`,
-    );
+    throw new ReviewCampaignError(notAReviewCandidateMessage(input.reviewer, candidates));
   }
   const itemIds = input.itemIds?.length ? input.itemIds : undefined;
   const assigned = await deps.reviewService.assignItems(
