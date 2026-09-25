@@ -12,6 +12,7 @@ import type {
 } from '../ptv/domain.js';
 import { expandOpeningTimes, WEEKDAYS } from '../ptv/serviceHours.js';
 import type { ProposalKind } from '../proposals/proposalService.js';
+import { isCreateKind } from './proposalKinds.js';
 import type { ServiceDiffEntry } from './proposeChanges.js';
 
 /**
@@ -112,6 +113,17 @@ const DAY_LABELS: Record<Weekday, string> = {
   Sunday: 'su',
 };
 
+/** What a sheet is about, by proposal kind; channels add their type. */
+const TARGET_LABELS: Record<ProposalKind, string> = {
+  service_update: 'Palvelu',
+  service_create: 'Palvelu',
+  channel_update: 'Asiointikanava',
+  channel_create: 'Asiointikanava',
+  connection_update: 'Liitoksen lisätiedot',
+  organisation_update: 'Organisaatio',
+  organisation_create: 'Alaorganisaatio',
+};
+
 export function buildManualPublishSheet(input: {
   kind: ProposalKind;
   diff: ServiceDiffEntry[];
@@ -123,21 +135,12 @@ export function buildManualPublishSheet(input: {
   /** connection_update: the connected channel (ptvId is the service). */
   channelId?: string;
 }): ManualPublishSheet {
-  const creating =
-    input.kind === 'service_create' ||
-    input.kind === 'channel_create' ||
-    input.kind === 'organisation_create';
+  const creating = isCreateKind(input.kind);
   const isChannel = input.kind === 'channel_update' || input.kind === 'channel_create';
   const isConnection = input.kind === 'connection_update';
   const target = isChannel
     ? `Asiointikanava: ${CHANNEL_TYPE_LABELS[input.channelType ?? ''] ?? input.channelType ?? ''}`
-    : isConnection
-      ? 'Liitoksen lisätiedot'
-      : input.kind === 'organisation_create'
-        ? 'Alaorganisaatio'
-        : input.kind === 'organisation_update'
-          ? 'Organisaatio'
-          : 'Palvelu';
+    : TARGET_LABELS[input.kind];
   const name = input.names.fi ?? Object.values(input.names).find(Boolean) ?? null;
   const fields = input.diff
     .map((entry) => sheetField(entry, isChannel))
