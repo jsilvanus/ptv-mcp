@@ -3,7 +3,6 @@ import type { Database } from '../db/client.js';
 import type { AuditService } from '../audit/auditService.js';
 import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ReviewCampaignError } from '../reviews/reviewCampaigns.js';
 import { collectContent, contentSheets } from '../export/contentExport.js';
 import { buildXlsx } from '../export/xlsx.js';
@@ -82,12 +81,8 @@ export async function contentExportRoutes(
           )
           .send(Buffer.from(file));
       } catch (err) {
+        // An unknown organisation; the error handler would answer 400.
         if (err instanceof ReviewCampaignError) return reply.notFound(err.message);
-        if (err instanceof PtvAdapterResolutionError) {
-          return err.reason === 'not_authorized'
-            ? reply.forbidden(err.message)
-            : reply.badRequest(`${err.reason}: ${err.message}`);
-        }
         throw err;
       }
     },

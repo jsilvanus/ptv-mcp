@@ -2,8 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import {
   AccountLockedError,
   type AuthService,
-  EmailAlreadyRegisteredError,
-  InvalidCredentialsError,
   InvalidOrExpiredTokenError,
 } from '../auth/authService.js';
 import { createAuthenticate } from '../auth/rbac.js';
@@ -50,27 +48,13 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
     if (!email || !name || !password) {
       return reply.badRequest('email, name, and password are required');
     }
-    try {
-      const { userId } = await authService.register(email, name, password);
-      return reply.code(201).send({ userId, email });
-    } catch (err) {
-      if (err instanceof EmailAlreadyRegisteredError) {
-        return reply.conflict(err.message);
-      }
-      throw err;
-    }
+    const { userId } = await authService.register(email, name, password);
+    return reply.code(201).send({ userId, email });
   });
 
   app.post<{ Body: VerifyEmailBody }>('/auth/verify-email', async (request, reply) => {
-    try {
-      await authService.verifyEmail(request.body.token);
-      return reply.code(204).send();
-    } catch (err) {
-      if (err instanceof InvalidOrExpiredTokenError) {
-        return reply.badRequest(err.message);
-      }
-      throw err;
-    }
+    await authService.verifyEmail(request.body.token);
+    return reply.code(204).send();
   });
 
   app.post<{ Body: LoginBody }>('/auth/login', async (request, reply) => {
@@ -82,9 +66,7 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
       const session = await authService.login(email, password);
       return reply.send(session);
     } catch (err) {
-      if (err instanceof InvalidCredentialsError) {
-        return reply.unauthorized(err.message);
-      }
+      // 423 with a bare `{ message }` body, unlike the error handler's shape.
       if (err instanceof AccountLockedError) {
         return reply.code(423).send({ message: err.message });
       }
@@ -97,6 +79,7 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
       const session = await authService.refresh(request.body.refreshToken);
       return reply.send(session);
     } catch (err) {
+      // The error handler answers 400 for this; a failed refresh is a 401.
       if (err instanceof InvalidOrExpiredTokenError) {
         return reply.unauthorized(err.message);
       }
@@ -123,14 +106,7 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
   );
 
   app.post<{ Body: ResetPasswordBody }>('/auth/reset-password', async (request, reply) => {
-    try {
-      await authService.resetPassword(request.body.token, request.body.newPassword);
-      return reply.code(204).send();
-    } catch (err) {
-      if (err instanceof InvalidOrExpiredTokenError) {
-        return reply.badRequest(err.message);
-      }
-      throw err;
-    }
+    await authService.resetPassword(request.body.token, request.body.newPassword);
+    return reply.code(204).send();
   });
 }

@@ -156,29 +156,14 @@ export class ProposalService {
     /** Records the id PTV gave a service created by this proposal. */
     serviceId?: string,
   ): Promise<ProposalRecord> {
-    const current = await this.getById(tenantId, proposalId);
-    if (current.status !== 'pending') {
-      throw new ProposalAlreadyResolvedError(proposalId, current.status);
-    }
     const now = new Date();
-    const row = await withContext(this.db, { tenantId }, async (tx) => {
-      const updated = await tx
-        .update(proposals)
-        .set({
-          status,
-          resolvedByUserId,
-          resolvedAt: now,
-          updatedAt: now,
-          ...(serviceId ? { serviceId } : {}),
-        })
-        .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId)))
-        .returning();
-      return updated[0];
+    return this.transition(tenantId, proposalId, 'pending', {
+      status,
+      resolvedByUserId,
+      resolvedAt: now,
+      updatedAt: now,
+      ...(serviceId ? { serviceId } : {}),
     });
-    if (!row) {
-      throw new ProposalNotFoundError(proposalId);
-    }
-    return row as ProposalRecord;
   }
 
   /**
@@ -191,20 +176,41 @@ export class ProposalService {
     proposalId: string,
     serviceId?: string,
   ): Promise<ProposalRecord> {
-    const current = await this.getById(tenantId, proposalId);
-    if (current.status !== 'approved') {
-      throw new ProposalAlreadyResolvedError(proposalId, current.status);
-    }
-    const row = await withContext(this.db, { tenantId }, async (tx) => {
-      const updated = await tx
-        .update(proposals)
-        .set({ status: 'applied', updatedAt: new Date(), ...(serviceId ? { serviceId } : {}) })
-        .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId)))
-        .returning();
-      return updated[0];
+    return this.transition(tenantId, proposalId, 'approved', {
+      status: 'applied',
+      updatedAt: new Date(),
+      ...(serviceId ? { serviceId } : {}),
     });
-    if (!row) throw new ProposalNotFoundError(proposalId);
-    return row as ProposalRecord;
+  }
+
+  /**
+   * Updates the proposal only while it is still in `from` status, in one
+   * statement, so two concurrent resolutions cannot both succeed. When
+   * nothing was updated, reads the proposal to say why: not found, or
+   * already moved on.
+   */
+  private async transition(
+    tenantId: string,
+    proposalId: string,
+    from: ProposalStatus,
+    set: Partial<typeof proposals.$inferInsert>,
+  ): Promise<ProposalRecord> {
+    const [row] = await withContext(this.db, { tenantId }, async (tx) =>
+      tx
+        .update(proposals)
+        .set(set)
+        .where(
+          and(
+            eq(proposals.tenantId, tenantId),
+            eq(proposals.id, proposalId),
+            eq(proposals.status, from),
+          ),
+        )
+        .returning(),
+    );
+    if (row) return row as ProposalRecord;
+    const current = await this.getById(tenantId, proposalId);
+    throw new ProposalAlreadyResolvedError(proposalId, current.status);
   }
 
   /** Links a proposal to a review campaign item. */
@@ -224,18 +230,25 @@ export class ProposalService {
     body: string,
   ): Promise<ProposalComment> {
     await this.getById(tenantId, proposalId);
-    const row = await withContext(this.db, { tenantId }, async (tx) => {
-      const created = await tx
+    const comment = await withContext(this.db, { tenantId }, async (tx) => {
+      const [created] = await tx
         .insert(proposalComments)
         .values({ tenantId, proposalId, userId, body })
-        .returning();
-      return created[0];
+        .returning({
+          id: proposalComments.id,
+          userId: proposalComments.userId,
+          body: proposalComments.body,
+          createdAt: proposalComments.createdAt,
+        });
+      if (!created) return undefined;
+      const [author] = await tx
+        .select({ name: users.name })
+        .from(users)
+        .where(eq(users.id, created.userId));
+      return author ? { ...created, userName: author.name } : undefined;
     });
-    if (!row) throw new Error('Comment insert did not return a row');
-    const [comment] = (await this.listComments(tenantId, proposalId)).filter(
-      (entry) => entry.id === row.id,
-    );
-    return comment!;
+    if (!comment) throw new Error('Comment insert did not return a row');
+    return comment;
   }
 
   /** Oldest first, with each author's display name. */

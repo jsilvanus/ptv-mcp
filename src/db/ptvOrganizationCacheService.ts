@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, lte } from 'drizzle-orm';
+import { and, asc, eq, exists, gt, lte, notExists, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { withContext } from './context.js';
 import { ptvOrganizationCache } from './schema/ptvOrganizationCache.js';
@@ -19,37 +19,28 @@ export class PtvOrganizationCacheService {
     private readonly ttlMs = DEFAULT_TTL_MS,
   ) {}
 
+  /** Whether a catalogue is cached for `key` and none of its rows has gone stale. */
   async hasFreshCatalogue(key: PtvOrganizationCacheKey): Promise<boolean> {
     const now = new Date();
     return withContext(this.db, { tenantId: key.tenantId }, async (tx) => {
-      const rows = await tx
-        .select({ id: ptvOrganizationCache.id })
-        .from(ptvOrganizationCache)
-        .where(
-          and(
-            eq(ptvOrganizationCache.tenantId, key.tenantId),
-            eq(ptvOrganizationCache.environment, key.environment),
-            eq(ptvOrganizationCache.apiVersion, key.apiVersion),
-            lte(ptvOrganizationCache.staleAt, now),
-          ),
-        )
-        .limit(1);
-
-      if (rows.length > 0) return false;
-
-      const existing = await tx
-        .select({ id: ptvOrganizationCache.id })
-        .from(ptvOrganizationCache)
-        .where(
-          and(
-            eq(ptvOrganizationCache.tenantId, key.tenantId),
-            eq(ptvOrganizationCache.environment, key.environment),
-            eq(ptvOrganizationCache.apiVersion, key.apiVersion),
-          ),
-        )
-        .limit(1);
-
-      return existing.length > 0;
+      const forKey = (extra?: SQL) =>
+        tx
+          .select({ one: sql`1` })
+          .from(ptvOrganizationCache)
+          .where(
+            and(
+              eq(ptvOrganizationCache.tenantId, key.tenantId),
+              eq(ptvOrganizationCache.environment, key.environment),
+              eq(ptvOrganizationCache.apiVersion, key.apiVersion),
+              extra,
+            ),
+          );
+      const [row] = await tx.execute<{ fresh: boolean }>(
+        sql`SELECT (${exists(forKey())} AND ${notExists(
+          forKey(lte(ptvOrganizationCache.staleAt, now)),
+        )}) AS fresh`,
+      );
+      return row?.fresh === true;
     });
   }
 

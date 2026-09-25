@@ -12,6 +12,7 @@ import {
   parseV11ApiUserCredentials,
   V11ApiLoginError,
 } from '../ptv/v11/auth/apiLogin.js';
+import { isPtvEnvironment } from './context.js';
 
 interface ConfigBody {
   environment: PtvEnvironment;
@@ -47,8 +48,6 @@ export async function ptvV11ApiUserRoutes(
 ): Promise<void> {
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireTenantAdmin = createRequireRole(options.db, 'tenant_admin');
-  const isEnvironment = (value: unknown): value is PtvEnvironment =>
-    value === 'test' || value === 'production';
 
   app.get(
     '/tenants/:tenantId/ptv/v11/api-user',
@@ -86,7 +85,7 @@ export async function ptvV11ApiUserRoutes(
       const { tenantId } = request.params;
       const { environment, username, password, apiUserOrganisation, organisationId } =
         request.body ?? {};
-      if (!isEnvironment(environment)) {
+      if (!isPtvEnvironment(environment)) {
         return reply.badRequest('environment must be test or production');
       }
       if (!username?.trim() || !password) {
@@ -141,7 +140,7 @@ export async function ptvV11ApiUserRoutes(
     { preHandler: [authenticate, requireTenantAdmin] },
     async (request, reply) => {
       const { tenantId, environment } = request.params;
-      if (!isEnvironment(environment)) {
+      if (!isPtvEnvironment(environment)) {
         return reply.badRequest('environment must be test or production');
       }
       const credentials = parseV11ApiUserCredentials(

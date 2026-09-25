@@ -122,25 +122,6 @@ export class UserPtvConnectionService {
     }));
   }
 
-  async markValidated(
-    userId: string,
-    apiVersion: string,
-    environment: PtvEnvironment,
-  ): Promise<void> {
-    await withContext(this.db, { userId }, async (tx) => {
-      await tx
-        .update(userPtvConnections)
-        .set({ lastValidatedAt: new Date() })
-        .where(
-          and(
-            eq(userPtvConnections.userId, userId),
-            eq(userPtvConnections.apiVersion, apiVersion),
-            eq(userPtvConnections.environment, environment),
-          ),
-        );
-    });
-  }
-
   async revokeConnection(
     userId: string,
     apiVersion: string,
