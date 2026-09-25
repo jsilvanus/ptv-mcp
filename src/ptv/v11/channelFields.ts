@@ -144,7 +144,8 @@ export function languageValues(items: V11LanguageItem[] | null | undefined): Lan
     .map((item) => ({ language: item.language, value: item.value }));
 }
 
-const CHARGE_TYPES: Record<string, PhoneNumber['chargeType']> = {
+/** v11 charge types, with the pre-v8 names PTV still returns on old data. */
+export const CHARGE_TYPES: Record<string, PhoneNumber['chargeType']> = {
   Chargeable: 'Chargeable',
   Charged: 'Chargeable',
   FreeOfCharge: 'FreeOfCharge',
@@ -326,7 +327,7 @@ export function locationAddressToDomain(wire: V11LocationAddress): ChannelAddres
   }
 }
 
-function streetToWire(address: ChannelAddress): V11StreetAddress {
+export function streetToWire(address: ChannelAddress): V11StreetAddress {
   return {
     ...(address.street ? { street: textToLanguageItems(address.street) } : {}),
     ...(address.streetNumber ? { streetNumber: address.streetNumber } : {}),
@@ -339,7 +340,7 @@ function streetToWire(address: ChannelAddress): V11StreetAddress {
   };
 }
 
-function postOfficeBoxToWire(address: ChannelAddress): V11PostOfficeBoxAddress {
+export function postOfficeBoxToWire(address: ChannelAddress): V11PostOfficeBoxAddress {
   return {
     postOfficeBox: textToLanguageItems(address.postOfficeBox),
     ...(address.postalCode ? { postalCode: address.postalCode } : {}),

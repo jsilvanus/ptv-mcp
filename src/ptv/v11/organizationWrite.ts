@@ -1,9 +1,14 @@
 import type { NewOrganization } from '../adapter.js';
-import type { LocalizedText, Organization, OrganizationArea } from '../domain.js';
-import { phoneToWire, textToLanguageItems, webLinkToWire } from './channelFields.js';
+import type { Organization, OrganizationArea } from '../domain.js';
+import { phoneToWire, webLinkToWire } from './channelFields.js';
+import { needsDeleteFlag } from './deleteFlags.js';
 import { organizationAddressToWire } from './mappers/organization.js';
-import { toV11WritePublishingStatus } from './mappers/common.js';
-import type { V11LocalizedItem, V11OrganizationWire } from './wireModel.js';
+import {
+  localizedTextToWireList as toWireList,
+  toV11WritePublishingStatus,
+  wireItemsOfType as kept,
+} from './mappers/common.js';
+import type { V11OrganizationWire } from './wireModel.js';
 
 /**
  * Bodies for `PUT /api/v11/Organization/{id}` (V9VmOpenApiOrganizationInBase)
@@ -19,14 +24,6 @@ import type { V11LocalizedItem, V11OrganizationWire } from './wireModel.js';
  * never sent on a PUT, so PTV keeps them.
  */
 
-function toWireList(text: LocalizedText | undefined, type: string): V11LocalizedItem[] {
-  return textToLanguageItems(text).map((item) => ({ ...item, type }));
-}
-
-function kept(items: V11LocalizedItem[] | null | undefined, type: string): V11LocalizedItem[] {
-  return (items ?? []).filter((item) => !!item.value && item.type === type);
-}
-
 function displayNameTypes(
   nameLanguages: string[],
   alternativeNameShownIn: string[],
@@ -37,29 +34,28 @@ function displayNameTypes(
   }));
 }
 
-function contactFields(changes: Partial<Organization>): Record<string, unknown> {
+/**
+ * The contact lists present in `fields`. With `forUpdate`, an emptied list
+ * is cleared with its delete flag (deleteFlags.ts); a new organisation has
+ * nothing to clear.
+ */
+function contactFields(fields: Partial<Organization>, forUpdate: boolean): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  if ('emails' in changes) {
-    const emails = changes.emails ?? [];
-    if (emails.length > 0) {
-      body.emails = emails.map((email) => ({ language: email.language, value: email.value }));
-    } else body.deleteAllEmails = true;
-  }
-  if ('phoneNumbers' in changes) {
-    const phones = changes.phoneNumbers ?? [];
-    if (phones.length > 0) body.phoneNumbers = phones.map((phone) => phoneToWire(phone));
-    else body.deleteAllPhones = true;
-  }
-  if ('webPages' in changes) {
-    const pages = changes.webPages ?? [];
-    if (pages.length > 0) body.webPages = pages.map(webLinkToWire);
-    else body.deleteAllWebPages = true;
-  }
-  if ('addresses' in changes) {
-    const addresses = changes.addresses ?? [];
-    if (addresses.length > 0) body.addresses = addresses.map(organizationAddressToWire);
-    else body.deleteAllAddresses = true;
-  }
+  const list = (field: keyof Organization, items: unknown[] | undefined) => {
+    if (!(field in fields)) return;
+    if (items && items.length > 0) body[field] = items;
+    else if (forUpdate) body[needsDeleteFlag('Organization', field) as string] = true;
+  };
+  list(
+    'emails',
+    fields.emails?.map((email) => ({ language: email.language, value: email.value })),
+  );
+  list(
+    'phoneNumbers',
+    fields.phoneNumbers?.map((phone) => phoneToWire(phone)),
+  );
+  list('webPages', fields.webPages?.map(webLinkToWire));
+  list('addresses', fields.addresses?.map(organizationAddressToWire));
   return body;
 }
 
@@ -108,7 +104,7 @@ export function organizationChangesToV11Body(
 
   if ('businessCode' in changes) body.businessCode = changes.businessCode ?? '';
 
-  return { ...body, ...contactFields(changes) };
+  return { ...body, ...contactFields(changes, true) };
 }
 
 /**
@@ -140,11 +136,6 @@ export function newOrganizationToV11Body(organization: NewOrganization): Record<
   const names = toWireList(organization.names, 'Name');
   const alternatives = toWireList(organization.alternativeNames, 'AlternativeName');
   const alternativeLanguages = new Set(alternatives.map((item) => item.language));
-  const contacts = contactFields(organization);
-  // Nothing to clear on a new organisation.
-  for (const key of Object.keys(contacts)) {
-    if (key.startsWith('deleteAll')) delete contacts[key];
-  }
   return {
     parentOrganizationId: organization.parentOrganizationId,
     organizationType: organization.organizationType,
@@ -164,6 +155,6 @@ export function newOrganizationToV11Body(organization: NewOrganization): Record<
     ...(organization.sourceId ? { sourceId: organization.sourceId } : {}),
     ...(organization.municipality ? { municipality: organization.municipality } : {}),
     ...organizationAreaToV11Post(organization.area),
-    ...contacts,
+    ...contactFields(organization, false),
   };
 }

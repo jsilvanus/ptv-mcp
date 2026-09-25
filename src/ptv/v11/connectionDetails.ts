@@ -1,11 +1,14 @@
-import type { ChannelAddress, ConnectionDetails, LocalizedText } from '../domain.js';
+import type { ChannelAddress, ConnectionDetails } from '../domain.js';
 import {
+  CHARGE_TYPES,
   languageValues,
   locationAddressToDomain,
   phoneToDomain,
   phoneToWire,
+  postOfficeBoxToWire,
   serviceHourToDomain,
   serviceHourToWire,
+  streetToWire,
   textToLanguageItems,
   webLinkToWire,
   webPageToDomain,
@@ -15,6 +18,7 @@ import {
   type V11ServiceHour,
   type V11WebPage,
 } from './channelFields.js';
+import { itemsOfType, localizedTextToWireList } from './mappers/common.js';
 import type { V11LocalizedItem } from './wireModel.js';
 
 /**
@@ -45,26 +49,10 @@ export interface V11ConnectionExtraInfo {
   contactDetails?: unknown;
 }
 
-const CHARGE_TYPES: Record<string, ConnectionDetails['chargeType']> = {
-  Chargeable: 'Chargeable',
-  Charged: 'Chargeable',
-  FreeOfCharge: 'FreeOfCharge',
-  Free: 'FreeOfCharge',
-  Other: 'Other',
-};
-
-function descriptionsOfType(items: V11LocalizedItem[] | null | undefined, type: string) {
-  const text: LocalizedText = {};
-  for (const item of items ?? []) {
-    if ((item.type ?? 'Description') === type && item.value) text[item.language] = item.value;
-  }
-  return Object.keys(text).length > 0 ? text : undefined;
-}
-
 export function connectionDetailsToDomain(wire: V11ConnectionExtraInfo): ConnectionDetails {
   const chargeType = wire.serviceChargeType ? CHARGE_TYPES[wire.serviceChargeType] : undefined;
-  const descriptions = descriptionsOfType(wire.description, 'Description');
-  const chargeDescriptions = descriptionsOfType(wire.description, 'ChargeTypeAdditionalInfo');
+  const descriptions = itemsOfType(wire.description, 'Description');
+  const chargeDescriptions = itemsOfType(wire.description, 'ChargeTypeAdditionalInfo');
   const serviceHours = ((wire.serviceHours ?? []) as V11ServiceHour[]).map(serviceHourToDomain);
   const contact = (wire.contactDetails ?? {}) as V11ContactDetails;
   const emails = languageValues(contact.emails);
@@ -93,35 +81,21 @@ export function connectionDetailsToDomain(wire: V11ConnectionExtraInfo): Connect
 
 /** V7VmOpenApiAddressContactIn: Postal only, sub type Street, PostOfficeBox or Abroad. */
 function contactAddressToWire(address: ChannelAddress): Record<string, unknown> {
-  const texts = (text: LocalizedText | undefined) => textToLanguageItems(text);
   switch (address.kind) {
     case 'PostOfficeBox':
       return {
         type: 'Postal',
         subType: 'PostOfficeBox',
-        postOfficeBoxAddress: {
-          postOfficeBox: texts(address.postOfficeBox),
-          ...(address.postalCode ? { postalCode: address.postalCode } : {}),
-          ...(address.additionalInformation
-            ? { additionalInformation: texts(address.additionalInformation) }
-            : {}),
-        },
+        postOfficeBoxAddress: postOfficeBoxToWire(address),
       };
     case 'Foreign':
-      return { type: 'Postal', subType: 'Abroad', locationAbroad: texts(address.text) };
-    default:
       return {
         type: 'Postal',
-        subType: 'Street',
-        streetAddress: {
-          ...(address.street ? { street: texts(address.street) } : {}),
-          ...(address.streetNumber ? { streetNumber: address.streetNumber } : {}),
-          ...(address.postalCode ? { postalCode: address.postalCode } : {}),
-          ...(address.additionalInformation
-            ? { additionalInformation: texts(address.additionalInformation) }
-            : {}),
-        },
+        subType: 'Abroad',
+        locationAbroad: textToLanguageItems(address.text),
       };
+    default:
+      return { type: 'Postal', subType: 'Street', streetAddress: streetToWire(address) };
   }
 }
 
@@ -132,14 +106,8 @@ function contactAddressToWire(address: ChannelAddress): Record<string, unknown> 
  */
 export function connectionDetailsToWire(details: ConnectionDetails): Record<string, unknown> {
   const description = [
-    ...textToLanguageItems(details.descriptions).map((item) => ({
-      ...item,
-      type: 'Description',
-    })),
-    ...textToLanguageItems(details.chargeDescriptions).map((item) => ({
-      ...item,
-      type: 'ChargeTypeAdditionalInfo',
-    })),
+    ...localizedTextToWireList(details.descriptions, 'Description'),
+    ...localizedTextToWireList(details.chargeDescriptions, 'ChargeTypeAdditionalInfo'),
   ];
   const hours = details.serviceHours ?? [];
   const phones = (details.phoneNumbers ?? []).filter((phone) => phone.type !== 'Fax');

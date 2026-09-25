@@ -1,21 +1,22 @@
 import type {
   ChannelAddress,
-  LocalizedText,
   Organization,
   OrganizationArea,
   OrganizationType,
 } from '../../domain.js';
 import {
+  languageValues,
   locationAddressToDomain,
   locationAddressToWire,
   phoneToDomain,
   webPageToDomain,
+  type V11LanguageItem,
   type V11LocationAddress,
   type V11Phone,
   type V11WebPage,
 } from '../channelFields.js';
-import type { V11LocalizedItem, V11OrganizationWire } from '../wireModel.js';
-import { toLocalizedText, toPublishingStatus } from './common.js';
+import type { V11OrganizationWire } from '../wireModel.js';
+import { itemsOfType, toLocalizedText, toPublishingStatus } from './common.js';
 
 const ORGANIZATION_TYPES: OrganizationType[] = [
   'State',
@@ -27,22 +28,6 @@ const ORGANIZATION_TYPES: OrganizationType[] = [
   'SotePublic',
   'SotePrivate',
 ];
-
-/** Entries of exactly one type (toLocalizedText falls back to other types). */
-export function itemsOfType(
-  items: V11LocalizedItem[] | null | undefined,
-  type: string,
-): LocalizedText {
-  const text: LocalizedText = {};
-  for (const item of items ?? []) {
-    if (item.type === type && item.value) text[item.language] = item.value;
-  }
-  return text;
-}
-
-function nonEmpty(text: LocalizedText): LocalizedText | undefined {
-  return Object.keys(text).length > 0 ? text : undefined;
-}
 
 /**
  * Organisation addresses (V9VmOpenApiAddress) read like service location
@@ -82,16 +67,14 @@ function organizationArea(wire: V11OrganizationWire): OrganizationArea | undefin
 
 export function organizationWireToDomain(wire: V11OrganizationWire): Organization {
   const organizationType = ORGANIZATION_TYPES.find((type) => type === wire.organizationType);
-  const alternativeNames = nonEmpty(itemsOfType(wire.organizationNames, 'AlternativeName'));
+  const alternativeNames = itemsOfType(wire.organizationNames, 'AlternativeName');
   const alternativeNameShownIn = (wire.displayNameType ?? [])
     .filter((entry) => entry.type === 'AlternativeName' || entry.type === 'AlternateName')
     .map((entry) => entry.language);
-  const summaries = nonEmpty(itemsOfType(wire.organizationDescriptions, 'Summary'));
-  const descriptions = nonEmpty(itemsOfType(wire.organizationDescriptions, 'Description'));
+  const summaries = itemsOfType(wire.organizationDescriptions, 'Summary');
+  const descriptions = itemsOfType(wire.organizationDescriptions, 'Description');
   const area = organizationArea(wire);
-  const emails = (wire.emails ?? [])
-    .filter((email) => !!email.value)
-    .map((email) => ({ language: email.language, value: email.value as string }));
+  const emails = languageValues(wire.emails as V11LanguageItem[] | null | undefined);
   const phoneNumbers = ((wire.phoneNumbers ?? []) as V11Phone[]).map(phoneToDomain);
   const webPages = ((wire.webPages ?? []) as V11WebPage[]).map(webPageToDomain);
   const addresses = ((wire.addresses ?? []) as V11LocationAddress[]).map(

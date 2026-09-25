@@ -32,6 +32,37 @@ export function toLocalizedText(
   return result;
 }
 
+/** `text` as v11 localized list items of one `type`; empty texts are left out. */
+export function localizedTextToWireList(
+  text: LocalizedText | undefined,
+  type: string,
+): V11LocalizedItem[] {
+  return Object.entries(text ?? {})
+    .filter((entry): entry is [string, string] => !!entry[1])
+    .map(([language, value]) => ({ language, value, type }));
+}
+
+/** The non-empty wire items of exactly one `type`. */
+export function wireItemsOfType(
+  items: V11LocalizedItem[] | null | undefined,
+  type: string,
+): V11LocalizedItem[] {
+  return (items ?? []).filter((item) => !!item.value && item.type === type);
+}
+
+/**
+ * The texts of exactly one `type` (toLocalizedText falls back to other
+ * types), or undefined when there are none.
+ */
+export function itemsOfType(
+  items: V11LocalizedItem[] | null | undefined,
+  type: string,
+): LocalizedText | undefined {
+  const text: LocalizedText = {};
+  for (const item of wireItemsOfType(items, type)) text[item.language] = item.value as string;
+  return Object.keys(text).length > 0 ? text : undefined;
+}
+
 export function toCodeListEntries(items: V11CodeListItem[] | undefined): CodeListEntry[] {
   return (items ?? []).map((item) => ({
     code: item.code ?? undefined,

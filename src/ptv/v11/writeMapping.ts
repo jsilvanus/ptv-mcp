@@ -1,7 +1,11 @@
 import type { NewService } from '../adapter.js';
-import type { CodeListEntry, LocalizedText, Service } from '../domain.js';
+import type { CodeListEntry, Service } from '../domain.js';
 import { needsDeleteFlag } from './deleteFlags.js';
-import { toV11WritePublishingStatus } from './mappers/common.js';
+import {
+  localizedTextToWireList,
+  toV11WritePublishingStatus,
+  wireItemsOfType,
+} from './mappers/common.js';
 import type {
   V11AreaItem,
   V11CodeListItem,
@@ -215,22 +219,6 @@ function keptWireItems(
   replacedTypes: string[],
 ): V11LocalizedItem[] {
   return (items ?? []).filter((item) => !!item.value && !replacedTypes.includes(item.type ?? ''));
-}
-
-function wireItemsOfType(
-  items: V11LocalizedItem[] | null | undefined,
-  type: string,
-): V11LocalizedItem[] {
-  return (items ?? []).filter((item) => !!item.value && item.type === type);
-}
-
-function localizedTextToWireList(
-  text: LocalizedText | undefined,
-  type: string,
-): V11LocalizedItem[] {
-  return Object.entries(text ?? {})
-    .filter((entry): entry is [string, string] => !!entry[1])
-    .map(([language, value]) => ({ language, value, type }));
 }
 
 /**

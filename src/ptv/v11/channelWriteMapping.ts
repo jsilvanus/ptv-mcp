@@ -1,6 +1,6 @@
 import type { ServiceChannel } from '../domain.js';
 import type { NewChannel } from '../adapter.js';
-import { toV11WritePublishingStatus } from './mappers/common.js';
+import { localizedTextToWireList, toV11WritePublishingStatus } from './mappers/common.js';
 import {
   accessibilityToWire,
   deliveryAddressToWire,
@@ -55,7 +55,7 @@ export function channelChangesToV11Body(
   if ('names' in changes) {
     body.serviceChannelNames = [
       ...kept(current.serviceChannelNames, ['Name']),
-      ...toWireList(changes.names, 'Name'),
+      ...localizedTextToWireList(changes.names, 'Name'),
     ];
   }
   const replaced = [
@@ -65,8 +65,10 @@ export function channelChangesToV11Body(
   if (replaced.length > 0 || languages !== undefined) {
     body.serviceChannelDescriptions = [
       ...kept(current.serviceChannelDescriptions, replaced),
-      ...('summaries' in changes ? toWireList(changes.summaries, 'Summary') : []),
-      ...('descriptions' in changes ? toWireList(changes.descriptions, 'Description') : []),
+      ...('summaries' in changes ? localizedTextToWireList(changes.summaries, 'Summary') : []),
+      ...('descriptions' in changes
+        ? localizedTextToWireList(changes.descriptions, 'Description')
+        : []),
     ];
   }
   if (languages !== undefined) {
@@ -96,10 +98,10 @@ export function newChannelToV11Body(channel: NewChannel): Record<string, unknown
     organizationId: channel.organizationId,
     publishingStatus: toV11WritePublishingStatus(channel.publishingStatus),
     languages: channel.languages,
-    serviceChannelNames: toWireList(channel.names, 'Name'),
+    serviceChannelNames: localizedTextToWireList(channel.names, 'Name'),
     serviceChannelDescriptions: [
-      ...toWireList(channel.summaries, 'Summary'),
-      ...toWireList(channel.descriptions, 'Description'),
+      ...localizedTextToWireList(channel.summaries, 'Summary'),
+      ...localizedTextToWireList(channel.descriptions, 'Description'),
     ],
     isVisibleForAll: channel.isVisibleForAll ?? true,
     ...(channel.serviceIds?.length ? { services: channel.serviceIds } : {}),
@@ -236,12 +238,6 @@ function channelDetailsToV11(
     body.accessibilityClassification = accessibilityToWire(fields.accessibility, languages);
   }
   return body;
-}
-
-function toWireList(text: Record<string, string | undefined> | undefined, type: string) {
-  return Object.entries(text ?? {})
-    .filter((entry): entry is [string, string] => !!entry[1])
-    .map(([language, value]) => ({ language, value, type }));
 }
 
 /** v11's per-type channel write paths; the type comes from the channel's current record. */
