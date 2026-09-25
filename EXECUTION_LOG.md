@@ -1833,3 +1833,43 @@ Deviation: sub-organisation archiving is `publishingStatus: Archived` on
 `organisation_update`; whether v11 accepts `Deleted` for organisations is
 one of the live tests.
 
+
+## 2026-09-25 — Codebase-wide simplify pass
+
+A reuse / simplification / efficiency / altitude review of the DVV branch,
+then of four subsets of the whole codebase (PTV adapters, MCP layer,
+platform services, web UI), with the fixes applied. Behaviour is the same
+except where noted; all unit (433) and integration (146) tests pass.
+
+- **Proposals:** one resolve path for every kind (`applyApproved`), one
+  re-diff switch (`liveDiff`); every kind is now read in the proposal's
+  own environment (channel, connection and organisation updates used the
+  caller's). Generic `diffFields`, shared `resolveReadAdapter` /
+  `resolveWriteAdapter`, `isCreateKind`, validators returning
+  `{valid, errors}`, shared reviewer lookup, `requireTenantRole` returns the
+  role.
+- **Quality and export:** `serviceCheckContext` (organisation names and
+  general description, in parallel) for every service check, so proposals
+  also check against the organisation's names; `src/ptv/organisationContent.ts`
+  reads an organisation's content for review campaigns and the report with
+  bounded concurrency and one connection count; PTV UI formatting moved to
+  `src/format/ptvFormat.ts`; limits in `src/ptv/limits.ts`.
+- **PTV adapters:** shared paging, HTTP retry and hierarchy helpers
+  (`src/ptv/{paging,http,hierarchy}.ts`), page walks and list-by-id reads
+  batched and bounded, per-request memo of organisation-scoped lists,
+  v12 hydration without re-enrichment, dead code removed.
+- **MCP server and OAuth:** a `tool()` wrapper for the 42 tools, a
+  per-request memo of role and adapter lookups, duplicated OAuth code
+  merged, dead code (`oauthFormBody.ts`) removed.
+- **Platform:** one REST error table (`src/routes/errorHandler.ts`), shared
+  route context, role read from the guard, single-statement proposal status
+  changes (two concurrent resolves can no longer both succeed),
+  `withContext` in one statement. `TenantNotFoundError` is now a 404.
+- **Web UI:** shared error, fetch and environment-select helpers; the audit
+  log fetches on submit; fewer refetches on the review page; reviewer and
+  comment panels reset when another proposal is selected.
+
+Left as separate tasks: a per-kind proposal handler registry with typed
+`changes`, a v12 organisation cache and bulk connection reads, splitting
+`AuthService.login` so MCP login doesn't create web sessions, and the
+larger web page splits.
