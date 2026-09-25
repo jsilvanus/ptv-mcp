@@ -3,6 +3,7 @@ import type {
   ConnectionDetails,
   GeneralDescription,
   Organization,
+  OrganizationType,
   PaginatedResult,
   PtvContentId,
   SearchParams,
@@ -74,6 +75,31 @@ export interface ConnectionChangeProposal {
 export interface ApplyConnectionChangeResult {
   serviceId: PtvContentId;
   channelId: PtvContentId;
+  appliedAt: string;
+}
+
+/** A proposed change to an existing organisation. */
+export interface OrganizationChangeProposal {
+  organizationId: PtvContentId;
+  /** Only the fields that change; a present field replaces the current value. */
+  changes: Partial<Organization>;
+}
+
+/**
+ * A sub-organisation to create under `parentOrganizationId`. PTV assigns
+ * `id` and `modifiedAt`; `publishingStatus` is Draft or Published.
+ */
+export type NewOrganization = Omit<
+  Organization,
+  'id' | 'modifiedAt' | 'parentOrganizationId' | 'organizationType'
+> & {
+  parentOrganizationId: PtvContentId;
+  organizationType: OrganizationType;
+};
+
+export interface ApplyOrganizationChangeResult {
+  organizationId: PtvContentId;
+  publishingStatus: Organization['publishingStatus'];
   appliedAt: string;
 }
 
@@ -156,4 +182,12 @@ export interface PtvAdapter {
    * write-capability rules as applyServiceChange.
    */
   applyConnectionChange(proposal: ConnectionChangeProposal): Promise<ApplyConnectionChangeResult>;
+
+  /** Writes an approved change to an existing organisation; same rules as applyServiceChange. */
+  applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult>;
+
+  /** Creates a sub-organisation; same write-capability rules as applyServiceChange. */
+  createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult>;
 }

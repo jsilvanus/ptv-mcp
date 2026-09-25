@@ -1,16 +1,23 @@
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { asChannel, createNewChannel, normalizeNewChannel } from './newChannelProposal.js';
-import type { NewChannel } from '../ptv/adapter.js';
+import type { NewChannel, NewOrganization } from '../ptv/adapter.js';
 import {
   checkChannel,
   checkConnection,
+  checkOrganization,
   checkService,
   type QualityReport,
 } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { Connection, PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
+import type {
+  Connection,
+  Organization,
+  PtvContentId,
+  Service,
+  ServiceChannel,
+} from '../ptv/domain.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import {
@@ -26,6 +33,12 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
+import {
+  applyOrganizationChanges,
+  createNewOrganization,
+  OrganizationNotFoundError,
+  prepareOrganizationProposal,
+} from './organizationProposal.js';
 import {
   applyConnectionChanges,
   ConnectionNotFoundError,
@@ -70,9 +83,12 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
  */
 export function proposedQuality(
   kind: ProposalKind,
-  proposed: Service | NewService | ServiceChannel | Connection | null,
+  proposed: Service | NewService | ServiceChannel | Connection | Organization | null,
 ): QualityReport | null {
   if (!proposed) return null;
+  if (kind === 'organisation_update' || kind === 'organisation_create') {
+    return checkOrganization(proposed as Organization);
+  }
   if (kind === 'connection_update') return checkConnection(proposed as Connection);
   if (kind === 'channel_create') {
     const serviceIds = (proposed as { serviceIds?: string[] }).serviceIds;
@@ -110,9 +126,9 @@ export interface ProposalDetails extends ProposalSummary {
    * and when the service or channel can no longer be read, e.g. after an
    * approved archive: PTV then returns 404 for it.
    */
-  current: Service | ServiceChannel | Connection | null;
+  current: Service | ServiceChannel | Connection | Organization | null;
   /** `null` when the service or channel can no longer be read (see `current`). */
-  proposed: Service | NewService | ServiceChannel | Connection | null;
+  proposed: Service | NewService | ServiceChannel | Connection | Organization | null;
   /** Oldest first. */
   comments: ProposalComment[];
   /** Required reviewers; approving waits until all have `approved`. */
@@ -180,7 +196,7 @@ async function proposalDetails(
 }
 
 function isCreate(kind: ProposalKind): boolean {
-  return kind === 'service_create' || kind === 'channel_create';
+  return kind === 'service_create' || kind === 'channel_create' || kind === 'organisation_create';
 }
 
 function manualPublishState(
@@ -216,6 +232,12 @@ function manualPublishState(
       languages: Object.keys(entity?.names ?? {}),
       ...(entity?.channelType ? { channelType: entity.channelType } : {}),
       ...(entity?.organizationId ? { organizationId: entity.organizationId } : {}),
+      ...(proposal.kind === 'organisation_create'
+        ? {
+            organizationId: (proposal.changes as { parentOrganizationId?: string })
+              .parentOrganizationId,
+          }
+        : {}),
     }),
     publishedInPtv: creating
       ? null
@@ -243,7 +265,8 @@ async function proposalDiffDetails(
     if (!(
       err instanceof ServiceNotFoundError ||
       err instanceof ChannelNotFoundError ||
-      err instanceof ConnectionNotFoundError
+      err instanceof ConnectionNotFoundError ||
+      err instanceof OrganizationNotFoundError
     )) {
       throw err;
     }
@@ -283,6 +306,33 @@ async function liveProposalDetails(
       diff: proposal.queuedDiff,
       current: null,
       proposed: normalizeNewService(proposal.changes),
+    };
+  }
+  if (proposal.kind === 'organisation_create') {
+    // Stored normalized at queue time (the parent's defaults filled in).
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: proposal.queuedDiff,
+      current: null,
+      proposed: { ...(proposal.changes as unknown as NewOrganization), id: '' },
+    };
+  }
+  if (proposal.kind === 'organisation_update') {
+    const prepared = await prepareOrganizationProposal(
+      registry,
+      ctx,
+      proposal.serviceId,
+      proposal.changes as unknown as Partial<Organization>,
+    );
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: prepared.diff,
+      current: prepared.current,
+      proposed: prepared.proposed,
     };
   }
   if (proposal.kind === 'connection_update') {
@@ -680,6 +730,17 @@ export async function resolveProposal(
     return resolveChannelProposal(registry, proposalService, auditService, ctx, proposal, action);
   }
 
+  if (proposal.kind === 'organisation_update' || proposal.kind === 'organisation_create') {
+    return resolveOrganizationProposal(
+      registry,
+      proposalService,
+      auditService,
+      ctx,
+      proposal,
+      action,
+    );
+  }
+
   if (proposal.kind === 'connection_update') {
     return resolveConnectionProposal(
       registry,
@@ -1013,6 +1074,84 @@ async function resolveChannelProposal(
 }
 
 /**
+ * Both organisation kinds: approve_and_export leaves the change or the new
+ * sub-organisation for manual entry in PTV's UI; approve_and_apply writes
+ * it (re-diffing an update first) and records a new organisation's id.
+ */
+async function resolveOrganizationProposal(
+  registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+  action: Exclude<ResolveProposalAction, 'reject'>,
+): Promise<ProposalDetails> {
+  const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+  const record = (result: string, afterState?: Record<string, unknown>) =>
+    auditService.record({
+      tenantId: ctx.tenantId,
+      userId: ctx.actingUserId,
+      action: 'ResolveProposal',
+      resourceType: 'Proposal',
+      resourceId: proposal.id,
+      ...(afterState ? { afterState } : {}),
+      result,
+      correlationId: proposal.correlationId,
+    });
+
+  if (action === 'approve_and_export') {
+    const approved = await proposalService.markResolved(
+      ctx.tenantId,
+      proposal.id,
+      'approved',
+      ctx.actingUserId,
+    );
+    await record('ApprovedForManualPublish');
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
+  }
+  if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
+
+  let createdId: string | undefined;
+  try {
+    if (proposal.kind === 'organisation_create') {
+      const result = await createNewOrganization(
+        registry,
+        auditService,
+        proposalCtx,
+        proposal.changes as unknown as NewOrganization,
+        proposal.correlationId,
+      );
+      createdId = result.organizationId;
+    } else {
+      await applyOrganizationChanges(
+        registry,
+        auditService,
+        proposalCtx,
+        proposal.serviceId,
+        proposal.changes as unknown as Partial<Organization>,
+        proposal.correlationId,
+      );
+    }
+  } catch (err) {
+    if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
+      throw err;
+    }
+    await proposalService.markResolved(ctx.tenantId, proposal.id, 'failed', ctx.actingUserId);
+    await record('Failed');
+    throw err;
+  }
+  const applied = await proposalService.markResolved(
+    ctx.tenantId,
+    proposal.id,
+    'applied',
+    ctx.actingUserId,
+    createdId,
+  );
+  await record('Applied', createdId ? { organizationId: createdId } : undefined);
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
+}
+
+/**
  * Like resolveChannelProposal: approve_and_export leaves the change for
  * manual entry in PTV's UI; approve_and_apply re-diffs and writes it.
  */
@@ -1182,12 +1321,26 @@ async function checkCreatedItem(
     operation: 'read',
     actingUserId: ctx.actingUserId,
   });
-  const expected = proposal.changes as Partial<Service>;
-  const found: { organizationId: string; names: Service['names'] } | null =
-    proposal.kind === 'service_create'
+  const organisation = proposal.kind === 'organisation_create';
+  const changes = proposal.changes as Partial<Service> & { parentOrganizationId?: string };
+  // A sub-organisation belongs under its parent, as a service or channel to its organisation.
+  const expected = {
+    names: changes.names,
+    organizationId: organisation ? changes.parentOrganizationId : changes.organizationId,
+  };
+  const found: { organizationId: string; names: Service['names'] } | null = organisation
+    ? await adapter
+        .getOrganisation(ptvId)
+        .then((org) => org && { organizationId: org.parentOrganizationId ?? '', names: org.names })
+        .catch(() => null)
+    : proposal.kind === 'service_create'
       ? await adapter.getService(ptvId).catch(() => null)
       : await adapter.getChannel(ptvId).catch(() => null);
-  const what = proposal.kind === 'service_create' ? 'service' : 'channel';
+  const what = organisation
+    ? 'organisation'
+    : proposal.kind === 'service_create'
+      ? 'service'
+      : 'channel';
   if (!found) {
     throw new ManualPublishCheckError(
       `No ${what} ${ptvId} in PTV (${ctx.environment}). Check the id; a draft may not be readable until it is published.`,
@@ -1196,7 +1349,9 @@ async function checkCreatedItem(
   const problems: string[] = [];
   if (expected.organizationId && found.organizationId !== expected.organizationId) {
     problems.push(
-      `it belongs to organisation ${found.organizationId}, not ${expected.organizationId}`,
+      organisation
+        ? `its parent is ${found.organizationId || 'none'}, not ${expected.organizationId}`
+        : `it belongs to organisation ${found.organizationId}, not ${expected.organizationId}`,
     );
   }
   for (const [language, name] of Object.entries(expected.names ?? {})) {

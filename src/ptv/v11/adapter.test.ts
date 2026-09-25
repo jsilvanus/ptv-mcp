@@ -256,6 +256,62 @@ describe('PtvV11Adapter.applyConnectionChange', () => {
   });
 });
 
+describe('PtvV11Adapter organisation writes', () => {
+  const org = {
+    id: 'org-1',
+    publishingStatus: 'Published',
+    organizationType: 'Organization',
+    organizationNames: [{ language: 'fi', value: 'Vanha', type: 'Name' }],
+    modified: '2026-09-24T00:00:00',
+  };
+  function adapterWith(routes: Record<string, () => Response>) {
+    const { fetchImpl, calls } = fakeFetch(routes);
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+    return { adapter, calls };
+  }
+
+  it('PUTs an organisation change built on the current record', async () => {
+    const { adapter, calls } = adapterWith({
+      'GET /api/v11/Organization/org-1': () => Response.json(org),
+      'PUT /api/v11/Organization/org-1': () => Response.json(org),
+    });
+    await adapter.applyOrganizationChange({
+      organizationId: 'org-1',
+      changes: { names: { fi: 'Uusi' } },
+    });
+    const put = calls.find((call) => call.method === 'PUT');
+    expect(put?.authorization).toBe('Bearer api-user-token');
+    expect(put?.body).toEqual({
+      publishingStatus: 'Published',
+      organizationNames: [{ language: 'fi', value: 'Uusi', type: 'Name' }],
+      displayNameType: [{ language: 'fi', type: 'Name' }],
+    });
+  });
+
+  it('POSTs a new sub-organisation', async () => {
+    const { adapter, calls } = adapterWith({
+      'POST /api/v11/Organization': () =>
+        Response.json({ ...org, id: 'org-2', publishingStatus: 'Draft' }),
+    });
+    const result = await adapter.createOrganization({
+      parentOrganizationId: 'org-1',
+      organizationType: 'Organization',
+      publishingStatus: 'Draft',
+      names: { fi: 'Diakoniakeskus' },
+      summaries: { fi: 'Diakoniatyö' },
+      descriptions: { fi: 'Kuvaus' },
+    });
+    expect(result).toMatchObject({ organizationId: 'org-2', publishingStatus: 'Draft' });
+    expect(calls[0]?.body).toMatchObject({ parentOrganizationId: 'org-1', areaType: 'Nationwide' });
+  });
+});
+
 describe('PtvV11Adapter.applyChannelChange', () => {
   it.each(['EChannel', 'Phone', 'PrintableForm', 'ServiceLocation', 'WebPage'])(
     'PUTs a %s channel to its own type path with the token',

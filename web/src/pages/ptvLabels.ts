@@ -37,6 +37,13 @@ export const FIELD_LABELS: Record<string, string> = {
   channelId: 'Asiointikanava',
   chargeType: 'Maksullisuus',
   chargeDescriptions: 'Maksullisuuden lisätieto',
+  alternativeNames: 'Vaihtoehtoinen nimi',
+  alternativeNameShownIn: 'Vaihtoehtoinen nimi ensisijaisena',
+  businessCode: 'Y-tunnus',
+  organizationType: 'Organisaatiotyyppi',
+  parentOrganizationId: 'Yläorganisaatio',
+  area: 'Aluetieto',
+  municipality: 'Kunta',
 };
 
 export const CODE_LIST_FIELDS = [

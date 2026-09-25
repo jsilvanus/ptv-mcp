@@ -2,6 +2,9 @@ import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheS
 import type {
   ApplyChannelChangeResult,
   ApplyConnectionChangeResult,
+  ApplyOrganizationChangeResult,
+  NewOrganization,
+  OrganizationChangeProposal,
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
@@ -54,6 +57,7 @@ import {
   V11_CHANNEL_WRITE_TYPES,
 } from './channelWriteMapping.js';
 import { planConnectionDetails, planServiceConnections } from './connectionWrite.js';
+import { newOrganizationToV11Body, organizationChangesToV11Body } from './organizationWrite.js';
 import {
   sharedV11ApiTokenCache,
   type V11ApiTokenCache,
@@ -561,6 +565,45 @@ export class PtvV11Adapter implements PtvAdapter {
     return {
       serviceId: proposal.serviceId,
       channelId: proposal.channelId,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const current = await this.getOrNull<V11OrganizationWire>(
+      `/api/v11/Organization/${proposal.organizationId}`,
+    );
+    if (!current) throw new Error(`PTV organisation ${proposal.organizationId} not found`);
+    if (current.publishingStatus === 'Modified') {
+      throw new V11ModifiedVersionLockedError(proposal.organizationId);
+    }
+    const updated = await this.client.put<V11OrganizationWire>(
+      `/api/v11/Organization/${proposal.organizationId}`,
+      organizationChangesToV11Body(proposal.changes, current),
+    );
+    return {
+      organizationId: updated.id,
+      publishingStatus: toPublishingStatus(updated.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const created = await this.client.post<V11OrganizationWire>(
+      '/api/v11/Organization',
+      newOrganizationToV11Body(organization),
+    );
+    return {
+      organizationId: created.id,
+      publishingStatus: toPublishingStatus(created.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
   }

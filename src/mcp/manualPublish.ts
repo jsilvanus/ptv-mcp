@@ -4,6 +4,7 @@ import type {
   FormFile,
   LanguageValue,
   LocalizedText,
+  OrganizationArea,
   PhoneNumber,
   ServiceHour,
   WebLink,
@@ -60,9 +61,15 @@ const FIELD_LABELS: [field: string, label: string][] = [
   ['serviceType', 'Palvelun tyyppi'],
   ['generalDescriptionId', 'Pohjakuvaus'],
   ['names', 'Nimi'],
+  ['alternativeNames', 'Vaihtoehtoinen nimi'],
+  ['alternativeNameShownIn', 'Käytä vaihtoehtoista nimeä ensisijaisena nimenä'],
+  ['businessCode', 'Y-tunnus'],
   ['summaries', 'Tiivistelmä'],
   ['descriptions', 'Kuvaus'],
   ['languages', 'Kielet'],
+  ['organizationType', 'Organisaatiotyyppi'],
+  ['area', 'Aluetieto'],
+  ['municipality', 'Kunta'],
   ['isVisibleForAll', 'Yhteiskäyttöisyys'],
   ['urls', 'Verkko-osoite'],
   ['requiresAuthentication', 'Vaatii tunnistautumisen'],
@@ -93,7 +100,7 @@ const FIELD_ORDER = new Map(FIELD_LABELS.map(([field], index) => [field, index])
 const LABELS = new Map(FIELD_LABELS);
 const LANGUAGE_ORDER = ['fi', 'sv', 'en', 'se', 'smn', 'sms'];
 /** Stated in the steps instead of as fields. */
-const STEP_FIELDS = new Set(['channelType', 'organizationId', 'id']);
+const STEP_FIELDS = new Set(['channelType', 'organizationId', 'parentOrganizationId', 'id']);
 
 const DAY_LABELS: Record<Weekday, string> = {
   Monday: 'ma',
@@ -116,14 +123,21 @@ export function buildManualPublishSheet(input: {
   /** connection_update: the connected channel (ptvId is the service). */
   channelId?: string;
 }): ManualPublishSheet {
-  const creating = input.kind === 'service_create' || input.kind === 'channel_create';
+  const creating =
+    input.kind === 'service_create' ||
+    input.kind === 'channel_create' ||
+    input.kind === 'organisation_create';
   const isChannel = input.kind === 'channel_update' || input.kind === 'channel_create';
   const isConnection = input.kind === 'connection_update';
   const target = isChannel
     ? `Asiointikanava: ${CHANNEL_TYPE_LABELS[input.channelType ?? ''] ?? input.channelType ?? ''}`
     : isConnection
       ? 'Liitoksen lisätiedot'
-      : 'Palvelu';
+      : input.kind === 'organisation_create'
+        ? 'Alaorganisaatio'
+        : input.kind === 'organisation_update'
+          ? 'Organisaatio'
+          : 'Palvelu';
   const name = input.names.fi ?? Object.values(input.names).find(Boolean) ?? null;
   const fields = input.diff
     .map((entry) => sheetField(entry, isChannel))
@@ -145,7 +159,9 @@ export function buildManualPublishSheet(input: {
       ]
     : creating
       ? [
-          `In PTV (palvelutietovaranto.suomi.fi), add a new ${target.toLowerCase()}${input.organizationId ? ` for organisation ${input.organizationId}` : ''}.`,
+          input.kind === 'organisation_create'
+            ? `In PTV (palvelutietovaranto.suomi.fi), choose Lisää → Organisaatio and add the sub-organisation under organisation ${input.organizationId ?? ''} (only a PTV main user, pääkäyttäjä, can do this).`
+            : `In PTV (palvelutietovaranto.suomi.fi), add a new ${target.toLowerCase()}${input.organizationId ? ` for organisation ${input.organizationId}` : ''}.`,
           'Fill in the fields below, in every language version listed. Copy each value as it is.',
           `Save it and publish the language versions ${languageList}, or leave it a draft if the Julkaisutila row says Luonnos.`,
           "Copy the new item's id from PTV and confirm here (ptv_confirm_manual_publish with ptvId, or Mark as published in the Proposal queue). The MCP checks the item in PTV and closes the proposal.",
@@ -202,6 +218,10 @@ export function formatValue(field: string, value: unknown): string {
       return PUBLISHING_STATUS_LABELS[value as string] ?? String(value);
     case 'chargeType':
       return CONNECTION_CHARGE_LABELS[value as string] ?? String(value);
+    case 'organizationType':
+      return ORGANIZATION_TYPE_LABELS[value as string] ?? String(value);
+    case 'area':
+      return formatArea(value as OrganizationArea);
     case 'accessibility':
       return ACCESSIBILITY_LABELS[value as string] ?? String(value);
     case 'serviceHours':
@@ -248,6 +268,21 @@ const ACCESSIBILITY_LABELS: Record<string, string> = {
   NonCompliant: 'Ei täytä kriittisiä saavutettavuusvaatimuksia',
   Unknown: 'Ei tietoa',
 };
+
+const ORGANIZATION_TYPE_LABELS: Record<string, string> = {
+  State: 'Valtio',
+  Region: 'Maakunta',
+  RegionalOrganization: 'Alueellinen yhteistoimintaorganisaatio',
+  Municipality: 'Kunta',
+  Organization: 'Järjestöt ja yhteisöt',
+  Company: 'Yritykset',
+};
+
+function formatArea(area: OrganizationArea): string {
+  if (area.areaType === 'Nationwide') return 'Koko maa';
+  if (area.areaType === 'NationwideExceptAlandIslands') return 'Koko maa paitsi Ahvenanmaa';
+  return `Rajattu alue: ${(area.areas ?? []).map((a) => `${a.type} ${a.code}`).join(', ')}`;
+}
 
 const CONNECTION_CHARGE_LABELS: Record<string, string> = {
   Chargeable: 'Maksullinen',

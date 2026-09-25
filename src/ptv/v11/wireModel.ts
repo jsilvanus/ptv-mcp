@@ -152,10 +152,21 @@ export interface V11OrganizationWire {
   parentOrganizationId?: string | null;
   businessCode?: string | null;
   publishingStatus: V11PublishingStatus;
+  organizationType?: string | null;
+  /** Name and AlternativeName entries. */
   organizationNames: V11LocalizedItem[];
+  displayNameType?: { language: string; type: string }[] | null;
+  /** Description and Summary entries. */
+  organizationDescriptions?: V11LocalizedItem[] | null;
   /** Nationwide, NationwideExceptAlandIslands or LimitedType. */
   areaType?: string | null;
   areas?: V11AreaItem[] | null;
+  municipality?: { code?: string | null } | null;
+  emails?: { language: string; value?: string | null; description?: string | null }[] | null;
+  /** Organisation phones and addresses; see channelFields.ts for the shapes. */
+  phoneNumbers?: unknown[] | null;
+  webPages?: unknown[] | null;
+  addresses?: unknown[] | null;
   modified: string;
 }
 

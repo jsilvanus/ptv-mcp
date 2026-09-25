@@ -47,7 +47,8 @@ rules that keep AI-assisted publishing lawful and trustworthy. They are
 - **Two-phase writes.** The AI can only *propose*
   (`ptv_propose_changes`, `ptv_propose_new_service`,
   `ptv_propose_channel_changes`, `ptv_propose_new_channel`,
-  `ptv_propose_connection_changes`). A proposal
+  `ptv_propose_connection_changes`, `ptv_propose_organisation_changes`,
+  `ptv_propose_new_organisation`). A proposal
   changes nothing in PTV.
 - **Human approval with the right role.** Only a Hyväksyjä (Approver) or
   higher can resolve a proposal. With four-eyes on (the default), nobody

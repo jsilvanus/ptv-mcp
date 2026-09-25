@@ -228,13 +228,59 @@ export interface ServiceChannel {
   modifiedAt?: string;
 }
 
+/**
+ * PTV organisation types. Public: State, Region (maakunta),
+ * RegionalOrganization (e.g. a wellbeing services county), Municipality;
+ * private: Organization (järjestöt ja yhteisöt; parishes are described as
+ * this or as their parent's type), Company. SotePublic/SotePrivate are
+ * read-only legacy types.
+ */
+export type OrganizationType =
+  | 'State'
+  | 'Region'
+  | 'RegionalOrganization'
+  | 'Municipality'
+  | 'Organization'
+  | 'Company'
+  | 'SotePublic'
+  | 'SotePrivate';
+
+/** Where an organisation mainly offers its services. */
+export interface OrganizationArea {
+  areaType: 'Nationwide' | 'NationwideExceptAlandIslands' | 'LimitedType';
+  /** LimitedType: e.g. { type: 'Municipality', code: '694' }. */
+  areas?: { type: string; code: string }[];
+}
+
+/**
+ * An organisation. The fields after `names` are optional because not every
+ * adapter reads them (v12 today reads names only).
+ */
 export interface Organization {
   id: PtvContentId;
   sourceId?: string;
   parentOrganizationId?: PtvContentId;
+  /** Y-tunnus, 1234567-8. */
   businessCode?: string;
   publishingStatus: PublishingStatus;
   names: LocalizedText;
+  organizationType?: OrganizationType;
+  /** An unofficial name customers use (vaihtoehtoinen nimi). */
+  alternativeNames?: LocalizedText;
+  /** Languages that show the alternative name instead of the official one. */
+  alternativeNameShownIn?: LanguageCode[];
+  /** Max 150 characters; not a copy of the name. */
+  summaries?: LocalizedText;
+  /** Max 2500 characters (DVV); no contact details. */
+  descriptions?: LocalizedText;
+  area?: OrganizationArea;
+  /** Municipality code, for a Municipality organisation. */
+  municipality?: string;
+  emails?: LanguageValue[];
+  phoneNumbers?: PhoneNumber[];
+  webPages?: WebLink[];
+  /** A visiting address (the main office) and postal addresses. */
+  addresses?: ChannelAddress[];
   modifiedAt?: string;
 }
 

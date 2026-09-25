@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type {
   ApplyChannelChangeResult,
   ApplyConnectionChangeResult,
+  ApplyOrganizationChangeResult,
+  NewOrganization,
+  OrganizationChangeProposal,
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
@@ -236,6 +239,41 @@ export class InMemoryPtvAdapter implements PtvAdapter {
       channelId: proposal.channelId,
       appliedAt: new Date().toISOString(),
     };
+  }
+
+  async applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const index = this.organizations.findIndex((o) => o.id === proposal.organizationId);
+    const existing = this.organizations[index];
+    if (!existing) throw new Error(`Unknown organisation id: ${proposal.organizationId}`);
+    const updated: Organization = { ...existing, ...proposal.changes };
+    this.organizations[index] = updated;
+    return {
+      organizationId: updated.id,
+      publishingStatus: updated.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const created: Organization = { ...organization, id: randomUUID() };
+    this.organizations.push(created);
+    return {
+      organizationId: created.id,
+      publishingStatus: created.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  private requireWrite(): void {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
   }
 }
 

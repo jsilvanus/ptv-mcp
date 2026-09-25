@@ -161,6 +161,15 @@ const lines = (values: string[]) => values.join('\n');
  * localized `names.fi`). Lists get one line per entry, with the language
  * where entries are per language.
  */
+const ORGANIZATION_TYPE: Record<string, string> = {
+  State: 'Valtio',
+  Region: 'Maakunta',
+  RegionalOrganization: 'Alueellinen yhteistoimintaorganisaatio',
+  Municipality: 'Kunta',
+  Organization: 'Järjestöt ja yhteisöt',
+  Company: 'Yritykset',
+};
+
 const CHARGE_TYPE: Record<string, string> = {
   Chargeable: 'Maksullinen',
   FreeOfCharge: 'Maksuton',
@@ -206,6 +215,14 @@ export function formatFieldValue(field: string, value: unknown): string {
         return PUBLISHING_STATUS[value as string] ?? String(value);
       case 'chargeType':
         return CHARGE_TYPE[value as string] ?? String(value);
+      case 'organizationType':
+        return ORGANIZATION_TYPE[value as string] ?? String(value);
+      case 'area': {
+        const area = value as { areaType: string; areas?: { type: string; code: string }[] };
+        if (area.areaType === 'Nationwide') return 'Koko maa';
+        if (area.areaType === 'NationwideExceptAlandIslands') return 'Koko maa paitsi Ahvenanmaa';
+        return `Rajattu alue: ${(area.areas ?? []).map((a) => `${a.type} ${a.code}`).join(', ')}`;
+      }
     }
   } catch {
     // Unexpected shape: fall back to the generic text below.

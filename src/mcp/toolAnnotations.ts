@@ -63,6 +63,14 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     title: 'Ehdota liitoksen lisätietojen muutoksia',
     annotations: QUEUE_WRITE_READING_PTV,
   },
+  ptv_propose_organisation_changes: {
+    title: 'Ehdota organisaation muutoksia',
+    annotations: QUEUE_WRITE_READING_PTV,
+  },
+  ptv_propose_new_organisation: {
+    title: 'Ehdota uutta alaorganisaatiota',
+    annotations: QUEUE_WRITE_READING_PTV,
+  },
   ptv_propose_new_channel: { title: 'Ehdota uutta asiointikanavaa', annotations: QUEUE_WRITE },
   ptv_list_proposals: { title: 'Listaa muutosehdotukset', annotations: LOCAL_READ },
   ptv_get_proposal: { title: 'Näytä muutosehdotus', annotations: PTV_READ },

@@ -1,5 +1,6 @@
 import { queueChannelProposal } from './channelProposal.js';
 import { queueConnectionProposal } from './connectionProposal.js';
+import { queueNewOrganizationProposal, queueOrganizationProposal } from './organizationProposal.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -11,8 +12,14 @@ import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
-import type { ConnectionDetails, SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
-import type { NewChannel } from '../ptv/adapter.js';
+import type {
+  ConnectionDetails,
+  Organization,
+  SearchParams,
+  Service,
+  ServiceChannel,
+} from '../ptv/domain.js';
+import type { NewChannel, NewOrganization } from '../ptv/adapter.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
 import { FourEyesError, NotAuthorizedError, requireNoFourEyes } from './authorization.js';
@@ -727,6 +734,70 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         );
         if (item) await linkQueued(ctx, item, result.proposalId);
         return textResult(result);
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_organisation_changes',
+    withOAuthSecurity({
+      description:
+        'Diff a change to an organisation or sub-organisation and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). Writable fields: names, alternativeNames (an unofficial name customers use) and alternativeNameShownIn (languages that show it instead of the official name), summaries (max 150, not a copy of the name), descriptions (max 2500, what the organisation is and does for its customers, no contact details), businessCode (Y-tunnus 1234567-8), publishingStatus (Published, or Archived to archive a sub-organisation that no longer exists), emails, phoneNumbers, webPages, addresses (one Visiting address for the main office, others Postal; Street, PostOfficeBox, Foreign or Other). Texts are keyed by language, e.g. {"fi": "..."}, and every language version needs a name, a summary and a description. A field present in `changes` replaces all its values; read the organisation first (ptv_get_organisation). The type, area and parent are changed in PTV\'s UI.',
+      inputSchema: {
+        organizationId: z.string(),
+        changes: z
+          .record(z.string(), z.unknown())
+          .describe('Partial<Organization>: only the fields being changed (see the description).'),
+        correlationId: z.string().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await queueOrganizationProposal(
+            resolveRole,
+            registry,
+            auditService,
+            proposalService,
+            toolContext(extra),
+            args.organizationId,
+            args.changes as Partial<Organization>,
+            args.correlationId,
+          ),
+        );
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_new_organisation',
+    withOAuthSecurity({
+      description:
+        "Queue a proposal to create a sub-organisation (alaorganisaatio) under an existing organisation. Needs the Contributor role (Ehdottaja); nothing is written until an Approver+ resolves it with approve_and_apply (Publisher-level write access), and PTV then assigns the id. Create one only when customers benefit from seeing it as the responsible organisation, or reporting needs it; at most five levels below the main organisation. `organization` needs parentOrganizationId, names, summaries and descriptions for every language the sub-organisation's services will use (keyed by language), and businessCode (its own Y-tunnus, or the parent's if it shares it; check which). organizationType, area and municipality are copied from the parent unless given. Optional: alternativeNames, alternativeNameShownIn, emails, phoneNumbers, webPages, addresses (see ptv_propose_organisation_changes). Starts as Draft unless publishingStatus is Published. Returns validation and quality checks right away.",
+      inputSchema: {
+        organization: z
+          .record(z.string(), z.unknown())
+          .describe('The new sub-organisation (see the description).'),
+        correlationId: z.string().optional(),
+      },
+    }),
+    async (args, extra) => {
+      try {
+        return textResult(
+          await queueNewOrganizationProposal(
+            resolveRole,
+            registry,
+            auditService,
+            proposalService,
+            toolContext(extra),
+            args.organization as Partial<NewOrganization>,
+            args.correlationId,
+          ),
+        );
       } catch (err) {
         return errorResult(describeError(err), deps.publicUrl);
       }

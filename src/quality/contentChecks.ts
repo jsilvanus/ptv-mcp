@@ -2,6 +2,7 @@ import type {
   CodeListEntry,
   ConnectionDetails,
   LocalizedText,
+  Organization,
   PhoneNumber,
   Service,
   ServiceChannel,
@@ -46,6 +47,8 @@ export interface QualityReport {
 
 export const SUMMARY_MAX = 150;
 export const DESCRIPTION_MAX = 5000;
+/** DVV's limit for an organisation's description (the API takes 5000). */
+export const ORGANIZATION_DESCRIPTION_MAX = 2500;
 export const MAX_SERVICE_CLASSES = 4;
 export const MAX_ONTOLOGY_TERMS = 10;
 /** Words per sentence before a long-sentence warning. */
@@ -305,6 +308,7 @@ function textFieldFindings(
   names: LocalizedText,
   summaries: LocalizedText | undefined,
   descriptions: LocalizedText,
+  descriptionMax = DESCRIPTION_MAX,
 ): QualityFinding[] {
   const findings: QualityFinding[] = [];
   const error = (checkId: string, field: string, language: string, message: string) =>
@@ -347,12 +351,12 @@ function textFieldFindings(
     if (!description) {
       error('Q-DESC-1', 'descriptions', language, 'Language version has no description.');
     } else {
-      if (description.length > DESCRIPTION_MAX) {
+      if (description.length > descriptionMax) {
         error(
           'Q-DESC-1',
           'descriptions',
           language,
-          `Description is ${description.length} characters; the maximum is ${DESCRIPTION_MAX}.`,
+          `Description is ${description.length} characters; the maximum is ${descriptionMax}.`,
         );
       }
       findings.push(...freeTextFindings('descriptions', language, description));
@@ -655,5 +659,22 @@ export function checkConnection(
     context.today ?? new Date().toISOString().slice(0, 10),
     warn,
   );
+  return report(findings);
+}
+
+/**
+ * Checks an organisation (DVV's organisation guidelines): every language
+ * version has a name, a summary that doesn't repeat the name and a
+ * description of at most 2500 characters, without contact details; phones
+ * as on channels.
+ */
+export function checkOrganization(organization: Partial<Organization>): QualityReport {
+  const findings = textFieldFindings(
+    organization.names ?? {},
+    organization.summaries ?? {},
+    organization.descriptions ?? {},
+    ORGANIZATION_DESCRIPTION_MAX,
+  );
+  phoneFindings('phoneNumbers', organization.phoneNumbers ?? [], warner(findings));
   return report(findings);
 }

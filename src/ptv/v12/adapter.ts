@@ -1,6 +1,9 @@
 import type {
   ApplyChannelChangeResult,
   ApplyConnectionChangeResult,
+  ApplyOrganizationChangeResult,
+  NewOrganization,
+  OrganizationChangeProposal,
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
@@ -645,6 +648,16 @@ export class PtvV12Adapter implements PtvAdapter {
   async applyConnectionChange(
     _proposal: ConnectionChangeProposal,
   ): Promise<ApplyConnectionChangeResult> {
+    throw new Error('PTV v12 write operations are not enabled yet');
+  }
+
+  async applyOrganizationChange(
+    _proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult> {
+    throw new Error('PTV v12 write operations are not enabled yet');
+  }
+
+  async createOrganization(_organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
     throw new Error('PTV v12 write operations are not enabled yet');
   }
 }
