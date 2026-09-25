@@ -427,6 +427,13 @@ export class PtvV11Adapter implements PtvAdapter {
     };
   }
 
+  async getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null> {
+    const wire = await this.getOrNull<V11GeneralDescriptionWire>(
+      `/api/v11/GeneralDescription/${id}`,
+    );
+    return wire ? generalDescriptionWireToDomain(wire) : null;
+  }
+
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
     const serviceWire = await this.getOrNull<V11ServiceWire>(`/api/v11/Service/${entityId}`);
     if (serviceWire) return connectionsFromService(serviceWire);

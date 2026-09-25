@@ -352,6 +352,11 @@ export class PtvV12Adapter implements PtvAdapter {
     return { ...result, items: hydrated.map(mapV12ServiceCollection) };
   }
 
+  /** v12 general descriptions are not read yet (see searchGeneralDescriptions). */
+  async getGeneralDescription(_id: PtvContentId): Promise<GeneralDescription | null> {
+    return null;
+  }
+
   async searchGeneralDescriptions(
     params: SearchParams,
   ): Promise<PaginatedResult<GeneralDescription>> {

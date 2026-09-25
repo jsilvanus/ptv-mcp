@@ -147,6 +147,8 @@ export interface PtvAdapter {
 
   searchServiceCollections(params: SearchParams): Promise<PaginatedResult<ServiceCollection>>;
   searchGeneralDescriptions(params: SearchParams): Promise<PaginatedResult<GeneralDescription>>;
+  /** One general description, or null when unknown (or the adapter can't read them). */
+  getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null>;
 
   getConnectionsFor(entityId: PtvContentId): Promise<Connection[]>;
 

@@ -117,6 +117,10 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return paginate(this.generalDescriptions, params);
   }
 
+  async getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null> {
+    return this.generalDescriptions.find((gd) => gd.id === id) ?? null;
+  }
+
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
     return this.connections.filter((c) => c.serviceId === entityId || c.channelId === entityId);
   }

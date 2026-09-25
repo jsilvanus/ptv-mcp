@@ -13,6 +13,7 @@ import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   Connection,
+  GeneralDescription,
   Organization,
   PtvContentId,
   Service,
@@ -33,6 +34,7 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
+import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
 import {
   applyOrganizationChanges,
   createNewOrganization,
@@ -84,6 +86,7 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
 export function proposedQuality(
   kind: ProposalKind,
   proposed: Service | NewService | ServiceChannel | Connection | Organization | null,
+  generalDescription?: GeneralDescription,
 ): QualityReport | null {
   if (!proposed) return null;
   if (kind === 'organisation_update' || kind === 'organisation_create') {
@@ -98,7 +101,10 @@ export function proposedQuality(
     });
   }
   if (kind === 'channel_update') return checkChannel(proposed as ServiceChannel);
-  return checkService(proposed as Service | NewService, { creating: kind === 'service_create' });
+  return checkService(proposed as Service | NewService, {
+    creating: kind === 'service_create',
+    ...(generalDescription ? { generalDescription } : {}),
+  });
 }
 
 export interface ProposalSummary {
@@ -186,13 +192,36 @@ async function proposalDetails(
     proposalService.listComments(ctx.tenantId, proposal.id),
     proposalService.listReviewers(ctx.tenantId, proposal.id),
   ]);
+  const generalDescription =
+    proposal.kind === 'service_update' || proposal.kind === 'service_create'
+      ? await proposedGeneralDescription(registry, ctx, details.proposed as Service | null)
+      : undefined;
   return {
     ...details,
     comments,
     reviewers,
-    quality: proposedQuality(proposal.kind, details.proposed),
+    quality: proposedQuality(proposal.kind, details.proposed, generalDescription),
     ...manualPublishState(proposal, details),
   };
+}
+
+/** The general description a proposed service links to, for Q-GD-1. */
+async function proposedGeneralDescription(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  service: Pick<Service, 'generalDescriptionId'> | null,
+): Promise<GeneralDescription | undefined> {
+  if (!service?.generalDescriptionId) return undefined;
+  const adapter = await registry
+    .resolve({
+      tenantId: ctx.tenantId,
+      environment: ctx.environment,
+      apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
+      operation: 'read',
+      actingUserId: ctx.actingUserId,
+    })
+    .catch(() => null);
+  return adapter ? loadGeneralDescription(adapter, service.generalDescriptionId) : undefined;
 }
 
 function isCreate(kind: ProposalKind): boolean {
@@ -427,7 +456,11 @@ export async function queueProposal(
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
-    quality: checkService(prepared.proposed),
+    quality: proposedQuality(
+      'service_update',
+      prepared.proposed,
+      await proposedGeneralDescription(registry, ctx, prepared.proposed),
+    ) as QualityReport,
   };
 }
 

@@ -290,6 +290,12 @@ export interface GeneralDescription {
   publishingStatus: PublishingStatus;
   names: LocalizedText;
   descriptions: LocalizedText;
+  /**
+   * Every free text of the general description (summary, description,
+   * background, instructions, ...) by language, for the copy check
+   * (Q-GD-1). Present when the adapter reads it.
+   */
+  texts?: Partial<Record<LanguageCode, string[]>>;
   serviceClasses: CodeListEntry[];
   ontologyTerms: CodeListEntry[];
   targetGroups: CodeListEntry[];

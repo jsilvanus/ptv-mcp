@@ -7,6 +7,7 @@ import {
   type QualityFinding,
   type QualityReport,
 } from '../quality/contentChecks.js';
+import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { ChannelNotFoundError } from './channelProposal.js';
 import type { ReadToolContext } from './toolContext.js';
@@ -43,8 +44,12 @@ export async function checkQuality(
     if (!service) throw new ServiceNotFoundError(id);
     const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
     const connections = await adapter.getConnectionsFor(id).catch(() => []);
+    const generalDescription = await loadGeneralDescription(adapter, service.generalDescriptionId);
     const findings: QualityFinding[] = [
-      ...checkService(service, org ? { organisationNames: org.names } : {}).findings,
+      ...checkService(service, {
+        ...(org ? { organisationNames: org.names } : {}),
+        ...(generalDescription ? { generalDescription } : {}),
+      }).findings,
       ...connections.flatMap((connection) =>
         checkConnection(connection).findings.map((finding) => ({
           ...finding,

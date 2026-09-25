@@ -1,6 +1,7 @@
 import type {
   CodeListEntry,
   ConnectionDetails,
+  GeneralDescription,
   LocalizedText,
   Organization,
   PhoneNumber,
@@ -61,6 +62,8 @@ export interface ServiceCheckContext {
   organisationNames?: LocalizedText;
   /** A new service still being proposed: no channels yet is a warning (Q-STRUCT-5). */
   creating?: boolean;
+  /** The linked general description, for the copy check (Q-GD-1). */
+  generalDescription?: GeneralDescription;
 }
 
 export interface ChannelCheckContext {
@@ -461,7 +464,53 @@ export function checkService(
       error('Q-STRUCT-5', 'serviceChannelIds', 'No connected service channels.');
     }
   }
+  if (
+    context.generalDescription &&
+    service.generalDescriptionId === context.generalDescription.id
+  ) {
+    findings.push(...copiedFromGeneralDescription(service, context.generalDescription));
+  }
   return report(findings);
+}
+
+/** Words a sentence needs before a match with the general description counts as copying. */
+export const GD_COPY_MIN_WORDS = 8;
+
+/**
+ * Q-GD-1: the service's own summary and description add local details to
+ * the general description instead of repeating it. PTV shows both texts
+ * together, so a sentence copied from the general description appears
+ * twice. Sentences of at least GD_COPY_MIN_WORDS words that also appear in
+ * any text of the general description (same language, ignoring case and
+ * punctuation) are flagged, one finding per field and language.
+ */
+function copiedFromGeneralDescription(
+  service: Service | NewService,
+  generalDescription: GeneralDescription,
+): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  for (const field of ['summaries', 'descriptions'] as const) {
+    for (const [language, value] of Object.entries(service[field] ?? {})) {
+      const text = textOf(value);
+      const source = (generalDescription.texts?.[language] ?? []).map(normalized).join(' | ');
+      if (!text || !source) continue;
+      const copied = sentences(text).filter(
+        (sentence) =>
+          words(sentence).length >= GD_COPY_MIN_WORDS && source.includes(normalized(sentence)),
+      );
+      if (copied.length > 0) {
+        findings.push({
+          checkId: 'Q-GD-1',
+          severity: 'error',
+          field,
+          language,
+          message: `${copied.length === 1 ? 'A sentence repeats' : `${copied.length} sentences repeat`} the general description, which PTV already shows with the service; keep only local details.`,
+          excerpt: excerpt(copied[0]!),
+        });
+      }
+    }
+  }
+  return findings;
 }
 
 /**

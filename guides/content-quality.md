@@ -428,8 +428,8 @@ field, language and a suggested fix) or `N/A` for each item.
   and what need it meets.
 - `Q-INSTR-1` (*manual*): The instructions tell the customer what to do and in what
   order, and point to the channels in words.
-- `Q-GD-1` (*manual*): If a general description is used, its text isn't repeated or
-  copied, and only local details are added.
+- `Q-GD-1` (*partly auto: sentences copied from the general description*): If a general
+  description is used, its text isn't repeated or copied, and only local details are added.
 - `Q-LAW-1` (*auto (heuristic)*): Laws appear only as Finlex links in the law field, not as
   references in running text.
 - `Q-CLASS-1` (*auto*): There are 1–4 service classes, with at least one subclass.

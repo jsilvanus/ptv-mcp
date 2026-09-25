@@ -1,3 +1,4 @@
+import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
 import { randomUUID } from 'node:crypto';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -10,6 +11,7 @@ import type { MemberLister, ReviewCandidate } from '../mcp/proposalQueue.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import type { PtvAdapter } from '../ptv/adapter.js';
 import type {
+  GeneralDescription,
   LocalizedText,
   Organization,
   PaginatedResult,
@@ -169,17 +171,26 @@ async function collectItems(
 
   const orgNames = new Map(organisations.map((org) => [org.id, org.names]));
   const connected = new Map<string, number>();
+  const generalDescriptions = new Map<string, Promise<GeneralDescription | null>>();
   for (const service of services) {
     for (const channelId of service.serviceChannelIds) {
       connected.set(channelId, (connected.get(channelId) ?? 0) + 1);
     }
     const organisationNames = orgNames.get(service.organizationId);
+    const generalDescription = await loadGeneralDescription(
+      adapter,
+      service.generalDescriptionId,
+      generalDescriptions,
+    );
     items.push({
       targetKind: 'service',
       targetId: service.id,
       targetName: displayName(service.names),
       organizationId: service.organizationId,
-      findings: checkService(service, organisationNames ? { organisationNames } : {}).findings,
+      findings: checkService(service, {
+        ...(organisationNames ? { organisationNames } : {}),
+        ...(generalDescription ? { generalDescription } : {}),
+      }).findings,
     });
   }
   for (const channel of channels) {
@@ -482,7 +493,11 @@ export async function getReviewItem(
   if (current && item.targetKind === 'service') {
     const service = current as Service;
     const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
-    quality = checkService(service, org ? { organisationNames: org.names } : {});
+    const generalDescription = await loadGeneralDescription(adapter, service.generalDescriptionId);
+    quality = checkService(service, {
+      ...(org ? { organisationNames: org.names } : {}),
+      ...(generalDescription ? { generalDescription } : {}),
+    });
   } else if (current && item.targetKind === 'channel') {
     const connections = await adapter.getConnectionsFor(item.targetId).catch(() => undefined);
     quality = checkChannel(

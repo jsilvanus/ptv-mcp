@@ -14,6 +14,14 @@ function toServiceType(wireType: string): ServiceType {
   return mapped;
 }
 
+function textsByLanguage(wire: V11GeneralDescriptionWire): Partial<Record<string, string[]>> {
+  const texts: Partial<Record<string, string[]>> = {};
+  for (const item of wire.descriptions ?? []) {
+    if (item.value) (texts[item.language] ??= []).push(item.value);
+  }
+  return texts;
+}
+
 export function generalDescriptionWireToDomain(
   wire: V11GeneralDescriptionWire,
 ): GeneralDescription {
@@ -23,6 +31,7 @@ export function generalDescriptionWireToDomain(
     publishingStatus: toPublishingStatus(wire.publishingStatus),
     names: toLocalizedText(wire.names, ['Name']),
     descriptions: toLocalizedText(wire.descriptions, ['Description', 'Summary']),
+    texts: textsByLanguage(wire),
     serviceClasses: toCodeListEntries(wire.serviceClasses),
     ontologyTerms: toCodeListEntries(wire.ontologyTerms),
     targetGroups: toCodeListEntries(wire.targetGroups),
