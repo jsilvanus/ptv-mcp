@@ -8,7 +8,6 @@ import {
 } from './mappers/common.js';
 import type {
   V11AreaItem,
-  V11CodeListItem,
   V11LocalizedItem,
   V11OrganizationWire,
   V11ServiceWire,
@@ -87,7 +86,13 @@ export function serviceChangesToV11Body(
   applyUriListField(body, 'Service', 'ontologyTerms', changes.ontologyTerms);
   applyUriListField(body, 'Service', 'targetGroups', changes.targetGroups);
   applyUriListField(body, 'Service', 'lifeEvents', changes.lifeEvents);
-  applyIndustrialClassField(body, changes.industrialClasses);
+  applyUriListField(
+    body,
+    'Service',
+    'industrialClasses',
+    changes.industrialClasses,
+    industrialClassUri,
+  );
 
   // Required only without a general description; with one linked they're
   // left alone.
@@ -97,7 +102,7 @@ export function serviceChangesToV11Body(
       : !!current?.generalDescriptionId;
   if (current && !keepsGeneralDescription) {
     for (const field of REQUIRED_WITHOUT_GENERAL_DESCRIPTION) {
-      if (!(field in changes)) body[field] = wireUris(current[field]);
+      if (!(field in changes)) body[field] = toUris(current[field]);
     }
   }
 
@@ -172,8 +177,6 @@ export function newServiceToV11Body(
   service: NewService,
   area: ReturnType<typeof organizationAreaToV11> = { areaType: 'Nationwide' },
 ): Record<string, unknown> {
-  const uris = (entries: CodeListEntry[] | undefined) =>
-    (entries ?? []).map((entry) => entry.uri).filter((uri): uri is string => !!uri);
   return {
     type: service.serviceType,
     publishingStatus: toV11WritePublishingStatus(service.publishingStatus),
@@ -183,13 +186,11 @@ export function newServiceToV11Body(
       ...localizedTextToWireList(service.descriptions, 'Description'),
     ],
     languages: service.languages,
-    serviceClasses: uris(service.serviceClasses),
-    ontologyTerms: uris(service.ontologyTerms),
-    targetGroups: uris(service.targetGroups),
-    lifeEvents: uris(service.lifeEvents),
-    industrialClasses: (service.industrialClasses ?? [])
-      .map(industrialClassUri)
-      .filter((uri): uri is string => !!uri),
+    serviceClasses: toUris(service.serviceClasses),
+    ontologyTerms: toUris(service.ontologyTerms),
+    targetGroups: toUris(service.targetGroups),
+    lifeEvents: toUris(service.lifeEvents),
+    industrialClasses: toUris(service.industrialClasses, industrialClassUri),
     ...(service.generalDescriptionId ? { generalDescriptionId: service.generalDescriptionId } : {}),
     ...(service.sourceId ? { sourceId: service.sourceId } : {}),
     fundingType: 'PubliclyFunded',
@@ -209,8 +210,16 @@ const REQUIRED_WITHOUT_GENERAL_DESCRIPTION = [
   'targetGroups',
 ] as const;
 
-function wireUris(items: V11CodeListItem[] | null | undefined): string[] {
-  return (items ?? []).map((item) => item.uri).filter((uri): uri is string => !!uri);
+type UriOf<T> = (entry: T) => string | null | undefined;
+
+const entryUri: UriOf<{ uri?: string | null }> = (entry) => entry.uri;
+
+/** Classification entries (domain or wire) as the URI strings v11 writes; entries without one are dropped. */
+function toUris<T extends { uri?: string | null }>(
+  entries: readonly T[] | null | undefined,
+  uriOf: UriOf<T> = entryUri,
+): string[] {
+  return (entries ?? []).map(uriOf).filter((uri): uri is string => !!uri);
 }
 
 /** Wire entries whose type the change leaves alone; PTV's empty-text `null`s are dropped. */
@@ -225,12 +234,15 @@ function keptWireItems(
  * Fields like serviceClasses/ontologyTerms/targetGroups/lifeEvents are
  * written as an array of URI strings (confirmed against v11's write
  * schema — "List of service class urls" etc.), not code strings.
+ * industrialClasses passes `industrialClassUri` as `uriOf` (TOL 2008 URIs,
+ * see INDUSTRIAL_CLASS_URI_PREFIX).
  */
 function applyUriListField(
   body: Record<string, unknown>,
   entityType: Parameters<typeof needsDeleteFlag>[0],
   fieldName: string,
   entries: CodeListEntry[] | undefined,
+  uriOf: UriOf<CodeListEntry> = entryUri,
 ): void {
   if (entries === undefined) return;
   if (entries.length === 0) {
@@ -239,7 +251,7 @@ function applyUriListField(
     });
     return;
   }
-  body[fieldName] = entries.map((entry) => entry.uri).filter((uri): uri is string => !!uri);
+  body[fieldName] = toUris(entries, uriOf);
 }
 
 /**
@@ -260,21 +272,6 @@ function industrialClassUri(entry: CodeListEntry): string | undefined {
   if (entry.uri?.startsWith(INDUSTRIAL_CLASS_URI_PREFIX)) return entry.uri;
   const lastSegment = entry.uri?.split('/').pop();
   return lastSegment ? `${INDUSTRIAL_CLASS_URI_PREFIX}${lastSegment}` : undefined;
-}
-
-/** industrialClasses is written as TOL 2008 URIs (see INDUSTRIAL_CLASS_URI_PREFIX). */
-function applyIndustrialClassField(
-  body: Record<string, unknown>,
-  entries: CodeListEntry[] | undefined,
-): void {
-  if (entries === undefined) return;
-  if (entries.length === 0) {
-    setDeleteFlag(body, 'Service', 'industrialClasses', () => {
-      body.industrialClasses = [];
-    });
-    return;
-  }
-  body.industrialClasses = entries.map(industrialClassUri).filter((uri): uri is string => !!uri);
 }
 
 /**

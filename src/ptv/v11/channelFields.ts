@@ -10,7 +10,7 @@ import type {
   WebLink,
   Weekday,
 } from '../domain.js';
-import { expandOpeningTimes } from '../serviceHours.js';
+import { expandOpeningTimes, WEEKDAYS } from '../serviceHours.js';
 
 /**
  * v11 wire shapes of the type-specific channel fields and their
@@ -109,16 +109,6 @@ export interface V11AccessibilityClassification {
   accessibilityClassificationLevel?: string | null;
   language: string;
 }
-
-const WEEKDAYS: Weekday[] = [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-  'Sunday',
-];
 
 export function languageItemsToText(items: V11LanguageItem[] | null | undefined): LocalizedText {
   const text: LocalizedText = {};

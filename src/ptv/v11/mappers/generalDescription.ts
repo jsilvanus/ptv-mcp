@@ -1,18 +1,6 @@
-import type { GeneralDescription, ServiceType } from '../../domain.js';
+import type { GeneralDescription } from '../../domain.js';
 import type { V11GeneralDescriptionWire } from '../wireModel.js';
-import { toCodeListEntries, toLocalizedText, toPublishingStatus } from './common.js';
-
-const SERVICE_TYPE_MAP: Record<string, ServiceType> = {
-  Service: 'Service',
-  ProfessionalQualification: 'ProfessionalQualification',
-  PermitOrObligation: 'PermitOrObligation',
-};
-
-function toServiceType(wireType: string): ServiceType {
-  const mapped = SERVICE_TYPE_MAP[wireType];
-  if (!mapped) throw new Error(`Unknown v11 general description service type: ${wireType}`);
-  return mapped;
-}
+import { toCodeListEntries, toLocalizedText, toPublishingStatus, toServiceType } from './common.js';
 
 function textsByLanguage(wire: V11GeneralDescriptionWire): Partial<Record<string, string[]>> {
   const texts: Partial<Record<string, string[]>> = {};
@@ -27,7 +15,7 @@ export function generalDescriptionWireToDomain(
 ): GeneralDescription {
   return {
     id: wire.id,
-    serviceType: toServiceType(wire.type),
+    serviceType: toServiceType(wire.type, 'general description service'),
     publishingStatus: toPublishingStatus(wire.publishingStatus),
     names: toLocalizedText(wire.names, ['Name']),
     descriptions: toLocalizedText(wire.descriptions, ['Description', 'Summary']),

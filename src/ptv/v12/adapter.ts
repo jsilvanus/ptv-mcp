@@ -26,6 +26,9 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../domain.js';
+import { walkOrganisationHierarchy } from '../hierarchy.js';
+import { isNotFound, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
+import { paginate } from '../paging.js';
 import { PtvV12Client } from './client.js';
 import {
   type CodeListKind,
@@ -177,6 +180,13 @@ export class PtvV12Adapter implements PtvAdapter {
   private readonly client: PtvV12Client;
   private readonly capabilities: PtvAdapterCapabilities;
   private readonly codeNames: CodeNameCache;
+  /**
+   * Organisation-scoped search results, keyed by search path + organisation
+   * id. Each MCP page of an organisation search needs the organisation's
+   * whole list; adapters are created per request, so this reuses one
+   * download (and hydration) across the pages read within a request.
+   */
+  private readonly organizationLists = new Map<string, Promise<unknown[]>>();
 
   constructor(options: {
     environment: PtvEnvironment;
@@ -205,23 +215,33 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
-    const all = await this.fetchAll(
-      '/api/v12/service/search',
-      (item) => mapV12Service(item as V12ServiceWire),
-      100,
-      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
+    const path = '/api/v12/service/search';
+    const hydrated = await this.organizationList(path, params.organizationId, async () =>
+      this.hydrate(
+        await this.fetchAll(
+          path,
+          (item) => mapV12Service(item as V12ServiceWire),
+          100,
+          organizationQuery(params.organizationId),
+        ),
+        (service) => !!service.organizationId && hasNames(service),
+        '/api/v12/service',
+        mapV12Service,
+      ),
     );
     const query = params.query?.trim();
-    const hydrated = await this.hydrateServices(all);
-
     const filtered = hydrated.filter(
       (service) =>
         (!params.organizationId || service.organizationId === params.organizationId) &&
-        (!query || matchesService(service, query)),
+        (!query ||
+          matchesText(
+            query,
+            ...Object.values(service.names),
+            ...Object.values(service.summaries),
+            ...Object.values(service.descriptions),
+          )),
     );
-    const result = paginate(filtered, page, pageSize);
+    const result = paginate(filtered, params);
     return {
       ...result,
       items: await this.withCodeNames(await this.withChannelIds(result.items)),
@@ -234,34 +254,41 @@ export class PtvV12Adapter implements PtvAdapter {
       const [service] = await this.withCodeNames(await this.withChannelIds([mapV12Service(raw)]));
       return service ?? null;
     } catch (err) {
-      if (err instanceof Error && 'status' in err && (err as { status?: number }).status === 404)
-        return null;
+      if (isNotFound(err)) return null;
       throw err;
     }
   }
 
   async searchChannels(params: SearchParams): Promise<PaginatedResult<ServiceChannel>> {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
-    const all = await this.fetchAll(
-      '/api/v12/service-channel/search',
-      (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
-      100,
-      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
+    const path = '/api/v12/service-channel/search';
+    const hydrated = await this.organizationList(path, params.organizationId, async () =>
+      this.hydrate(
+        await this.fetchAll(
+          path,
+          (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
+          100,
+          organizationQuery(params.organizationId),
+        ),
+        (channel) => !!channel.organizationId && hasNames(channel),
+        '/api/v12/service-channel',
+        mapV12ServiceChannel,
+      ),
     );
     const query = params.query?.trim();
-    const hydrated = await this.hydrateChannels(all);
     const filtered = hydrated.filter(
       (channel) =>
         (!params.organizationId || channel.organizationId === params.organizationId) &&
-        (!query || matchesChannel(channel, query)),
+        (!query ||
+          matchesText(
+            query,
+            ...Object.values(channel.names),
+            ...Object.values(channel.descriptions),
+          )),
     );
-    return paginate(filtered, page, pageSize);
+    return paginate(filtered, params);
   }
 
   async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
     const all = await this.fetchAll(
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
@@ -276,9 +303,11 @@ export class PtvV12Adapter implements PtvAdapter {
     // v12 search is a catalogue feed; search results can omit fields present
     // on the individual resource. Hydrate every organization before applying
     // the MCP query so the public interface does not depend on search DTO shape.
-    const hydrated = await this.hydrateOrganisations(all);
-    const filtered = query ? hydrated.filter((org) => matchesOrganisation(org, query)) : hydrated;
-    return paginate(filtered, page, pageSize);
+    const hydrated = await this.hydrate(all, hasNames, '/api/v12/organization', mapV12Organization);
+    const filtered = query
+      ? hydrated.filter((org) => matchesText(query, ...Object.values(org.names)))
+      : hydrated;
+    return paginate(filtered, params);
   }
 
   async getChannel(id: PtvContentId): Promise<ServiceChannel | null> {
@@ -302,36 +331,31 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
-    const root = await this.getOrganisation(id);
-    if (!root) return [];
-    const hierarchy: Organization[] = [root];
-    let current = root;
-    while (current.parentOrganizationId) {
-      const parent = await this.getOrganisation(current.parentOrganizationId);
-      if (!parent) break;
-      hierarchy.push(parent);
-      current = parent;
-    }
-    return hierarchy;
+    return walkOrganisationHierarchy((orgId) => this.getOrganisation(orgId), id);
   }
   async searchServiceCollections(
     params: SearchParams,
   ): Promise<PaginatedResult<ServiceCollection>> {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
     const query = params.query?.trim();
-    const rawItems = await this.fetchAllRaw<V12ServiceCollectionWire>(
-      '/api/v12/service-collection/search',
-      100,
-      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
+    const path = '/api/v12/service-collection/search';
+    const rawItems = await this.organizationList(path, params.organizationId, () =>
+      this.fetchAllRaw<V12ServiceCollectionWire>(
+        path,
+        100,
+        organizationQuery(params.organizationId),
+      ),
     );
-    const filtered = rawItems.filter((item) =>
-      !params.organizationId && !query
-        ? true
-        : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
-          (!query || matchesCollection(mapV12ServiceCollection(item), query)),
-    );
-    const result = paginate(filtered, page, pageSize);
+    const filtered = rawItems.filter((item) => {
+      if (params.organizationId && organizationIdOf(item) !== params.organizationId) return false;
+      if (!query) return true;
+      const collection = mapV12ServiceCollection(item);
+      return matchesText(
+        query,
+        ...Object.values(collection.names),
+        ...Object.values(collection.descriptions),
+      );
+    });
+    const result = paginate(filtered, params);
     // The search listing omits collection members (`items`); only the
     // detail endpoint carries them, so hydrate just the returned page.
     const hydrated = await Promise.all(
@@ -360,23 +384,28 @@ export class PtvV12Adapter implements PtvAdapter {
   async searchGeneralDescriptions(
     params: SearchParams,
   ): Promise<PaginatedResult<GeneralDescription>> {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
     const query = params.query?.trim();
-    const rawItems = await this.fetchAllRaw<V12GeneralDescriptionWire>(
-      '/api/v12/general-description/search',
-      100,
-      params.organizationId ? { organizationContentIds: [params.organizationId] } : undefined,
+    const path = '/api/v12/general-description/search';
+    const rawItems = await this.organizationList(path, params.organizationId, () =>
+      this.fetchAllRaw<V12GeneralDescriptionWire>(
+        path,
+        100,
+        organizationQuery(params.organizationId),
+      ),
     );
     const filtered = rawItems
-      .filter((item) =>
-        !params.organizationId && !query
-          ? true
-          : (!params.organizationId || organizationIdOf(item) === params.organizationId) &&
-            (!query || matchesGeneralDescription(mapV12GeneralDescription(item), query)),
-      )
-      .map(mapV12GeneralDescription);
-    const result = paginate(filtered, page, pageSize);
+      .filter((item) => !params.organizationId || organizationIdOf(item) === params.organizationId)
+      .map(mapV12GeneralDescription)
+      .filter(
+        (description) =>
+          !query ||
+          matchesText(
+            query,
+            ...Object.values(description.names),
+            ...Object.values(description.descriptions),
+          ),
+      );
+    const result = paginate(filtered, params);
     return { ...result, items: await this.withCodeNames(result.items) };
   }
   /**
@@ -489,10 +518,9 @@ export class PtvV12Adapter implements PtvAdapter {
         const missing = [...incomplete].filter(
           (key) => !this.codeNames.get(environment, kind, key),
         );
-        const keys = missing;
         const batches: Array<{ param: 'codes' | 'uris'; values: string[] }> = [];
         for (const param of ['uris', 'codes'] as const) {
-          const values = keys.filter((key) => isUri(key) === (param === 'uris'));
+          const values = missing.filter((key) => isUri(key) === (param === 'uris'));
           for (let i = 0; i < values.length; i += CODE_FILTER_MAX_ITEMS) {
             batches.push({ param, values: values.slice(i, i + CODE_FILTER_MAX_ITEMS) });
           }
@@ -566,18 +594,11 @@ export class PtvV12Adapter implements PtvAdapter {
     const first = await this.client.get<unknown>(path, { ...query, page: 1, pageSize });
     const firstItems = extractItems(first) as T[];
     const pageCount = extractPageCount(first, firstItems.length, pageSize);
-    const rest: T[][] = new Array(Math.max(0, pageCount - 1));
-    let next = 2;
-    const worker = async (): Promise<void> => {
-      while (next <= pageCount) {
-        const page = next++;
-        const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
-        rest[page - 2] = extractItems(raw) as T[];
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(PAGE_FETCH_CONCURRENCY, pageCount - 1) }, worker),
-    );
+    const laterPages = Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) => index + 2);
+    const rest = await mapWithConcurrency(laterPages, PAGE_FETCH_CONCURRENCY, async (page) => {
+      const raw = await this.client.get<unknown>(path, { ...query, page, pageSize });
+      return extractItems(raw) as T[];
+    });
     return [...firstItems, ...rest.flat()];
   }
 
@@ -590,48 +611,49 @@ export class PtvV12Adapter implements PtvAdapter {
     return (await this.fetchAllRaw<unknown>(path, pageSize, query)).map(map);
   }
 
-  private async hydrateServices(items: Service[]): Promise<Service[]> {
-    return Promise.all(
-      items.map(async (service) => {
-        if (
-          service.organizationId &&
-          service.modifiedAt !== new Date(0).toISOString() &&
-          Object.keys(service.names).length > 0
-        ) {
-          return service;
-        }
-        return (await this.getService(service.id)) ?? service;
-      }),
-    );
+  /**
+   * v12 search is a catalogue feed whose rows can omit fields present on
+   * the individual resource. Re-read each incomplete row from
+   * `${detailPath}/{id}` (raw read + mapper only: enrichment such as
+   * withChannelIds/withCodeNames runs on the final page), with bounded
+   * concurrency. A row that has since disappeared (404) is kept as is.
+   */
+  private async hydrate<W, T extends { id: string }>(
+    items: T[],
+    isComplete: (item: T) => boolean,
+    detailPath: string,
+    map: (wire: W) => T,
+  ): Promise<T[]> {
+    return mapWithConcurrency(items, PAGE_FETCH_CONCURRENCY, async (item) => {
+      if (isComplete(item)) return item;
+      try {
+        return map(await this.client.get<W>(`${detailPath}/${item.id}`));
+      } catch (err) {
+        if (isNotFound(err)) return item;
+        throw err;
+      }
+    });
   }
 
-  private async hydrateChannels(items: ServiceChannel[]): Promise<ServiceChannel[]> {
-    return Promise.all(
-      items.map(async (channel) => {
-        if (
-          channel.organizationId &&
-          channel.modifiedAt !== new Date(0).toISOString() &&
-          Object.keys(channel.names).length > 0
-        ) {
-          return channel;
-        }
-        return (await this.getChannel(channel.id)) ?? channel;
-      }),
-    );
-  }
-
-  private async hydrateOrganisations(items: Organization[]): Promise<Organization[]> {
-    return Promise.all(
-      items.map(async (organization) => {
-        if (
-          organization.modifiedAt !== new Date(0).toISOString() &&
-          Object.keys(organization.names).length > 0
-        ) {
-          return organization;
-        }
-        return (await this.getOrganisation(organization.id)) ?? organization;
-      }),
-    );
+  /**
+   * One download per (search path, organisation) for this adapter
+   * instance; searches without an organisation are not memoised. A failed
+   * download is retried.
+   */
+  private organizationList<T>(
+    path: string,
+    organizationId: string | undefined,
+    load: () => Promise<T[]>,
+  ): Promise<T[]> {
+    if (!organizationId) return load();
+    const key = `${path}:${organizationId}`;
+    let pending = this.organizationLists.get(key) as Promise<T[]> | undefined;
+    if (!pending) {
+      pending = load();
+      this.organizationLists.set(key, pending);
+      pending.catch(() => this.organizationLists.delete(key));
+    }
+    return pending;
   }
 
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
@@ -693,7 +715,6 @@ function extractTotalCount(raw: unknown, fallback: number): number {
   return object.totalItems ?? object.totalCount ?? object.totalElements ?? object.total ?? fallback;
 }
 
-const PAGE_FETCH_CONCURRENCY = 6;
 /** `codes` / `uris` maxItems on the v12 reference-data endpoints. */
 const CODE_FILTER_MAX_ITEMS = 20;
 
@@ -739,40 +760,24 @@ function extractPageCount(raw: unknown, firstPageLength: number, pageSize: numbe
   return Math.max(1, Math.ceil(extractTotalCount(raw, firstPageLength) / pageSize));
 }
 
-function paginate<T>(items: T[], page: number, pageSize: number): PaginatedResult<T> {
-  const start = (page - 1) * pageSize;
-  return { items: items.slice(start, start + pageSize), page, pageSize, totalCount: items.length };
+function organizationQuery(
+  organizationId: string | undefined,
+): { organizationContentIds: string[] } | undefined {
+  return organizationId ? { organizationContentIds: [organizationId] } : undefined;
+}
+
+function hasNames(item: { names: Record<string, string | undefined> }): boolean {
+  return Object.keys(item.names).length > 0;
 }
 
 function normalizeSearchText(value: string): string {
   return value.normalize('NFKC').trim().toLocaleLowerCase('fi-FI');
 }
 
-function matchesService(service: Service, query: string): boolean {
+/** Whether any of `texts` contains `query`, compared case- and width-insensitively. */
+function matchesText(query: string, ...texts: Array<string | undefined>): boolean {
   const needle = normalizeSearchText(query);
-  return [
-    ...Object.values(service.names),
-    ...Object.values(service.summaries),
-    ...Object.values(service.descriptions),
-  ].some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
-}
-
-function matchesOrganisation(org: Organization, query: string): boolean {
-  const needle = normalizeSearchText(query);
-  return Object.values(org.names).some(
-    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
-  );
-}
-
-function matchesChannel(channel: ServiceChannel, query: string): boolean {
-  const needle = normalizeSearchText(query);
-  return [...Object.values(channel.names), ...Object.values(channel.descriptions)].some(
-    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
-  );
-}
-
-function isNotFound(err: unknown): boolean {
-  return err instanceof Error && 'status' in err && (err as { status?: number }).status === 404;
+  return texts.some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
 }
 
 function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
@@ -934,20 +939,6 @@ function modifiedAtField(wire: Parameters<typeof modifiedAtOf>[0]): { modifiedAt
 
 function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === 'string' && value.length > 0);
-}
-
-function matchesCollection(collection: ServiceCollection, query: string): boolean {
-  const needle = normalizeSearchText(query);
-  return [...Object.values(collection.names), ...Object.values(collection.descriptions)].some(
-    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
-  );
-}
-
-function matchesGeneralDescription(description: GeneralDescription, query: string): boolean {
-  const needle = normalizeSearchText(query);
-  return [...Object.values(description.names), ...Object.values(description.descriptions)].some(
-    (value) => value !== undefined && normalizeSearchText(value).includes(needle),
-  );
 }
 
 function mapV12Connection(wire: unknown): Connection {

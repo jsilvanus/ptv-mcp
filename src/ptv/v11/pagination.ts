@@ -1,3 +1,4 @@
+import { mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
 import type { PtvV11Client } from './client.js';
 import type {
   V11GeneralDescriptionWire,
@@ -9,20 +10,41 @@ import type {
   V11ServiceWire,
 } from './wireModel.js';
 
+/**
+ * Every item of a paged v11 list endpoint, in page order. Page 1 gives
+ * `pageCount`; the remaining pages are then fetched with bounded
+ * concurrency rather than one after another.
+ */
+export async function fetchAllPages<T>(
+  client: PtvV11Client,
+  path: string,
+  query: Record<string, string | number | undefined> = {},
+): Promise<T[]> {
+  const firstPage = await client.get<V11PagedList<T>>(path, { ...query, page: 1 });
+  const laterPages = Array.from(
+    { length: Math.max(0, firstPage.pageCount - 1) },
+    (_, index) => index + 2,
+  );
+  const rest = await mapWithConcurrency(laterPages, PAGE_FETCH_CONCURRENCY, async (page) => {
+    const result = await client.get<V11PagedList<T>>(path, { ...query, page });
+    return result.itemList ?? [];
+  });
+  return [...(firstPage.itemList ?? []), ...rest.flat()];
+}
+
 export async function fetchAllIdNamePairs(
   client: PtvV11Client,
   listPath: string,
 ): Promise<V11IdNamePair[]> {
-  const firstPage = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page: 1 });
-  const items = [...(firstPage.itemList ?? [])];
-  for (let page = 2; page <= firstPage.pageCount; page += 1) {
-    const result = await client.get<V11PagedList<V11IdNamePair>>(listPath, { page });
-    items.push(...(result.itemList ?? []));
-  }
-  return items;
+  return fetchAllPages<V11IdNamePair>(client, listPath);
 }
 
-export async function fetchListByIds<T>(
+/**
+ * Full records for `ids` from a v11 `.../list?guids=` endpoint, in batches
+ * of 100, returned in the order of `ids` (ids PTV doesn't return are
+ * dropped).
+ */
+export async function fetchListByIds<T extends { id: string }>(
   client: PtvV11Client,
   listPath: string,
   ids: string[],
@@ -33,7 +55,8 @@ export async function fetchListByIds<T>(
     const result = await client.get<T[]>(listPath, { guids: batch.join(',') });
     wires.push(...result);
   }
-  return wires;
+  const byId = new Map(wires.map((wire) => [wire.id, wire]));
+  return ids.map((id) => byId.get(id)).filter((wire): wire is T => wire !== undefined);
 }
 
 /**
@@ -97,22 +120,10 @@ export async function fetchIdWindow(
 export async function fetchOrganizationServiceWindow(
   client: PtvV11Client,
   organizationId: string,
-): Promise<{ items: V11ServiceWire[]; totalCount: number }> {
-  const firstPage = await client.get<V11PagedList<V11ServiceWire>>(
-    '/api/v11/Service/list/organization',
-    { organizationId, page: 1 },
-  );
-
-  const items = [...(firstPage.itemList ?? [])];
-  for (let page = 2; page <= firstPage.pageCount; page += 1) {
-    const result = await client.get<V11PagedList<V11ServiceWire>>(
-      '/api/v11/Service/list/organization',
-      { organizationId, page },
-    );
-    items.push(...(result.itemList ?? []));
-  }
-
-  return { items, totalCount: items.length };
+): Promise<V11ServiceWire[]> {
+  return fetchAllPages<V11ServiceWire>(client, '/api/v11/Service/list/organization', {
+    organizationId,
+  });
 }
 
 /**
@@ -123,58 +134,37 @@ export async function fetchOrganizationServiceWindow(
 export async function fetchOrganizationServiceChannelWindow(
   client: PtvV11Client,
   organizationId: string,
-): Promise<{ items: V11ServiceChannelWire[]; totalCount: number }> {
-  const firstPage = await client.get<V11PagedList<V11ServiceChannelWire>>(
-    '/api/v11/ServiceChannel/list/organization',
-    { organizationId, page: 1 },
-  );
-
-  const items = [...(firstPage.itemList ?? [])];
-  for (let page = 2; page <= firstPage.pageCount; page += 1) {
-    const result = await client.get<V11PagedList<V11ServiceChannelWire>>(
-      '/api/v11/ServiceChannel/list/organization',
-      { organizationId, page },
-    );
-    items.push(...(result.itemList ?? []));
-  }
-
-  return { items, totalCount: items.length };
+): Promise<V11ServiceChannelWire[]> {
+  return fetchAllPages<V11ServiceChannelWire>(client, '/api/v11/ServiceChannel/list/organization', {
+    organizationId,
+  });
 }
 
 export async function fetchOrganizationServiceCollectionWindow(
   client: PtvV11Client,
   organizationId: string,
-): Promise<{ items: V11ServiceCollectionWire[]; totalCount: number }> {
-  const firstPage = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>(
+): Promise<V11ServiceCollectionWire[]> {
+  const summaries = await fetchAllPages<V11ServiceCollectionSummaryWire>(
+    client,
     '/api/v11/ServiceCollection/organization',
-    { organizationId, page: 1 },
+    { organizationId },
   );
-  const summaries = [...(firstPage.itemList ?? [])];
-  for (let page = 2; page <= firstPage.pageCount; page += 1) {
-    const result = await client.get<V11PagedList<V11ServiceCollectionSummaryWire>>(
-      '/api/v11/ServiceCollection/organization',
-      { organizationId, page },
-    );
-    summaries.push(...(result.itemList ?? []));
-  }
 
   // The organization endpoint returns V10VmOpenApiServiceCollectionItem,
   // which has no publishingStatus/modified fields. Fetch the full v11
-  // entity before handing it to the domain mapper.
-  const items = await Promise.all(
-    summaries.map((summary) =>
-      client.get<V11ServiceCollectionWire>(`/api/v11/ServiceCollection/${summary.id}`),
-    ),
+  // entity before handing it to the domain mapper (v11 has no
+  // ServiceCollection/list?guids= endpoint).
+  return mapWithConcurrency(summaries, PAGE_FETCH_CONCURRENCY, (summary) =>
+    client.get<V11ServiceCollectionWire>(`/api/v11/ServiceCollection/${summary.id}`),
   );
-  return { items, totalCount: items.length };
 }
 
 /** v11 has no organization-filtered GeneralDescription endpoint; derive the set from the organization's services. */
 export async function fetchOrganizationGeneralDescriptionWindow(
   client: PtvV11Client,
   organizationId: string,
-): Promise<{ items: V11GeneralDescriptionWire[]; totalCount: number }> {
-  const { items: services } = await fetchOrganizationServiceWindow(client, organizationId);
+): Promise<V11GeneralDescriptionWire[]> {
+  const services = await fetchOrganizationServiceWindow(client, organizationId);
   const ids = [
     ...new Set(
       services
@@ -182,8 +172,5 @@ export async function fetchOrganizationGeneralDescriptionWindow(
         .filter((id): id is string => Boolean(id)),
     ),
   ];
-  const items = await Promise.all(
-    ids.map((id) => client.get<V11GeneralDescriptionWire>(`/api/v11/GeneralDescription/${id}`)),
-  );
-  return { items, totalCount: items.length };
+  return fetchListByIds<V11GeneralDescriptionWire>(client, '/api/v11/GeneralDescription/list', ids);
 }

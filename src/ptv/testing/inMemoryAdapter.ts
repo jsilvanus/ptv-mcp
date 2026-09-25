@@ -26,6 +26,8 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../domain.js';
+import { walkOrganisationHierarchy } from '../hierarchy.js';
+import { paginate } from '../paging.js';
 
 /**
  * A fake PtvAdapter backed by plain in-memory arrays, used to validate
@@ -92,17 +94,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
-    const root = await this.getOrganisation(id);
-    if (!root) return [];
-    const hierarchy = [root];
-    let current = root;
-    while (current.parentOrganizationId) {
-      const parent = await this.getOrganisation(current.parentOrganizationId);
-      if (!parent) break;
-      hierarchy.push(parent);
-      current = parent;
-    }
-    return hierarchy;
+    return walkOrganisationHierarchy((orgId) => this.getOrganisation(orgId), id);
   }
 
   async searchServiceCollections(
@@ -134,23 +126,11 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     const terms = (this.codeLists.ontologyTerms ?? []).filter((term) =>
       Object.values(term.names).some((name) => name?.toLocaleLowerCase('fi-FI').includes(needle)),
     );
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
-    const start = (page - 1) * pageSize;
-    return {
-      items: terms.slice(start, start + pageSize),
-      page,
-      pageSize,
-      totalCount: terms.length,
-    };
+    return paginate(terms, params);
   }
 
   async applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const index = this.services.findIndex((s) => s.id === proposal.serviceId);
     if (index === -1) {
       throw new Error(`Unknown service id: ${proposal.serviceId}`);
@@ -169,11 +149,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const index = this.channels.findIndex((c) => c.id === proposal.channelId);
     const existing = this.channels[index];
     if (!existing) throw new Error(`Unknown channel id: ${proposal.channelId}`);
@@ -187,11 +163,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async createService(service: NewService): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const created: Service = { ...service, id: randomUUID() };
     this.services.push(created);
     return {
@@ -202,11 +174,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const { serviceIds, ...fields } = channel;
     const created: ServiceChannel = { ...fields, id: randomUUID() };
     this.channels.push(created);
@@ -225,11 +193,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   async applyConnectionChange(
     proposal: ConnectionChangeProposal,
   ): Promise<ApplyConnectionChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const index = this.connections.findIndex(
       (c) => c.serviceId === proposal.serviceId && c.channelId === proposal.channelId,
     );
@@ -279,16 +243,4 @@ export class InMemoryPtvAdapter implements PtvAdapter {
       );
     }
   }
-}
-
-function paginate<T>(items: T[], params: SearchParams): PaginatedResult<T> {
-  const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 100;
-  const start = (page - 1) * pageSize;
-  return {
-    items: items.slice(start, start + pageSize),
-    page,
-    pageSize,
-    totalCount: items.length,
-  };
 }
