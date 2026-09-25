@@ -59,11 +59,11 @@ export const PARAGRAPH_MAX_SENTENCES = 4;
 
 export interface ServiceCheckContext {
   /** The owning organisation's names, to flag service names that repeat them. */
-  organisationNames?: LocalizedText;
+  organisationNames?: LocalizedText | undefined;
   /** A new service still being proposed: no channels yet is a warning (Q-STRUCT-5). */
   creating?: boolean;
   /** The linked general description, for the copy check (Q-GD-1). */
-  generalDescription?: GeneralDescription;
+  generalDescription?: GeneralDescription | undefined;
 }
 
 export interface ChannelCheckContext {
@@ -81,7 +81,8 @@ export interface ChannelCheckContext {
   today?: string;
 }
 
-function report(findings: QualityFinding[]): QualityReport {
+/** A report of `findings` with its error and warning counts. */
+export function report(findings: QualityFinding[]): QualityReport {
   return {
     findings,
     errors: findings.filter((f) => f.severity === 'error').length,
@@ -484,6 +485,23 @@ export const GD_COPY_MIN_WORDS = 8;
  * any text of the general description (same language, ignoring case and
  * punctuation) are flagged, one finding per field and language.
  */
+/** A general description's texts in one language, normalized once per description. */
+const normalizedGdTexts = new WeakMap<GeneralDescription, Map<string, string>>();
+
+function normalizedTexts(generalDescription: GeneralDescription, language: string): string {
+  let byLanguage = normalizedGdTexts.get(generalDescription);
+  if (!byLanguage) {
+    byLanguage = new Map();
+    normalizedGdTexts.set(generalDescription, byLanguage);
+  }
+  let text = byLanguage.get(language);
+  if (text === undefined) {
+    text = (generalDescription.texts?.[language] ?? []).map(normalized).join(' | ');
+    byLanguage.set(language, text);
+  }
+  return text;
+}
+
 function copiedFromGeneralDescription(
   service: Service | NewService,
   generalDescription: GeneralDescription,
@@ -492,7 +510,7 @@ function copiedFromGeneralDescription(
   for (const field of ['summaries', 'descriptions'] as const) {
     for (const [language, value] of Object.entries(service[field] ?? {})) {
       const text = textOf(value);
-      const source = (generalDescription.texts?.[language] ?? []).map(normalized).join(' | ');
+      const source = normalizedTexts(generalDescription, language);
       if (!text || !source) continue;
       const copied = sentences(text).filter(
         (sentence) =>

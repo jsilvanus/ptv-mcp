@@ -15,7 +15,7 @@ import {
   checkService,
   type QualityFinding,
 } from '../quality/contentChecks.js';
-import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
+import { loadGeneralDescription } from '../quality/serviceCheckContext.js';
 import { formatValue } from '../mcp/manualPublish.js';
 import { fetchAll, organisationsToReview } from '../reviews/reviewCampaigns.js';
 import type { Cell, Sheet } from './xlsx.js';

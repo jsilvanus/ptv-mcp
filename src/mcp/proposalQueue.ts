@@ -8,13 +8,13 @@ import {
   checkOrganization,
   checkService,
   type QualityReport,
+  type ServiceCheckContext,
 } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   Connection,
-  GeneralDescription,
   Organization,
   PtvContentId,
   Service,
@@ -23,9 +23,7 @@ import type {
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import {
-  NotARequestedReviewerError,
   ProposalAlreadyResolvedError,
-  ProposalNotFoundError,
   ProposalService,
   type ProposalComment,
   type ProposalKind,
@@ -35,7 +33,7 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
-import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
+import { serviceCheckContext } from '../quality/serviceCheckContext.js';
 import {
   applyOrganizationChanges,
   createNewOrganization,
@@ -88,7 +86,7 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
 export function proposedQuality(
   kind: ProposalKind,
   proposed: Service | NewService | ServiceChannel | Connection | Organization | null,
-  generalDescription?: GeneralDescription,
+  serviceContext: ServiceCheckContext = {},
 ): QualityReport | null {
   if (!proposed) return null;
   if (kind === 'organisation_update' || kind === 'organisation_create') {
@@ -104,8 +102,8 @@ export function proposedQuality(
   }
   if (kind === 'channel_update') return checkChannel(proposed as ServiceChannel);
   return checkService(proposed as Service | NewService, {
+    ...serviceContext,
     creating: kind === 'service_create',
-    ...(generalDescription ? { generalDescription } : {}),
   });
 }
 
@@ -194,28 +192,28 @@ async function proposalDetails(
     proposalService.listComments(ctx.tenantId, proposal.id),
     proposalService.listReviewers(ctx.tenantId, proposal.id),
   ]);
-  const generalDescription =
+  const serviceContext =
     proposal.kind === 'service_update' || proposal.kind === 'service_create'
-      ? await proposedGeneralDescription(registry, ctx, details.proposed as Service | null)
+      ? await proposedServiceContext(registry, ctx, details.proposed as Service | null)
       : undefined;
   return {
     ...details,
     comments,
     reviewers,
-    quality: proposedQuality(proposal.kind, details.proposed, generalDescription),
+    quality: proposedQuality(proposal.kind, details.proposed, serviceContext),
     ...manualPublishState(proposal, details),
   };
 }
 
-/** The general description a proposed service links to, for Q-GD-1. */
-async function proposedGeneralDescription(
+/** The organisation and general description a proposed service is checked against. */
+async function proposedServiceContext(
   registry: PtvAdapterRegistry,
   ctx: ToolContext,
-  service: Pick<Service, 'generalDescriptionId'> | null,
-): Promise<GeneralDescription | undefined> {
-  if (!service?.generalDescriptionId) return undefined;
+  service: Service | null,
+): Promise<ServiceCheckContext> {
+  if (!service) return {};
   const adapter = await resolveReadAdapter(registry, ctx).catch(() => null);
-  return adapter ? loadGeneralDescription(adapter, service.generalDescriptionId) : undefined;
+  return adapter ? serviceCheckContext(adapter, service) : {};
 }
 
 function manualPublishState(
@@ -401,7 +399,7 @@ export async function queueProposal(
     quality: proposedQuality(
       'service_update',
       prepared.proposed,
-      await proposedGeneralDescription(registry, ctx, prepared.proposed),
+      await proposedServiceContext(registry, ctx, prepared.proposed),
     ) as QualityReport,
   };
 }
@@ -863,29 +861,6 @@ async function applyApproved(
       return { createdId: organizationId, afterState: { organizationId } };
     }
   }
-}
-
-export function isProposalQueueError(
-  err: unknown,
-): err is
-  | ProposalNotFoundError
-  | ProposalAlreadyResolvedError
-  | InvalidResolveActionError
-  | InvalidCommentError
-  | InvalidReviewRequestError
-  | ReviewsPendingError
-  | NotARequestedReviewerError
-  | ManualPublishCheckError {
-  return (
-    err instanceof ManualPublishCheckError ||
-    err instanceof ProposalNotFoundError ||
-    err instanceof ProposalAlreadyResolvedError ||
-    err instanceof InvalidResolveActionError ||
-    err instanceof InvalidCommentError ||
-    err instanceof InvalidReviewRequestError ||
-    err instanceof ReviewsPendingError ||
-    err instanceof NotARequestedReviewerError
-  );
 }
 
 export class ManualPublishCheckError extends Error {

@@ -1,5 +1,5 @@
 import { resolveReadAdapter } from '../mcp/toolContext.js';
-import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
+import { loadGeneralDescription, serviceCheckContext } from '../quality/serviceCheckContext.js';
 import { randomUUID } from 'node:crypto';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -487,12 +487,7 @@ export async function getReviewItem(
   let quality: QualityReport | null = null;
   if (current && item.targetKind === 'service') {
     const service = current as Service;
-    const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
-    const generalDescription = await loadGeneralDescription(adapter, service.generalDescriptionId);
-    quality = checkService(service, {
-      ...(org ? { organisationNames: org.names } : {}),
-      ...(generalDescription ? { generalDescription } : {}),
-    });
+    quality = checkService(service, await serviceCheckContext(adapter, service));
   } else if (current && item.targetKind === 'channel') {
     const connections = await adapter.getConnectionsFor(item.targetId).catch(() => undefined);
     quality = checkChannel(

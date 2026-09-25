@@ -5,10 +5,11 @@ import {
   checkChannel,
   checkConnection,
   checkService,
+  report,
   type QualityFinding,
   type QualityReport,
 } from '../quality/contentChecks.js';
-import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
+import { serviceCheckContext } from '../quality/serviceCheckContext.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { ChannelNotFoundError } from './channelProposal.js';
 import type { ReadToolContext } from './toolContext.js';
@@ -37,14 +38,12 @@ export async function checkQuality(
   if (kind === 'service') {
     const service: Service | null = await adapter.getService(id);
     if (!service) throw new ServiceNotFoundError(id);
-    const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
-    const connections = await adapter.getConnectionsFor(id).catch(() => []);
-    const generalDescription = await loadGeneralDescription(adapter, service.generalDescriptionId);
+    const [context, connections] = await Promise.all([
+      serviceCheckContext(adapter, service),
+      adapter.getConnectionsFor(id).catch(() => []),
+    ]);
     const findings: QualityFinding[] = [
-      ...checkService(service, {
-        ...(org ? { organisationNames: org.names } : {}),
-        ...(generalDescription ? { generalDescription } : {}),
-      }).findings,
+      ...checkService(service, context).findings,
       ...connections.flatMap((connection) =>
         checkConnection(connection).findings.map((finding) => ({
           ...finding,
@@ -56,11 +55,7 @@ export async function checkQuality(
       kind,
       id,
       name: service.names.fi ?? Object.values(service.names)[0] ?? null,
-      report: {
-        findings,
-        errors: findings.filter((finding) => finding.severity === 'error').length,
-        warnings: findings.filter((finding) => finding.severity === 'warning').length,
-      },
+      report: report(findings),
     };
   }
   const channel: ServiceChannel | null = await adapter.getChannel(id);
