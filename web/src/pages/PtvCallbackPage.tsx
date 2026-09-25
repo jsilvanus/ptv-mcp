@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { apiFetch, ApiError } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import { PTV_CONNECT_ENVIRONMENT_KEY } from './PtvConnectionsPage';
-
-type Status = 'connecting' | 'error';
 
 export function PtvCallbackPage() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<Status>('connecting');
+  // null while connecting.
   const [error, setError] = useState<string | null>(null);
   const ranRef = useRef(false);
 
@@ -23,12 +21,10 @@ export function PtvCallbackPage() {
       sessionStorage.removeItem(PTV_CONNECT_ENVIRONMENT_KEY);
 
       if (!environment) {
-        setStatus('error');
         setError('Missing PTV environment — please retry the connection from PTV connections.');
         return;
       }
       if (!fragment) {
-        setStatus('error');
         setError('PTV did not return any authorization data.');
         return;
       }
@@ -40,8 +36,7 @@ export function PtvCallbackPage() {
         });
         navigate('/ptv-connections', { replace: true });
       } catch (err) {
-        setStatus('error');
-        setError(err instanceof ApiError ? err.message : 'Could not complete the PTV connection.');
+        setError(errorMessage(err, 'Could not complete the PTV connection.'));
       }
     }
 
@@ -51,8 +46,8 @@ export function PtvCallbackPage() {
   return (
     <div className="card" style={{ maxWidth: 420, margin: '80px auto' }}>
       <h1>PTV connection</h1>
-      {status === 'connecting' && <p className="muted">Connecting…</p>}
-      {status === 'error' && (
+      {error === null && <p className="muted">Connecting…</p>}
+      {error !== null && (
         <>
           <p className="error">{error}</p>
           <Link to="/ptv-connections">Back to PTV connections</Link>

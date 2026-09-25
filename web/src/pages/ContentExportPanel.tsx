@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { ApiError, apiDownload } from '../api/client';
+import { apiDownload, errorMessage } from '../api/client';
 import type { PtvEnvironment } from '../api/types';
+import { EnvironmentSelect } from '../components/EnvironmentSelect';
 
 /**
  * Downloads an organisation's PTV content with the automated check
@@ -34,7 +35,7 @@ export function ContentExportPanel({ tenantId }: { tenantId: string }) {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not export the content.');
+      setError(errorMessage(err, 'Could not export the content.'));
     } finally {
       setBusy(false);
     }
@@ -58,14 +59,7 @@ export function ContentExportPanel({ tenantId }: { tenantId: string }) {
           onChange={(e) => setOrganizationId(e.target.value)}
         />
         <label htmlFor="export-env">Environment</label>
-        <select
-          id="export-env"
-          value={environment}
-          onChange={(e) => setEnvironment(e.target.value as PtvEnvironment)}
-        >
-          <option value="test">test</option>
-          <option value="production">production</option>
-        </select>
+        <EnvironmentSelect id="export-env" value={environment} onChange={setEnvironment} />
         <label>
           <input
             type="checkbox"

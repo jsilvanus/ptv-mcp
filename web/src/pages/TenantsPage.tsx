@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { apiFetch, ApiError } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import { useTenants } from '../tenants/TenantContext';
 import { ROLE_LABELS } from '../auth/roles';
 
@@ -30,7 +30,7 @@ export function TenantsPage() {
       await refresh();
       setCurrentTenantId(created.tenantId);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create tenant.');
+      setError(errorMessage(err, 'Could not create tenant.'));
     } finally {
       setSubmitting(false);
     }

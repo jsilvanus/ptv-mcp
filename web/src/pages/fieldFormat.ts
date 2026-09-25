@@ -26,7 +26,8 @@ const WEEKDAYS: Record<string, string> = {
   Sunday: 'su',
 };
 
-const CHARGES: Record<string, string> = {
+/** A phone number's charge type, as the phrase shown after the number. */
+const PHONE_CHARGE_LABELS: Record<string, string> = {
   Chargeable: 'normaali puhelumaksu',
   FreeOfCharge: 'maksuton',
   Other: 'lisämaksullinen',
@@ -64,7 +65,7 @@ export function formatPhone(p: PreviewPhone): string {
   const type =
     p.type && p.type !== 'Phone' ? ` (${p.type === 'Sms' ? 'tekstiviesti' : 'faksi'})` : '';
   const info = p.additionalInformation ? ` – ${p.additionalInformation}` : '';
-  const charge = p.chargeType ? `, ${CHARGES[p.chargeType] ?? p.chargeType}` : '';
+  const charge = p.chargeType ? `, ${PHONE_CHARGE_LABELS[p.chargeType] ?? p.chargeType}` : '';
   const chargeText = p.chargeDescription ? ` (${p.chargeDescription})` : '';
   return `${number}${type}${info}${charge}${chargeText}`;
 }
@@ -156,11 +157,6 @@ export function formatServiceHour(h: PreviewServiceHour, language: string): stri
 
 const lines = (values: string[]) => values.join('\n');
 
-/**
- * A field's value as text, by the field's name (`phoneNumbers`, or a
- * localized `names.fi`). Lists get one line per entry, with the language
- * where entries are per language.
- */
 const ORGANIZATION_TYPE: Record<string, string> = {
   State: 'Valtio',
   Region: 'Maakunta',
@@ -170,12 +166,18 @@ const ORGANIZATION_TYPE: Record<string, string> = {
   Company: 'Yritykset',
 };
 
-const CHARGE_TYPE: Record<string, string> = {
+/** A service's charge type (the service field `chargeType`), as PTV's UI labels it. */
+const SERVICE_CHARGE_LABELS: Record<string, string> = {
   Chargeable: 'Maksullinen',
   FreeOfCharge: 'Maksuton',
   Other: 'Muu',
 };
 
+/**
+ * A field's value as text, by the field's name (`phoneNumbers`, or a
+ * localized `names.fi`). Lists get one line per entry, with the language
+ * where entries are per language.
+ */
 export function formatFieldValue(field: string, value: unknown): string {
   if (value === undefined) return '(ei arvoa)';
   if (value === null || value === '') return '(tyhjä)';
@@ -214,7 +216,7 @@ export function formatFieldValue(field: string, value: unknown): string {
       case 'publishingStatus':
         return PUBLISHING_STATUS[value as string] ?? String(value);
       case 'chargeType':
-        return CHARGE_TYPE[value as string] ?? String(value);
+        return SERVICE_CHARGE_LABELS[value as string] ?? String(value);
       case 'organizationType':
         return ORGANIZATION_TYPE[value as string] ?? String(value);
       case 'area': {

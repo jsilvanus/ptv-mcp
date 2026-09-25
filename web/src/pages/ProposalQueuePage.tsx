@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { ApiError, apiFetch } from '../api/client';
+import { ApiError, apiFetch, errorMessage } from '../api/client';
 import type {
   ProposalDetails,
-  ProposalKind,
   ProposalResolveAction,
   ProposalStatus,
   ProposalSummary,
@@ -15,6 +14,7 @@ import { ProposalReviewers } from './ProposalReviewers';
 import { ProposalPreview } from './ProposalPreview';
 import { ManualPublishPanel } from './ManualPublishPanel';
 import { QualityFindings } from './QualityFindings';
+import { PROPOSAL_KIND_LABELS } from './ptvLabels';
 import { roleAtLeast } from '../auth/roles';
 
 const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
@@ -34,14 +34,8 @@ export function ProposalQueuePage() {
   const [resolvingAction, setResolvingAction] = useState<ProposalResolveAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
-  const selectedIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
-
   // Contributors view proposals; resolving needs Approver, applying Publisher.
-  const canReview = useMemo(() => roleAtLeast(currentTenant?.role, 'contributor'), [currentTenant]);
+  const canReview = roleAtLeast(currentTenant?.role, 'contributor');
   const canResolve = roleAtLeast(currentTenant?.role, 'approver');
   const canApply = roleAtLeast(currentTenant?.role, 'publisher');
 
@@ -60,17 +54,19 @@ export function ProposalQueuePage() {
       if (list.length === 0) {
         setSelectedId(null);
         setSelected(null);
-      } else if (
-        !selectedIdRef.current ||
-        !list.some((proposal) => proposal.id === selectedIdRef.current)
-      ) {
-        setSelectedId(list[0]?.id ?? null);
+      } else {
+        // Keep the selection while it is still in the list.
+        setSelectedId((current) =>
+          current && list.some((proposal) => proposal.id === current)
+            ? current
+            : (list[0]?.id ?? null),
+        );
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         setForbidden(true);
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not load proposal queue.');
+        setError(errorMessage(err, 'Could not load proposal queue.'));
       }
     } finally {
       setLoading(false);
@@ -90,7 +86,7 @@ export function ProposalQueuePage() {
       if (err instanceof ApiError && err.status === 403) {
         setForbidden(true);
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not load proposal details.');
+        setError(errorMessage(err, 'Could not load proposal details.'));
       }
     } finally {
       setLoadingDetails(false);
@@ -120,7 +116,7 @@ export function ProposalQueuePage() {
       setSelected(updated);
       await loadList();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not resolve proposal.');
+      setError(errorMessage(err, 'Could not resolve proposal.'));
     } finally {
       setResolvingAction(null);
     }
@@ -130,7 +126,9 @@ export function ProposalQueuePage() {
     return (
       <div>
         <h1>Proposal queue</h1>
-        <p className="error">You need at least Editor role to review proposals.</p>
+        <p className="error">
+          You need at least the Ehdottaja (Contributor) role to review proposals.
+        </p>
       </div>
     );
   }
@@ -187,7 +185,7 @@ export function ProposalQueuePage() {
                       <strong>{proposalTarget(proposal)}</strong>
                       <br />
                       <span className="muted">
-                        {KIND_LABELS[proposal.kind]} · {proposal.status}
+                        {PROPOSAL_KIND_LABELS[proposal.kind]} · {proposal.status}
                       </span>
                     </button>
                   </li>
@@ -205,7 +203,7 @@ export function ProposalQueuePage() {
             ) : (
               <>
                 <p>
-                  <strong>{KIND_LABELS[selected.kind]}:</strong> {proposalTarget(selected)}
+                  <strong>{PROPOSAL_KIND_LABELS[selected.kind]}:</strong> {proposalTarget(selected)}
                   <br />
                   <strong>Status:</strong> {selected.status}
                   <br />
@@ -243,6 +241,7 @@ export function ProposalQueuePage() {
                 )}
                 {tenantId && (
                   <ProposalReviewers
+                    key={selected.id}
                     tenantId={tenantId}
                     proposal={selected}
                     canResolve={canResolve}
@@ -251,6 +250,7 @@ export function ProposalQueuePage() {
                 )}
                 {tenantId && (
                   <ProposalComments
+                    key={selected.id}
                     tenantId={tenantId}
                     proposalId={selected.id}
                     comments={selected.comments ?? []}
@@ -291,16 +291,6 @@ export function ProposalQueuePage() {
     </div>
   );
 }
-
-const KIND_LABELS: Record<ProposalKind, string> = {
-  service_update: 'Service update',
-  service_create: 'New service',
-  channel_update: 'Channel update',
-  channel_create: 'New channel',
-  connection_update: 'Connection details',
-  organisation_update: 'Organisation update',
-  organisation_create: 'New sub-organisation',
-};
 
 function proposalTarget(proposal: ProposalSummary): string {
   return proposal.serviceId || '(not created yet)';

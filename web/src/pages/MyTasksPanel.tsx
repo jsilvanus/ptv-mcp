@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ApiError, apiFetch } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import type { ChangeReadiness, MyTasks, PtvEnvironment } from '../api/types';
+import { EnvironmentSelect } from '../components/EnvironmentSelect';
+import { PROPOSAL_KIND_LABELS } from './ptvLabels';
 
 const READINESS_LABELS: Record<ChangeReadiness, string> = {
   ready_to_resolve: 'Ready to approve or reject',
@@ -26,7 +28,7 @@ export function MyTasksPanel({ tenantId }: { tenantId: string }) {
     try {
       setTasks(await apiFetch<MyTasks>(`/tenants/${tenantId}/my-tasks?environment=${environment}`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load your tasks.');
+      setError(errorMessage(err, 'Could not load your tasks.'));
     }
   }, [tenantId, environment]);
 
@@ -38,14 +40,7 @@ export function MyTasksPanel({ tenantId }: { tenantId: string }) {
     <section className="card" style={{ marginBottom: 16 }}>
       <h2 style={{ marginTop: 0 }}>Waiting for you</h2>
       <label htmlFor="tasks-env">Environment</label>{' '}
-      <select
-        id="tasks-env"
-        value={environment}
-        onChange={(e) => setEnvironment(e.target.value as PtvEnvironment)}
-      >
-        <option value="production">production</option>
-        <option value="test">test</option>
-      </select>{' '}
+      <EnvironmentSelect id="tasks-env" value={environment} onChange={setEnvironment} />{' '}
       <button onClick={() => void load()}>Refresh</button>
       {error && <p className="error">{error}</p>}
       {tasks && (
@@ -70,7 +65,7 @@ export function MyTasksPanel({ tenantId }: { tenantId: string }) {
                   <tr key={change.id}>
                     <td>
                       <Link to={`/tenants/${tenantId}/proposals`}>
-                        {change.kind} · {change.serviceId || 'new service'}
+                        {PROPOSAL_KIND_LABELS[change.kind]} · {change.serviceId || 'new service'}
                       </Link>
                     </td>
                     <td>{READINESS_LABELS[change.readiness]}</td>

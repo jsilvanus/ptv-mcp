@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
-import { ApiError, apiFetch } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import type {
   PreviewEntity,
   PtvEnvironment,
@@ -16,8 +16,10 @@ import { roleAtLeast } from '../auth/roles';
 import { useTenants } from '../tenants/TenantContext';
 import { ProposalPreview } from './ProposalPreview';
 import { QualityFindings } from './QualityFindings';
+import { PROPOSAL_KIND_LABELS } from './ptvLabels';
 import { MyTasksPanel } from './MyTasksPanel';
 import { ContentExportPanel } from './ContentExportPanel';
+import { EnvironmentSelect } from '../components/EnvironmentSelect';
 
 const STATUS_LABELS: Record<ReviewItemStatus, string> = {
   open: 'To check',
@@ -34,10 +36,6 @@ const KIND_LABELS: Record<ReviewTargetKind, string> = {
 interface ReviewItemDetails extends ReviewItem {
   current: PreviewEntity | null;
   quality: QualityReport | null;
-}
-
-function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
 }
 
 function counts(item: ReviewItem): string {
@@ -73,14 +71,12 @@ export function ReviewCampaignsPage() {
     if (!tenantId || !canView) return;
     setError(null);
     try {
-      const [list, mine, members] = await Promise.all([
+      const [list, mine] = await Promise.all([
         apiFetch<ReviewCampaignSummary[]>(`/tenants/${tenantId}/review-campaigns`),
         apiFetch<ReviewItem[]>(`/tenants/${tenantId}/review-items/mine`),
-        apiFetch<ReviewCandidate[]>(`/tenants/${tenantId}/review-candidates`),
       ]);
       setCampaigns(list);
       setMyItems(mine);
-      setCandidates(members);
       setCampaignId((current) => current ?? list.find((c) => c.status === 'open')?.id ?? null);
     } catch (err) {
       setError(errorMessage(err, 'Could not load review campaigns.'));
@@ -118,6 +114,14 @@ export function ReviewCampaignsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  // The reviewer candidates only change with the tenant's members, so they
+  // are not refetched after every action like the rest.
+  useEffect(() => {
+    if (!tenantId || !canView) return;
+    apiFetch<ReviewCandidate[]>(`/tenants/${tenantId}/review-candidates`)
+      .then(setCandidates)
+      .catch((err: unknown) => setError(errorMessage(err, 'Could not load the reviewers.')));
+  }, [tenantId, canView]);
   useEffect(() => {
     void loadCampaign();
   }, [loadCampaign]);
@@ -125,12 +129,20 @@ export function ReviewCampaignsPage() {
     void loadItem();
   }, [loadItem]);
 
-  async function run(action: () => Promise<unknown>, fallback: string): Promise<boolean> {
+  /**
+   * Runs an action and refreshes the page. `reloadCampaign: false` is for an
+   * action that selects another campaign: the campaignId effect loads it.
+   */
+  async function run(
+    action: () => Promise<unknown>,
+    fallback: string,
+    { reloadCampaign = true } = {},
+  ): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
       await action();
-      await Promise.all([load(), loadCampaign(), loadItem()]);
+      await Promise.all([load(), reloadCampaign ? loadCampaign() : null, loadItem()]);
       return true;
     } catch (err) {
       setError(errorMessage(err, fallback));
@@ -221,13 +233,17 @@ export function ReviewCampaignsPage() {
           <StartCampaignForm
             busy={busy}
             onStart={(body) =>
-              run(async () => {
-                const created = await apiFetch<ReviewCampaignSummary>(
-                  `/tenants/${tenantId}/review-campaigns`,
-                  { method: 'POST', body: JSON.stringify(body) },
-                );
-                setCampaignId(created.id);
-              }, 'Could not start the campaign.')
+              run(
+                async () => {
+                  const created = await apiFetch<ReviewCampaignSummary>(
+                    `/tenants/${tenantId}/review-campaigns`,
+                    { method: 'POST', body: JSON.stringify(body) },
+                  );
+                  setCampaignId(created.id);
+                },
+                'Could not start the campaign.',
+                { reloadCampaign: false },
+              )
             }
           />
         )}
@@ -366,7 +382,7 @@ function ItemPanel({
         <ul>
           {item.proposals.map((p) => (
             <li key={p.id}>
-              {p.kind} · {p.status} · <code>{p.id}</code>
+              {PROPOSAL_KIND_LABELS[p.kind]} · {p.status} · <code>{p.id}</code>
             </li>
           ))}
         </ul>
@@ -491,14 +507,7 @@ function StartCampaignForm({
         onChange={(e) => setOrganizationId(e.target.value)}
       />
       <label htmlFor="campaign-env">Environment</label>
-      <select
-        id="campaign-env"
-        value={environment}
-        onChange={(e) => setEnvironment(e.target.value as PtvEnvironment)}
-      >
-        <option value="production">production</option>
-        <option value="test">test</option>
-      </select>
+      <EnvironmentSelect id="campaign-env" value={environment} onChange={setEnvironment} />
       <label htmlFor="campaign-due">Due date (optional)</label>
       <input
         id="campaign-due"
