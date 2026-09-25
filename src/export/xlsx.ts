@@ -18,9 +18,18 @@ const MAX_SHEET_NAME = 31;
 const MAX_CELL_TEXT = 32767;
 const MAX_COLUMN_WIDTH = 60;
 
+/** XML 1.0 allows no control characters but tab, line feed and carriage return. */
+function withoutControlCharacters(text: string): string {
+  return [...text]
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+    })
+    .join('');
+}
+
 function escapeXml(text: string): string {
-  return text
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+  return withoutControlCharacters(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
