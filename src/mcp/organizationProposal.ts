@@ -1,3 +1,4 @@
+import { OrganizationNotFoundError } from '../ptv/organisationContent.js';
 import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkOrganization, type QualityReport } from '../quality/contentChecks.js';
@@ -33,12 +34,7 @@ const CREATE_ONLY_FIELDS = ['parentOrganizationId', 'organizationType', 'area', 
 /** DVV: sub-organisations go at most five levels below the main organisation. */
 export const MAX_SUB_ORGANIZATION_LEVELS = 5;
 
-export class OrganizationNotFoundError extends Error {
-  constructor(organizationId: PtvContentId) {
-    super(`PTV organisation not found: ${organizationId}`);
-    this.name = 'OrganizationNotFoundError';
-  }
-}
+export { OrganizationNotFoundError };
 
 export class UnsupportedOrganizationFieldError extends Error {
   constructor(fields: string[], creating = false) {

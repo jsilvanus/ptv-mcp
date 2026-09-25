@@ -16,6 +16,7 @@ import {
   ProposalAlreadyResolvedError,
   ProposalNotFoundError,
 } from '../proposals/proposalService.js';
+import { OrganizationNotFoundError } from '../ptv/organisationContent.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ReviewCampaignError } from '../reviews/reviewCampaigns.js';
 import { ReviewCampaignNotFoundError, ReviewItemNotFoundError } from '../reviews/reviewService.js';
@@ -58,6 +59,7 @@ const ERROR_STATUS: ReadonlyArray<readonly [ErrorClass, number | ((err: Error) =
         : { statusCode: 400, message: `${reason}: ${message}` };
     },
   ],
+  [OrganizationNotFoundError, 404],
   [ReviewCampaignNotFoundError, 404],
   [ReviewItemNotFoundError, 404],
   [ReviewCampaignError, 400],

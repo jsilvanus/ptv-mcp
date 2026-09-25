@@ -14,6 +14,7 @@ export interface Sheet {
 }
 
 const MAX_SHEET_NAME = 31;
+const utf8 = new TextEncoder();
 /** Excel's limit for one cell's text. */
 const MAX_CELL_TEXT = 32767;
 const MAX_COLUMN_WIDTH = 60;
@@ -174,7 +175,7 @@ export function buildXlsx(sheets: Sheet[]): Uint8Array {
         [`xl/worksheets/sheet${i + 1}.xml`, worksheetXml(sheet.rows)] as [string, string],
     ),
   ];
-  return zipStored(files.map(([name, content]) => [name, new TextEncoder().encode(content)]));
+  return zipStored(files.map(([name, content]) => [name, utf8.encode(content)]));
 }
 
 // --- ZIP (stored, no compression) ---------------------------------------
@@ -203,7 +204,7 @@ function zipStored(files: [string, Uint8Array][]): Uint8Array {
   const dosTime = 0;
   const dosDate = (0 << 9) | (1 << 5) | 1;
   for (const [name, data] of files) {
-    const nameBytes = new TextEncoder().encode(name);
+    const nameBytes = utf8.encode(name);
     const crc = crc32(data);
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);

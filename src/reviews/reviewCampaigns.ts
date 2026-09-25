@@ -1,5 +1,10 @@
 import { resolveReadAdapter } from '../mcp/toolContext.js';
-import { loadGeneralDescription, serviceCheckContext } from '../quality/serviceCheckContext.js';
+import { serviceCheckContext } from '../quality/serviceCheckContext.js';
+import {
+  collectOrganisationContent,
+  organisationsInScope,
+  OrganizationNotFoundError,
+} from '../ptv/organisationContent.js';
 import { randomUUID } from 'node:crypto';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -12,11 +17,8 @@ import type { MemberLister, ReviewCandidate } from '../mcp/proposalQueue.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import type { PtvAdapter } from '../ptv/adapter.js';
 import type {
-  GeneralDescription,
   LocalizedText,
   Organization,
-  PaginatedResult,
-  SearchParams,
   Service,
   ServiceChannel,
 } from '../ptv/domain.js';
@@ -58,7 +60,6 @@ export class ReviewCampaignError extends Error {
 export const MAX_NOTE_LENGTH = 4000;
 /** Safety cap on items per campaign; PTV organisations rarely have more. */
 export const MAX_CAMPAIGN_ITEMS = 5000;
-const PAGE_SIZE = 200;
 
 export interface ReviewCampaignSummary extends ReviewCampaignRecord {
   createdByName: string | null;
@@ -94,113 +95,57 @@ function displayName(names: LocalizedText): string {
   return names.fi ?? names.sv ?? names.en ?? Object.values(names).find(Boolean) ?? '(nimetön)';
 }
 
-/** Every page of an organisation's services or channels, up to MAX_CAMPAIGN_ITEMS. */
-export async function fetchAll<T>(
-  search: (params: SearchParams) => Promise<PaginatedResult<T>>,
-  organizationId: string,
-): Promise<T[]> {
-  const items: T[] = [];
-  for (let page = 1; ; page += 1) {
-    const result = await search({ organizationId, page, pageSize: PAGE_SIZE });
-    items.push(...result.items);
-    if (
-      result.items.length < PAGE_SIZE ||
-      items.length >= result.totalCount ||
-      items.length >= MAX_CAMPAIGN_ITEMS
-    ) {
-      return items;
-    }
-  }
-}
-
-/** The organisation and, optionally, every organisation below it in the tenant's catalogue. */
-export async function organisationsToReview(
+/** organisationsInScope, reporting an unknown organisation as a campaign error. */
+async function organisationsToReview(
   adapter: PtvAdapter,
   organizationId: string,
   includeSubOrganisations: boolean,
 ): Promise<Organization[]> {
-  const root = await adapter.getOrganisation(organizationId);
-  if (!root) throw new ReviewCampaignError(`PTV organisation not found: ${organizationId}`);
-  if (!includeSubOrganisations) return [root];
-  // The whole catalogue: searchOrganisations has no parent filter, and v11
-  // serves it from the tenant's cached copy.
-  const catalogue = await adapter
-    .searchOrganisations({ page: 1, pageSize: 100000 })
-    .then((result) => result.items)
-    .catch(() => [] as Organization[]);
-  const result = [root];
-  const seen = new Set([root.id]);
-  for (let i = 0; i < result.length; i += 1) {
-    const parentId = result[i]!.id;
-    for (const org of catalogue) {
-      if (org.parentOrganizationId === parentId && !seen.has(org.id)) {
-        seen.add(org.id);
-        result.push(org);
-      }
-    }
+  try {
+    return await organisationsInScope(adapter, organizationId, includeSubOrganisations);
+  } catch (err) {
+    if (err instanceof OrganizationNotFoundError) throw new ReviewCampaignError(err.message);
+    throw err;
   }
-  return result;
 }
 
 async function collectItems(
   adapter: PtvAdapter,
   organisations: Organization[],
 ): Promise<NewReviewItem[]> {
-  const items: NewReviewItem[] = [];
-  const services: Service[] = [];
-  const channels: ServiceChannel[] = [];
-  for (const org of organisations) {
-    items.push({
-      targetKind: 'organisation',
-      targetId: org.id,
-      targetName: displayName(org.names),
-      organizationId: org.id,
-      findings: [],
-    });
-    services.push(...(await fetchAll((p) => adapter.searchServices(p), org.id)));
-    channels.push(...(await fetchAll((p) => adapter.searchChannels(p), org.id)));
-  }
-
+  const content = await collectOrganisationContent(adapter, organisations);
   const orgNames = new Map(organisations.map((org) => [org.id, org.names]));
-  const connected = new Map<string, number>();
-  const generalDescriptions = new Map<string, Promise<GeneralDescription | null>>();
-  for (const service of services) {
-    for (const channelId of service.serviceChannelIds) {
-      connected.set(channelId, (connected.get(channelId) ?? 0) + 1);
-    }
-    const organisationNames = orgNames.get(service.organizationId);
-    const generalDescription = await loadGeneralDescription(
-      adapter,
-      service.generalDescriptionId,
-      generalDescriptions,
-    );
+  const items: NewReviewItem[] = organisations.map((org) => ({
+    targetKind: 'organisation',
+    targetId: org.id,
+    targetName: displayName(org.names),
+    organizationId: org.id,
+    findings: [],
+  }));
+  for (const service of content.services) {
     items.push({
       targetKind: 'service',
       targetId: service.id,
       targetName: displayName(service.names),
       organizationId: service.organizationId,
       findings: checkService(service, {
-        ...(organisationNames ? { organisationNames } : {}),
-        ...(generalDescription ? { generalDescription } : {}),
+        organisationNames: orgNames.get(service.organizationId),
+        generalDescription: service.generalDescriptionId
+          ? content.generalDescriptions.get(service.generalDescriptionId)
+          : undefined,
       }).findings,
     });
   }
-  for (const channel of channels) {
-    let count = connected.get(channel.id) ?? 0;
-    if (count === 0) {
-      // Connected only to other organisations' services? Ask PTV before flagging it.
-      count = await adapter
-        .getConnectionsFor(channel.id)
-        .then((connections) => connections.length)
-        .catch(() => 0);
-    }
+  for (const channel of content.channels) {
     items.push({
       targetKind: 'channel',
       targetId: channel.id,
       targetName: displayName(channel.names),
       channelType: channel.channelType,
       organizationId: channel.organizationId,
-      findings: checkChannel(channel, { connectedServiceCount: count }).findings,
+      findings: checkChannel(channel, {
+        connectedServiceCount: content.connectedServiceCount.get(channel.id) ?? 0,
+      }).findings,
     });
   }
   return items.slice(0, MAX_CAMPAIGN_ITEMS);
