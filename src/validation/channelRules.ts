@@ -5,7 +5,7 @@ import type {
   ServiceChannel,
   ServiceHour,
 } from '../ptv/domain.js';
-import type { ValidationError } from './changeValidator.js';
+import type { ValidationError, ValidationResult } from './changeValidator.js';
 
 /**
  * PTV's hard rules for the type-specific channel fields (the v11 In
@@ -187,6 +187,30 @@ export function checkAddress(
   }
 }
 
+/** Phone numbers, emails, web pages and service hours, wherever they appear. */
+export function checkContactDetails(
+  fields: {
+    phoneNumbers?: PhoneNumber[] | undefined;
+    emails?: { value: string }[] | undefined;
+    webPages?: { url: string }[] | undefined;
+    serviceHours?: ServiceHour[] | undefined;
+  },
+  errors: ValidationError[],
+): void {
+  (fields.webPages ?? []).forEach((page, i) => checkUrl(page.url, `webPages[${i}]`, errors));
+  (fields.phoneNumbers ?? []).forEach((phone, i) =>
+    checkPhone(phone, `phoneNumbers[${i}]`, errors),
+  );
+  (fields.emails ?? []).forEach((email) => {
+    if (!EMAIL.test(email.value)) {
+      errors.push({ field: 'emails', message: `Not an email address: ${email.value}` });
+    }
+  });
+  (fields.serviceHours ?? []).forEach((hour, i) =>
+    checkServiceHour(hour, `serviceHours[${i}]`, errors),
+  );
+}
+
 export function validateChannelDetails(
   channel: ServiceChannel,
   errors: ValidationError[],
@@ -205,21 +229,13 @@ export function validateChannelDetails(
   for (const [language, url] of Object.entries(channel.urls ?? {})) {
     if (url) checkUrl(url, `urls.${language}`, errors);
   }
-  (channel.webPages ?? []).forEach((page, i) => checkUrl(page.url, `webPages[${i}]`, errors));
   (channel.formFiles ?? []).forEach((file, i) => checkUrl(file.url, `formFiles[${i}]`, errors));
-  (channel.phoneNumbers ?? []).forEach((phone, i) =>
-    checkPhone(phone, `phoneNumbers[${i}]`, errors),
-  );
   (channel.supportPhones ?? []).forEach((phone, i) =>
     checkPhone(phone, `supportPhones[${i}]`, errors),
   );
-  [...(channel.emails ?? []), ...(channel.supportEmails ?? [])].forEach((email) => {
-    if (!EMAIL.test(email.value)) {
-      errors.push({ field: 'emails', message: `Not an email address: ${email.value}` });
-    }
-  });
-  (channel.serviceHours ?? []).forEach((hour, i) =>
-    checkServiceHour(hour, `serviceHours[${i}]`, errors),
+  checkContactDetails(
+    { ...channel, emails: [...(channel.emails ?? []), ...(channel.supportEmails ?? [])] },
+    errors,
   );
   (channel.addresses ?? []).forEach((address, i) =>
     checkAddress(address, `addresses[${i}]`, errors, false),
@@ -280,7 +296,7 @@ const CONNECTION_ADDRESS_KINDS = ['Street', 'PostOfficeBox', 'Foreign'];
  * texts max 500 characters, contact details as on channels, and postal
  * addresses only.
  */
-export function validateConnectionDetails(details: ConnectionDetails): ValidationError[] {
+export function validateConnectionDetails(details: ConnectionDetails): ValidationResult {
   const errors: ValidationError[] = [];
   if (details.chargeType !== undefined && !CHARGE_TYPES.includes(details.chargeType)) {
     errors.push({
@@ -298,18 +314,7 @@ export function validateConnectionDetails(details: ConnectionDetails): Validatio
       }
     }
   }
-  (details.phoneNumbers ?? []).forEach((phone, i) =>
-    checkPhone(phone, `phoneNumbers[${i}]`, errors),
-  );
-  (details.emails ?? []).forEach((email) => {
-    if (!EMAIL.test(email.value)) {
-      errors.push({ field: 'emails', message: `Not an email address: ${email.value}` });
-    }
-  });
-  (details.webPages ?? []).forEach((page, i) => checkUrl(page.url, `webPages[${i}]`, errors));
-  (details.serviceHours ?? []).forEach((hour, i) =>
-    checkServiceHour(hour, `serviceHours[${i}]`, errors),
-  );
+  checkContactDetails(details, errors);
   (details.addresses ?? []).forEach((address, i) => {
     if (!CONNECTION_ADDRESS_KINDS.includes(address.kind)) {
       errors.push({
@@ -320,5 +325,5 @@ export function validateConnectionDetails(details: ConnectionDetails): Validatio
     }
     checkAddress(address, `addresses[${i}]`, errors, false);
   });
-  return errors;
+  return { valid: errors.length === 0, errors };
 }

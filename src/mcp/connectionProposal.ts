@@ -115,14 +115,14 @@ export async function queueConnectionProposal(
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   assertLocalizedTextFields(changes);
   const prepared = await prepareConnectionProposal(registry, ctx, serviceId, channelId, changes);
-  const errors = validateConnectionDetails(prepared.proposed);
+  const validation = validateConnectionDetails(prepared.proposed);
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,
     userId: ctx.actingUserId,
     action: 'ProposeConnectionChange',
     resourceType: 'Connection',
     resourceId: `${serviceId}/${channelId}`,
-    afterState: { diff: prepared.diff, validationErrors: errors },
+    afterState: { diff: prepared.diff, validationErrors: validation.errors },
     result: 'Proposed',
     ...(correlationId ? { correlationId } : {}),
   });
@@ -140,7 +140,7 @@ export async function queueConnectionProposal(
   });
   return {
     ...prepared,
-    validation: { valid: errors.length === 0, errors },
+    validation,
     correlationId: auditEntry.correlationId,
     proposalId: proposal.id,
     status: proposal.status,
@@ -170,7 +170,7 @@ export async function applyConnectionChanges(
     channelId,
     changes,
   );
-  const errors = validateConnectionDetails(proposed);
+  const validation = validateConnectionDetails(proposed);
   const resourceId = `${serviceId}/${channelId}`;
   await auditService.record({
     tenantId: ctx.tenantId,
@@ -178,11 +178,11 @@ export async function applyConnectionChanges(
     action: 'ValidateConnectionChange',
     resourceType: 'Connection',
     resourceId,
-    afterState: { errors },
-    result: errors.length === 0 ? 'Valid' : 'Invalid',
+    afterState: { errors: validation.errors },
+    result: validation.valid ? 'Valid' : 'Invalid',
     correlationId,
   });
-  if (errors.length > 0) throw new ValidationFailedError(errors);
+  if (!validation.valid) throw new ValidationFailedError(validation.errors);
 
   const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();

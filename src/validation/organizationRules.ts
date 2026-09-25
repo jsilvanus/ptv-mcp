@@ -1,7 +1,7 @@
 import type { NewOrganization } from '../ptv/adapter.js';
 import type { Organization, OrganizationType } from '../ptv/domain.js';
-import type { ValidationError } from './changeValidator.js';
-import { checkAddress, checkPhone, checkUrl, EMAIL, SUMMARY_MAX } from './channelRules.js';
+import type { ValidationError, ValidationResult } from './changeValidator.js';
+import { checkAddress, checkContactDetails, SUMMARY_MAX } from './channelRules.js';
 
 /** DVV: "Kenttään mahtuu korkeintaan 2500 merkkiä". */
 export const ORGANIZATION_DESCRIPTION_MAX = 2500;
@@ -44,7 +44,7 @@ function text(value: unknown): string {
 export function validateOrganization(
   organization: Partial<Organization> | NewOrganization,
   creating = false,
-): ValidationError[] {
+): ValidationResult {
   const errors: ValidationError[] = [];
   const names = organization.names ?? {};
   const languages = Object.keys(names).filter((language) => text(names[language]));
@@ -101,15 +101,7 @@ export function validateOrganization(
           : 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
     });
   }
-  (organization.phoneNumbers ?? []).forEach((phone, i) =>
-    checkPhone(phone, `phoneNumbers[${i}]`, errors),
-  );
-  (organization.emails ?? []).forEach((email) => {
-    if (!EMAIL.test(email.value)) {
-      errors.push({ field: 'emails', message: `Not an email address: ${email.value}` });
-    }
-  });
-  (organization.webPages ?? []).forEach((page, i) => checkUrl(page.url, `webPages[${i}]`, errors));
+  checkContactDetails(organization, errors);
   (organization.addresses ?? []).forEach((address, i) =>
     checkAddress(address, `addresses[${i}]`, errors, false),
   );
@@ -143,5 +135,5 @@ export function validateOrganization(
       });
     }
   }
-  return errors;
+  return { valid: errors.length === 0, errors };
 }
