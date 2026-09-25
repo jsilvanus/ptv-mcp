@@ -9,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import { validateChannel } from '../validation/changeValidator.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const COMMON_CHANNEL_FIELDS = [
@@ -103,7 +103,7 @@ export async function prepareChannelProposal(
   if (wrongType.length > 0) throw new UnsupportedChannelFieldError(wrongType, current.channelType);
   const proposed: ServiceChannel = { ...current, ...changes };
   // Same field semantics as a service's names/descriptions/languages.
-  const diff = diffService(current as unknown as Service, changes as unknown as Partial<Service>);
+  const diff = diffFields(current, changes);
   return { channelId, current, proposed, diff };
 }
 

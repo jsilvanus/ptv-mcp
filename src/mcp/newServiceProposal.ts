@@ -9,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** Everything empty: what a new service is diffed against. */
@@ -76,7 +76,7 @@ export async function queueNewServiceProposal(
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   assertLocalizedTextFields(input);
   const proposed = normalizeNewService(input);
-  const diff = diffService(EMPTY_SERVICE, proposed);
+  const diff = diffFields(EMPTY_SERVICE, proposed);
   const validation = validator.validate(asService(proposed));
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,

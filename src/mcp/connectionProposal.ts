@@ -9,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import { validateConnectionDetails } from '../validation/channelRules.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** The extra-info fields a `connection_update` proposal may change. */
@@ -86,7 +86,7 @@ export async function prepareConnectionProposal(
   if (!current) throw new ConnectionNotFoundError(serviceId, channelId);
   const proposed: Connection = { ...current, ...changes };
   // `descriptions` diffs per language, like a service's; the rest whole.
-  const diff = diffService(current as unknown as Service, changes as unknown as Partial<Service>);
+  const diff = diffFields<ConnectionDetails>(current, changes);
   return { serviceId, channelId, current, proposed, diff };
 }
 

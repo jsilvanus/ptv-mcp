@@ -9,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import { validateOrganization } from '../validation/organizationRules.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** The organisation fields an `organisation_update` proposal may change. */
@@ -59,14 +59,6 @@ export class InvalidNewOrganizationError extends Error {
   }
 }
 
-function diffOrganization(
-  current: Partial<Organization>,
-  changes: Partial<Organization>,
-): ServiceDiffEntry[] {
-  // names, summaries and descriptions diff per language, like a service's.
-  return diffService(current as unknown as Service, changes as unknown as Partial<Service>);
-}
-
 export interface PreparedOrganizationProposal {
   organizationId: PtvContentId;
   current: Organization;
@@ -89,7 +81,12 @@ export async function prepareOrganizationProposal(
   const current = await adapter.getOrganisation(organizationId);
   if (!current) throw new OrganizationNotFoundError(organizationId);
   const proposed: Organization = { ...current, ...changes };
-  return { organizationId, current, proposed, diff: diffOrganization(current, changes) };
+  return {
+    organizationId,
+    current,
+    proposed,
+    diff: diffFields<Partial<Organization>>(current, changes),
+  };
 }
 
 export interface QueuedOrganizationProposalResult extends PreparedOrganizationProposal {
@@ -286,7 +283,7 @@ export async function queueNewOrganizationProposal(
     );
   }
   const proposed = normalizeNewOrganization(input, parent);
-  const diff = diffOrganization(
+  const diff = diffFields<Partial<Organization>>(
     EMPTY_ORGANIZATION,
     Object.fromEntries(
       Object.entries(proposed).filter(([, value]) => value !== undefined && value !== ''),

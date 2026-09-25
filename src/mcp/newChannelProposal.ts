@@ -10,7 +10,7 @@ import { validateChannel } from '../validation/changeValidator.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
 import { CHANNEL_TYPE_FIELDS, UnsupportedChannelFieldError } from './channelProposal.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const CHANNEL_TYPES: ServiceChannel['channelType'][] = [
@@ -97,10 +97,7 @@ export async function queueNewChannelProposal(
   if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
   const proposed = normalizeNewChannel(input);
   const channel = asChannel(proposed);
-  const diff = diffService(
-    EMPTY_CHANNEL as unknown as Service,
-    channelFieldsOf(proposed) as unknown as Partial<Service>,
-  );
+  const diff = diffFields<Record<string, unknown>>(EMPTY_CHANNEL, channelFieldsOf(proposed));
   const validation = validateChannel(channel, true);
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,

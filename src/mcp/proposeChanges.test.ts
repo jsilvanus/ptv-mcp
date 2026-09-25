@@ -5,7 +5,7 @@ import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import type { Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import { NotAuthorizedError } from './authorization.js';
-import { diffService, proposeChanges, ServiceNotFoundError } from './proposeChanges.js';
+import { diffFields, proposeChanges, ServiceNotFoundError } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const ctx: ToolContext = { tenantId: 'tenant-1', environment: 'test', actingUserId: 'user-1' };
@@ -49,9 +49,9 @@ function buildAdapter(services: Service[] = [baseService]): InMemoryPtvAdapter {
   });
 }
 
-describe('diffService', () => {
+describe('diffFields', () => {
   it('produces no entries when changes is empty', () => {
-    expect(diffService(baseService, {})).toEqual([]);
+    expect(diffFields(baseService, {})).toEqual([]);
   });
 
   it('ignores key order and PTV-filled hour defaults, so read-back data equals the proposal', () => {
@@ -78,7 +78,7 @@ describe('diffService', () => {
         },
       ],
     } as unknown as Partial<Service>;
-    expect(diffService(current, changes)).toEqual([]);
+    expect(diffFields(current, changes)).toEqual([]);
   });
 
   it('compares classifications by uri, ignoring names and order', () => {
@@ -90,7 +90,7 @@ describe('diffService', () => {
       ],
     };
     expect(
-      diffService(current, {
+      diffFields(current, {
         serviceClasses: [
           { uri: 'http://example/class/2', names: {} },
           { uri: 'http://example/class/1', names: { fi: 'Yksi' } },
@@ -98,7 +98,7 @@ describe('diffService', () => {
       }),
     ).toEqual([]);
     expect(
-      diffService(current, { serviceClasses: [{ uri: 'http://example/class/1', names: {} }] }),
+      diffFields(current, { serviceClasses: [{ uri: 'http://example/class/1', names: {} }] }),
     ).toHaveLength(1);
   });
 
@@ -109,7 +109,7 @@ describe('diffService', () => {
         { code: 'P11.6', uri: 'http://example/class/p11.6', names: { fi: 'Seurakunnat' } },
       ],
     };
-    const [entry] = diffService(current, {
+    const [entry] = diffFields(current, {
       serviceClasses: [
         { uri: 'http://example/class/p11.6', names: {} },
         { code: 'P27', names: {} },
@@ -122,34 +122,34 @@ describe('diffService', () => {
   });
 
   it('expands a localized field into one entry per changed language', () => {
-    const diff = diffService(baseService, { names: { fi: 'Uusi nimi', sv: 'Gammalt namn' } });
+    const diff = diffFields(baseService, { names: { fi: 'Uusi nimi', sv: 'Gammalt namn' } });
     expect(diff).toEqual([{ field: 'names.fi', before: 'Vanha nimi', after: 'Uusi nimi' }]);
   });
 
   it('reports a removed language as before/after undefined pair', () => {
-    const diff = diffService(baseService, { names: { fi: 'Vanha nimi' } });
+    const diff = diffFields(baseService, { names: { fi: 'Vanha nimi' } });
     expect(diff).toEqual([{ field: 'names.sv', before: 'Gammalt namn', after: undefined }]);
   });
 
   it('reports an added language', () => {
-    const diff = diffService(baseService, {
+    const diff = diffFields(baseService, {
       names: { fi: 'Vanha nimi', sv: 'Gammalt namn', en: 'New name' },
     });
     expect(diff).toEqual([{ field: 'names.en', before: undefined, after: 'New name' }]);
   });
 
   it('diffs a non-localized array field as a whole-value replacement', () => {
-    const diff = diffService(baseService, { languages: ['fi'] });
+    const diff = diffFields(baseService, { languages: ['fi'] });
     expect(diff).toEqual([{ field: 'languages', before: ['fi', 'sv'], after: ['fi'] }]);
   });
 
   it('does not report a field present in changes but identical to the current value', () => {
-    const diff = diffService(baseService, { languages: ['fi', 'sv'] });
+    const diff = diffFields(baseService, { languages: ['fi', 'sv'] });
     expect(diff).toEqual([]);
   });
 
   it('reports multiple simultaneous field changes', () => {
-    const diff = diffService(baseService, { languages: ['fi'], organizationId: 'org-2' });
+    const diff = diffFields(baseService, { languages: ['fi'], organizationId: 'org-2' });
     expect(diff).toContainEqual({ field: 'languages', before: ['fi', 'sv'], after: ['fi'] });
     expect(diff).toContainEqual({ field: 'organizationId', before: 'org-1', after: 'org-2' });
   });
