@@ -1,3 +1,4 @@
+import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkOrganization, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -58,16 +59,6 @@ export class InvalidNewOrganizationError extends Error {
   }
 }
 
-function readAdapter(registry: PtvAdapterRegistry, ctx: ToolContext) {
-  return registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
-}
-
 function diffOrganization(
   current: Partial<Organization>,
   changes: Partial<Organization>,
@@ -94,7 +85,7 @@ export async function prepareOrganizationProposal(
     (field) => !(WRITABLE_ORGANIZATION_FIELDS as readonly string[]).includes(field),
   );
   if (unsupported.length > 0) throw new UnsupportedOrganizationFieldError(unsupported);
-  const adapter = await readAdapter(registry, ctx);
+  const adapter = await resolveReadAdapter(registry, ctx);
   const current = await adapter.getOrganisation(organizationId);
   if (!current) throw new OrganizationNotFoundError(organizationId);
   const proposed: Organization = { ...current, ...changes };
@@ -187,13 +178,7 @@ export async function applyOrganizationChanges(
   });
   if (errors.length > 0) throw new ValidationFailedError(errors);
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   const audit = (result: 'Success' | 'Failed') =>
     auditService.record({
@@ -290,7 +275,7 @@ export async function queueNewOrganizationProposal(
       'Give parentOrganizationId: the organisation the new sub-organisation goes under.',
     );
   }
-  const adapter = await readAdapter(registry, ctx);
+  const adapter = await resolveReadAdapter(registry, ctx);
   const hierarchy = await adapter.getOrganisationHierarchy(input.parentOrganizationId);
   const parent = hierarchy[0];
   if (!parent) throw new OrganizationNotFoundError(input.parentOrganizationId);
@@ -363,13 +348,7 @@ export async function createNewOrganization(
   });
   if (errors.length > 0) throw new ValidationFailedError(errors);
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   const audit = (result: 'Success' | 'Failed', organizationId?: string) =>
     auditService.record({

@@ -1,3 +1,4 @@
+import { resolveReadAdapter } from '../mcp/toolContext.js';
 import { loadGeneralDescription } from '../quality/generalDescriptionContext.js';
 import { randomUUID } from 'node:crypto';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
@@ -91,16 +92,6 @@ export interface ReviewDeps {
 
 function displayName(names: LocalizedText): string {
   return names.fi ?? names.sv ?? names.en ?? Object.values(names).find(Boolean) ?? '(nimetön)';
-}
-
-async function readAdapter(registry: PtvAdapterRegistry, ctx: ToolContext): Promise<PtvAdapter> {
-  return registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
 }
 
 /** Every page of an organisation's services or channels, up to MAX_CAMPAIGN_ITEMS. */
@@ -331,7 +322,7 @@ export async function startReviewCampaign(
       `Campaign "${existing.name}" (${existing.id}) is still open for this organisation; close it first.`,
     );
   }
-  const adapter = await readAdapter(deps.registry, ctx);
+  const adapter = await resolveReadAdapter(deps.registry, ctx);
   const organisations = await organisationsToReview(
     adapter,
     input.organizationId,
@@ -488,7 +479,10 @@ export async function getReviewItem(
   await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const item = await deps.reviewService.getItem(ctx.tenantId, itemId);
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, item.campaignId);
-  const adapter = await readAdapter(deps.registry, { ...ctx, environment: campaign.environment });
+  const adapter = await resolveReadAdapter(deps.registry, {
+    ...ctx,
+    environment: campaign.environment,
+  });
   const current = await readTarget(adapter, item).catch(() => null);
   let quality: QualityReport | null = null;
   if (current && item.targetKind === 'service') {

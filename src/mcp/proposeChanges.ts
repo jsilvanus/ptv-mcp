@@ -1,3 +1,4 @@
+import { resolveReadAdapter } from './toolContext.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   CodeListEntry,
@@ -195,13 +196,7 @@ export async function prepareProposal(
   serviceId: PtvContentId,
   changes: Partial<Service>,
 ): Promise<PreparedProposal> {
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
 
   const current = await adapter.getService(serviceId);
   if (!current) {

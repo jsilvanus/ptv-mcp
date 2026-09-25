@@ -1,3 +1,4 @@
+import { resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -139,13 +140,7 @@ export async function createNewService(
     throw new ValidationFailedError(validation.errors);
   }
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   try {
     const result = await writeAdapter.createService(service);

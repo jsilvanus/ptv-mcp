@@ -1,3 +1,4 @@
+import { resolveReadAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { asChannel, createNewChannel, normalizeNewChannel } from './newChannelProposal.js';
 import type { NewChannel, NewOrganization } from '../ptv/adapter.js';
@@ -212,15 +213,7 @@ async function proposedGeneralDescription(
   service: Pick<Service, 'generalDescriptionId'> | null,
 ): Promise<GeneralDescription | undefined> {
   if (!service?.generalDescriptionId) return undefined;
-  const adapter = await registry
-    .resolve({
-      tenantId: ctx.tenantId,
-      environment: ctx.environment,
-      apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-      operation: 'read',
-      actingUserId: ctx.actingUserId,
-    })
-    .catch(() => null);
+  const adapter = await resolveReadAdapter(registry, ctx).catch(() => null);
   return adapter ? loadGeneralDescription(adapter, service.generalDescriptionId) : undefined;
 }
 
@@ -1347,13 +1340,7 @@ async function checkCreatedItem(
   proposal: ProposalRecord,
   ptvId: string,
 ): Promise<void> {
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
   const organisation = proposal.kind === 'organisation_create';
   const changes = proposal.changes as Partial<Service> & { parentOrganizationId?: string };
   // A sub-organisation belongs under its parent, as a service or channel to its organisation.

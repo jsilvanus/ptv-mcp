@@ -11,23 +11,14 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../ptv/domain.js';
-import type { ReadToolContext } from './toolContext.js';
+import { resolveReadAdapter, type ReadToolContext } from './toolContext.js';
 
-/**
+/*
  * Search/read tools are thin pass-throughs to a registry-resolved
  * PtvAdapter. The tenant comes from the OAuth-selected MCP connection;
  * search criteria are carried separately in SearchParams and never inferred
  * from the tenant or its organisation membership.
  */
-async function resolveReadAdapter(registry: PtvAdapterRegistry, ctx: ReadToolContext) {
-  return registry.resolve({
-    ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
-}
 
 export async function searchServices(
   registry: PtvAdapterRegistry,

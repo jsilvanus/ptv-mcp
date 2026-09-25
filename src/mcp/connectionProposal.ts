@@ -1,3 +1,4 @@
+import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkConnection, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -78,13 +79,7 @@ export async function prepareConnectionProposal(
   );
   if (unsupported.length > 0) throw new UnsupportedConnectionFieldError(unsupported);
 
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
   const current = (await adapter.getConnectionsFor(serviceId)).find(
     (connection) => connection.serviceId === serviceId && connection.channelId === channelId,
   );
@@ -189,13 +184,7 @@ export async function applyConnectionChanges(
   });
   if (errors.length > 0) throw new ValidationFailedError(errors);
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   const audit = (result: 'Success' | 'Failed') =>
     auditService.record({

@@ -1,4 +1,5 @@
-import type { PtvEnvironment } from '../ptv/adapter.js';
+import type { PtvAdapter, PtvEnvironment } from '../ptv/adapter.js';
+import type { PtvAdapterRegistry } from '../ptv/registry.js';
 
 /**
  * Read tools may omit tenantId when they are using PTV v11's public OUT
@@ -22,3 +23,45 @@ export interface ToolContext {
  * published-only data, with no drafts and no tenant configuration.
  */
 export type ReadToolContext = Omit<ToolContext, 'tenantId'> & { tenantId?: string };
+
+export class WriteApiNotSelectedError extends Error {
+  constructor() {
+    super(
+      'No write API version is selected for this MCP connection. This connection is read-only; reconnect and select a write API version to use PTV write tools.',
+    );
+    this.name = 'WriteApiNotSelectedError';
+  }
+}
+
+/** The adapter for reading PTV with the connection's read API version (v11 by default). */
+export function resolveReadAdapter(
+  registry: PtvAdapterRegistry,
+  ctx: ReadToolContext,
+): Promise<PtvAdapter> {
+  return registry.resolve({
+    ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
+    environment: ctx.environment,
+    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
+    operation: 'read',
+    actingUserId: ctx.actingUserId,
+  });
+}
+
+/**
+ * The write-capable adapter for the connection's write API version; the
+ * registry refuses it below Publisher. Throws WriteApiNotSelectedError on
+ * a read-only connection.
+ */
+export function resolveWriteAdapter(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+): Promise<PtvAdapter> {
+  if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
+  return registry.resolve({
+    tenantId: ctx.tenantId,
+    environment: ctx.environment,
+    apiVersion: ctx.writeApiVersion,
+    operation: 'write',
+    actingUserId: ctx.actingUserId,
+  });
+}

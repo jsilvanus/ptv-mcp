@@ -1,3 +1,4 @@
+import { resolveReadAdapter } from './toolContext.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { Service, ServiceChannel } from '../ptv/domain.js';
 import {
@@ -32,13 +33,7 @@ export async function checkQuality(
   kind: 'service' | 'channel',
   id: string,
 ): Promise<QualityCheckResult> {
-  const adapter = await registry.resolve({
-    ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
   if (kind === 'service') {
     const service: Service | null = await adapter.getService(id);
     if (!service) throw new ServiceNotFoundError(id);
