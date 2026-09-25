@@ -133,3 +133,28 @@ export async function apiFetch<T>(
   }
   return (await res.json()) as T;
 }
+
+/**
+ * Like apiFetch, for a file response: returns the body as a Blob and the
+ * file name from content-disposition.
+ */
+export async function apiDownload(
+  path: string,
+  allowRefresh = true,
+): Promise<{ blob: Blob; filename: string | null }> {
+  const token = getAccessToken();
+  const headers = new Headers();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  const res = await fetch(path, { headers });
+  if (res.status === 401 && allowRefresh && getRefreshToken()) {
+    await refreshAccessToken();
+    return apiDownload(path, false);
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(res.status, (body as { message?: string }).message ?? res.statusText);
+  }
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? null;
+  return { blob: await res.blob(), filename };
+}

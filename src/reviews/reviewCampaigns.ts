@@ -103,7 +103,8 @@ async function readAdapter(registry: PtvAdapterRegistry, ctx: ToolContext): Prom
   });
 }
 
-async function fetchAll<T>(
+/** Every page of an organisation's services or channels, up to MAX_CAMPAIGN_ITEMS. */
+export async function fetchAll<T>(
   search: (params: SearchParams) => Promise<PaginatedResult<T>>,
   organizationId: string,
 ): Promise<T[]> {
@@ -122,7 +123,7 @@ async function fetchAll<T>(
 }
 
 /** The organisation and, optionally, every organisation below it in the tenant's catalogue. */
-async function organisationsToReview(
+export async function organisationsToReview(
   adapter: PtvAdapter,
   organizationId: string,
   includeSubOrganisations: boolean,

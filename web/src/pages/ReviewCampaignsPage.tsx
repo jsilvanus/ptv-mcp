@@ -17,6 +17,7 @@ import { useTenants } from '../tenants/TenantContext';
 import { ProposalPreview } from './ProposalPreview';
 import { QualityFindings } from './QualityFindings';
 import { MyTasksPanel } from './MyTasksPanel';
+import { ContentExportPanel } from './ContentExportPanel';
 
 const STATUS_LABELS: Record<ReviewItemStatus, string> = {
   open: 'To check',
@@ -231,6 +232,8 @@ export function ReviewCampaignsPage() {
           />
         )}
       </section>
+
+      {tenantId && <ContentExportPanel tenantId={tenantId} />}
 
       {campaign && tenantId && (
         <CampaignPanel

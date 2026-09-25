@@ -59,10 +59,10 @@ test environment before**, for example through the UI:
 
 | DVV test item | ptv-mcp status |
 |---|---|
-| "uusien aliorganisaatioiden … lisääminen ja muokkaaminen" (add and edit sub-organisations) | **Gap.** The adapter reads organisations and hierarchies but has no organisation write. Implement it, or tell DVV it is out of scope (sub-organisations stay UI-maintained). |
+| "uusien aliorganisaatioiden … lisääminen ja muokkaaminen" (add and edit sub-organisations) | `ptv_propose_new_organisation`, `ptv_propose_organisation_changes`. Not verified live yet. |
 | "uusien palvelujen … lisääminen ja muokkaaminen" (add and edit services) | Verified live 2026-09-24 (`EXECUTION_LOG.md`): `service_create` → publish, then updates. |
 | "uusien asiointikanavien lisääminen ja muokkaaminen" (add and edit channels) | Updates verified live for EChannel, Phone, ServiceLocation, WebPage. Creation verified for Phone. **Still to test:** creating the other four types, and PrintableForm update. |
-| "liitosten ja liitoksen lisätietojen lisääminen ja muokkaaminen" (add and edit connections and their extra info) | Adding and removing connections works; the kept connections' extra info is preserved (`src/ptv/v11/connectionWrite.ts`). **Gap:** no proposal type edits the extra info (charge type, descriptions, hours, contact details). |
+| "liitosten ja liitoksen lisätietojen lisääminen ja muokkaaminen" (add and edit connections and their extra info) | Adding and removing connections verified live. Extra info: `ptv_propose_connection_changes`, not verified live yet. |
 | "tietokenttien oikeellisuus (tietomuodot, pituudet, pakollisuudet jne.)" (field formats, lengths, required fields) | `src/validation/changeValidator.ts`, `channelRules.ts`, `contentChecks.ts`. Evidence: rejected invalid proposals plus the unit tests. |
 | "lähdejärjestelmästä poistuneiden tietojen arkistointi" (archive data removed from the source) | Service archive verified live (`4678d0e0-…`). **Still to test:** channel archive. |
 
@@ -91,7 +91,7 @@ by `ptv_check_quality`. That output, plus a review campaign over the
 organisation's content, is the evidence. The last item is the AI one: cite
 the human-approval flow and `guides/ai-compliance.md`. The IT-supplier
 variant asks for an **Excel export** of the test-environment data for DVV to
-review; ptv-mcp has no such export yet.
+review: the content report (see the checklist).
 
 ## Where ptv-mcp differs from a normal IN-integration
 
@@ -128,14 +128,14 @@ Application and prerequisites
 
 Technical readiness (DVV's test items)
 
-- [ ] Sub-organisations: create (`organisation_create`) and edit
-      (`organisation_update`), including archiving.
+- [~] Sub-organisations: create (`ptv_propose_new_organisation`) and edit
+      (`ptv_propose_organisation_changes`), including archiving.
 - [x] Services: create, edit, archive (live 2026-09-24).
 - [~] Channels: edit (live for four types; PrintableForm open), create (live
       for Phone; four types open), archive (open).
 - [x] Connections: add and remove (live).
-- [ ] Connection extra info: edit charge type, descriptions, service hours
-      and contact details (`connection_update`).
+- [~] Connection extra info: edit charge type, descriptions, service hours
+      and contact details (`ptv_propose_connection_changes`).
 - [x] Field correctness: formats, lengths, required fields (validators,
       unit tests).
 - [x] Token handling: v11 API login, `apiUserOrganisation` in production.
@@ -147,14 +147,19 @@ Content review (DVV's checklist)
       (Q-STYLE-*), the rest by people.
 - [x] 2. No contact details in service descriptions: Q-STRUCT-1.
 - [-] 3. General description connected correctly: people (Q-GD-1).
-- [ ] 4. General-description text not copied into the service's own
-      description: automate Q-GD-1.
+- [x] 4. General-description text not copied into the service's own
+      description: Q-GD-1 flags copied sentences.
 - [x] 5. Connections exist; hours and addresses are right: Q-STRUCT-5,
       Q-HOURS-1, Q-CONTACT-1.
-- [ ] 6. Connection extra info is right: checks on `connection_update`.
+- [x] 6. Connection extra info is right: `checkConnection`, also in
+      `ptv_check_quality` for a service's connections.
 - [x] 7. Machine-generated content is understandable: human approval of
       every AI proposal (`guides/ai-compliance.md`).
-- [ ] Excel export of an organisation's content for DVV's review.
+- [x] Excel export of an organisation's content for DVV's review: web UI
+      *Content review → Content report (Excel)*, or
+      `GET /tenants/:tenantId/ptv/content-export?organizationId=…`. Sheets:
+      summary, organisations, services, channels, connections and every
+      automated check finding.
 
 Live tests (test environment, after deploying the above)
 

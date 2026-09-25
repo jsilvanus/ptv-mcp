@@ -674,4 +674,40 @@ describe('review campaign routes and tools', () => {
       ),
     ).toEqual(expect.arrayContaining(['Q-STRUCT-1', 'Q-STRUCT-5']));
   });
+
+  it("exports an organisation's content as an Excel file for a contributor, audited", async () => {
+    const tenantId = await createTenant();
+    const contributor = await createMember(tenantId, 'contributor', 'Ehdottaja');
+    const viewer = await createMember(tenantId, 'viewer', 'Katselija');
+    const url = `/tenants/${tenantId}/ptv/content-export?organizationId=${ROOT_ORG}&environment=test`;
+
+    const res = await app.inject({
+      method: 'GET',
+      url,
+      headers: { authorization: `Bearer ${contributor.token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('spreadsheetml');
+    expect(res.headers['content-disposition']).toContain(`ptv-sisalto-${ROOT_ORG}-test-`);
+    expect(res.rawPayload.subarray(0, 2).toString()).toBe('PK');
+    expect(res.rawPayload.toString('latin1')).toContain('xl/worksheets/sheet6.xml');
+
+    const forbidden = await app.inject({
+      method: 'GET',
+      url,
+      headers: { authorization: `Bearer ${viewer.token}` },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    const missing = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/ptv/content-export`,
+      headers: { authorization: `Bearer ${contributor.token}` },
+    });
+    expect(missing.statusCode).toBe(400);
+
+    const audit = await withContext(db, { tenantId }, (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.tenantId, tenantId)),
+    );
+    expect(audit.map((entry) => entry.action)).toContain('ExportContent');
+  });
 });

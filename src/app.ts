@@ -23,6 +23,7 @@ import { ptvConnectionRoutes } from './routes/ptvConnections.js';
 import { auditLogRoutes } from './routes/auditLog.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { reviewRoutes } from './routes/reviews.js';
+import { contentExportRoutes } from './routes/contentExport.js';
 import { webUiRoutes } from './routes/webUi.js';
 import { registerSpaNavigation } from './routes/spaNavigation.js';
 import { ptvV12Routes } from './routes/ptvV12.js';
@@ -146,6 +147,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     validator,
   });
   await app.register(reviewRoutes, { db, jwtSecret: config.jwtSecret, registry, auditService });
+  await app.register(contentExportRoutes, {
+    db,
+    jwtSecret: config.jwtSecret,
+    registry,
+    auditService,
+  });
   await app.register(ptvV12Routes, {
     tenantEnvironmentService,
     adapterConfigService,

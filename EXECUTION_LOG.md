@@ -1799,3 +1799,37 @@ JSON. It only formatted text and classification lists.
 - Weekday entries are grouped into ranges ("ma–pe 09:00–20:00").
 - Exceptional hours show their type and title.
 - Language-keyed values show one line per language.
+
+## 2026-09-25 — Features DVV tests before IN-API production credentials
+
+DVV's IN-integration pages list what it tests before issuing production
+credentials. `docs/dvv-in-integration-approval.md` has the checklist,
+with what doesn't apply to ptv-mcp (a daily push from a source system).
+The gaps are now built, unit- and integration-tested, and not yet
+verified live:
+
+- **Connection extra info** (`connection_update`,
+  `ptv_propose_connection_changes`): charge type, descriptions, service
+  hours and contact details of one service–channel connection. v11
+  resends every connection (the PUT replaces them), the changed one in
+  the In shape; GET and In differ in fax numbers and addresses
+  (`docs/ptv-v11-notes.md`). `ptv_search_connections` now returns the
+  extra info.
+- **Organisations** (`organisation_update`, `organisation_create`,
+  `ptv_propose_organisation_changes`, `ptv_propose_new_organisation`). The
+  domain Organization gained type, alternative names, texts, area and
+  contact details. A new sub-organisation copies its parent's type and
+  area but never the business ID, and is at most five levels deep.
+  Migration 0024 adds the three proposal kinds.
+- **Q-GD-1** is partly automatic: a summary or description sentence of
+  eight or more words found in the linked general description is an
+  error. `PtvAdapter.getGeneralDescription` is new (v12 returns null).
+- **Content report**: `GET /tenants/:tenantId/ptv/content-export` (and a
+  web UI panel) returns an .xlsx of the organisation's content and check
+  findings, written by a dependency-free writer (`src/export/xlsx.ts`,
+  checked with openpyxl).
+
+Deviation: sub-organisation archiving is `publishingStatus: Archived` on
+`organisation_update`; whether v11 accepts `Deleted` for organisations is
+one of the live tests.
+
