@@ -113,11 +113,54 @@ these in the reports up front:
   plan for it. ptv-mcp's adapter layer already has a v12 adapter
   (`docs/ptv-v12-notes.md`).
 
-## Open work before applying
+## Checklist
 
-- Organisation (sub-organisation) writes, or an agreed scope exclusion.
-- Editing connection extra info.
-- Live tests: channel creation for the other four types, PrintableForm
-  update, channel archive.
-- Excel (or CSV) export of an organisation's content for DVV's review.
-- The data-model mapping document and the two reports themselves.
+Status: `[x]` done, `[~]` code done but not yet verified live, `[ ]` open,
+`[-]` does not apply to ptv-mcp (explain in the report).
+
+Application and prerequisites
+
+- [ ] Data-model mapping (tietomallimäppäys): which PTV fields ptv-mcp
+      reads and writes, per entity. Written with the reports.
+- [x] Security account: tenant isolation, encrypted credentials, roles,
+      four-eyes, audit log.
+- [-] A source system kept up to date. PTV itself is the master copy.
+
+Technical readiness (DVV's test items)
+
+- [ ] Sub-organisations: create (`organisation_create`) and edit
+      (`organisation_update`), including archiving.
+- [x] Services: create, edit, archive (live 2026-09-24).
+- [~] Channels: edit (live for four types; PrintableForm open), create (live
+      for Phone; four types open), archive (open).
+- [x] Connections: add and remove (live).
+- [ ] Connection extra info: edit charge type, descriptions, service hours
+      and contact details (`connection_update`).
+- [x] Field correctness: formats, lengths, required fields (validators,
+      unit tests).
+- [x] Token handling: v11 API login, `apiUserOrganisation` in production.
+- [-] Daily sync of changes and deletions: changes go in when approved.
+
+Content review (DVV's checklist)
+
+- [~] 1. Clear, correct, customer-oriented text: style heuristics
+      (Q-STYLE-*), the rest by people.
+- [x] 2. No contact details in service descriptions: Q-STRUCT-1.
+- [-] 3. General description connected correctly: people (Q-GD-1).
+- [ ] 4. General-description text not copied into the service's own
+      description: automate Q-GD-1.
+- [x] 5. Connections exist; hours and addresses are right: Q-STRUCT-5,
+      Q-HOURS-1, Q-CONTACT-1.
+- [ ] 6. Connection extra info is right: checks on `connection_update`.
+- [x] 7. Machine-generated content is understandable: human approval of
+      every AI proposal (`guides/ai-compliance.md`).
+- [ ] Excel export of an organisation's content for DVV's review.
+
+Live tests (test environment, after deploying the above)
+
+- [ ] Channel creation: EChannel, WebPage, PrintableForm, ServiceLocation.
+- [ ] PrintableForm update.
+- [ ] Channel archive.
+- [ ] Sub-organisation create, edit, archive.
+- [ ] Connection extra info edit.
+- [ ] All of the above on a fresh test organisation, for the report.

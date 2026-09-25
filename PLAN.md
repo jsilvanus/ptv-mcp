@@ -134,3 +134,9 @@ was not in the original phase-plan and has no dedicated design doc — see
 
 ## Phase 10: MVP-1 — `PtvV12Adapter` write, test env — NOT STARTED (external gate)
 ## Phase 11: MVP-2 — `PtvV12Adapter` write, production; retire `PtvV11Adapter` — NOT STARTED (external gate)
+
+## Phase 12: DVV IN-API approval readiness — in progress 🟡
+Checklist and status: `docs/dvv-in-integration-approval.md` ("Checklist").
+Closes the features DVV tests before it issues IN-API production
+credentials: sub-organisation writes, connection extra info, a content
+export, and Q-GD-1 automation. The reports themselves come later.
