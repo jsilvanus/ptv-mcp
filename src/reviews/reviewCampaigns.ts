@@ -543,6 +543,19 @@ export async function requireLinkableReviewItem(
   ) {
     return item;
   }
+  // A connection's extra info answers the item of its service or its channel.
+  if (proposal.kind === 'connection_update') {
+    const channelId = proposal.changes?.channelId;
+    if (
+      (item.targetKind === 'service' && item.targetId === proposal.targetId) ||
+      (item.targetKind === 'channel' && item.targetId === channelId)
+    ) {
+      return item;
+    }
+    throw new ReviewCampaignError(
+      `Review item "${item.targetName}" is the ${item.targetKind} ${item.targetId}; this connection is between service ${proposal.targetId} and channel ${String(channelId)}.`,
+    );
+  }
   const expectedKind =
     proposal.kind === 'service_update'
       ? 'service'

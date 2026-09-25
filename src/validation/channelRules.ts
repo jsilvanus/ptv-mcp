@@ -1,4 +1,10 @@
-import type { ChannelAddress, PhoneNumber, ServiceChannel, ServiceHour } from '../ptv/domain.js';
+import type {
+  ChannelAddress,
+  ConnectionDetails,
+  PhoneNumber,
+  ServiceChannel,
+  ServiceHour,
+} from '../ptv/domain.js';
 import type { ValidationError } from './changeValidator.js';
 
 /**
@@ -14,6 +20,7 @@ const PHONE_TEXT_MAX = 300;
 const URL_MAX = 500;
 const HOUR_INFO_MAX = 150;
 const ADDRESS_INFO_MAX = 150;
+const CONNECTION_TEXT_MAX = 500;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -263,4 +270,55 @@ export function validateChannelDetails(
       });
     }
   }
+}
+
+const CHARGE_TYPES = ['Chargeable', 'FreeOfCharge', 'Other'];
+const CONNECTION_ADDRESS_KINDS = ['Street', 'PostOfficeBox', 'Foreign'];
+
+/**
+ * PTV's rules for a connection's extra info (V11VmOpenApiServiceServiceChannelInBase):
+ * texts max 500 characters, contact details as on channels, and postal
+ * addresses only.
+ */
+export function validateConnectionDetails(details: ConnectionDetails): ValidationError[] {
+  const errors: ValidationError[] = [];
+  if (details.chargeType !== undefined && !CHARGE_TYPES.includes(details.chargeType)) {
+    errors.push({
+      field: 'chargeType',
+      message: `chargeType is one of ${CHARGE_TYPES.join(', ')}`,
+    });
+  }
+  for (const field of ['descriptions', 'chargeDescriptions'] as const) {
+    for (const [language, text] of Object.entries(details[field] ?? {})) {
+      if ((text?.length ?? 0) > CONNECTION_TEXT_MAX) {
+        errors.push({
+          field: `${field}.${language}`,
+          message: `Longer than ${CONNECTION_TEXT_MAX} characters`,
+        });
+      }
+    }
+  }
+  (details.phoneNumbers ?? []).forEach((phone, i) =>
+    checkPhone(phone, `phoneNumbers[${i}]`, errors),
+  );
+  (details.emails ?? []).forEach((email) => {
+    if (!EMAIL.test(email.value)) {
+      errors.push({ field: 'emails', message: `Not an email address: ${email.value}` });
+    }
+  });
+  (details.webPages ?? []).forEach((page, i) => checkUrl(page.url, `webPages[${i}]`, errors));
+  (details.serviceHours ?? []).forEach((hour, i) =>
+    checkServiceHour(hour, `serviceHours[${i}]`, errors),
+  );
+  (details.addresses ?? []).forEach((address, i) => {
+    if (!CONNECTION_ADDRESS_KINDS.includes(address.kind)) {
+      errors.push({
+        field: `addresses[${i}]`,
+        message: `A connection's address is a postal address: ${CONNECTION_ADDRESS_KINDS.join(', ')}`,
+      });
+      return;
+    }
+    checkAddress(address, `addresses[${i}]`, errors, false);
+  });
+  return errors;
 }

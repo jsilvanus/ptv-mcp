@@ -68,7 +68,7 @@ export interface V11ServiceOrganizationRole {
 
 export interface V11ServiceChannelRelation {
   serviceChannel: V11IdNamePair;
-  /** Connection extra info, only kept to resend it (see connectionWrite.ts). */
+  /** Connection extra info (see connectionDetails.ts). */
   serviceChargeType?: string | null;
   description?: V11LocalizedItem[] | null;
   serviceHours?: unknown[] | null;
@@ -108,6 +108,11 @@ export interface V11ServiceCollectionSummaryWire {
 
 export interface V11ServiceRelation {
   service: V11IdNamePair;
+  /** Connection extra info, as on V11ServiceChannelRelation. */
+  serviceChargeType?: string | null;
+  description?: V11LocalizedItem[] | null;
+  serviceHours?: unknown[] | null;
+  contactDetails?: unknown;
   modified?: string;
 }
 

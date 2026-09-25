@@ -161,6 +161,12 @@ const lines = (values: string[]) => values.join('\n');
  * localized `names.fi`). Lists get one line per entry, with the language
  * where entries are per language.
  */
+const CHARGE_TYPE: Record<string, string> = {
+  Chargeable: 'Maksullinen',
+  FreeOfCharge: 'Maksuton',
+  Other: 'Muu',
+};
+
 export function formatFieldValue(field: string, value: unknown): string {
   if (value === undefined) return '(ei arvoa)';
   if (value === null || value === '') return '(tyhjä)';
@@ -198,6 +204,8 @@ export function formatFieldValue(field: string, value: unknown): string {
         return ACCESSIBILITY[value as string] ?? String(value);
       case 'publishingStatus':
         return PUBLISHING_STATUS[value as string] ?? String(value);
+      case 'chargeType':
+        return CHARGE_TYPE[value as string] ?? String(value);
     }
   } catch {
     // Unexpected shape: fall back to the generic text below.

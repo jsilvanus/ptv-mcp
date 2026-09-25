@@ -1,6 +1,12 @@
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { Service, ServiceChannel } from '../ptv/domain.js';
-import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
+import {
+  checkChannel,
+  checkConnection,
+  checkService,
+  type QualityFinding,
+  type QualityReport,
+} from '../quality/contentChecks.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { ChannelNotFoundError } from './channelProposal.js';
 import type { ReadToolContext } from './toolContext.js';
@@ -15,8 +21,9 @@ export interface QualityCheckResult {
 /**
  * `ptv_check_quality`: reads a service or channel and runs the
  * deterministic content checks (src/quality/contentChecks.ts). A service
- * is checked against its organisation's names; a channel against its
- * connections.
+ * is checked against its organisation's names, with its connections'
+ * extra info (fields `connections.<channelId>.<field>`); a channel against
+ * its connections.
  */
 export async function checkQuality(
   registry: PtvAdapterRegistry,
@@ -35,11 +42,25 @@ export async function checkQuality(
     const service: Service | null = await adapter.getService(id);
     if (!service) throw new ServiceNotFoundError(id);
     const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
+    const connections = await adapter.getConnectionsFor(id).catch(() => []);
+    const findings: QualityFinding[] = [
+      ...checkService(service, org ? { organisationNames: org.names } : {}).findings,
+      ...connections.flatMap((connection) =>
+        checkConnection(connection).findings.map((finding) => ({
+          ...finding,
+          field: `connections.${connection.channelId}.${finding.field}`,
+        })),
+      ),
+    ];
     return {
       kind,
       id,
       name: service.names.fi ?? Object.values(service.names)[0] ?? null,
-      report: checkService(service, org ? { organisationNames: org.names } : {}),
+      report: {
+        findings,
+        errors: findings.filter((finding) => finding.severity === 'error').length,
+        warnings: findings.filter((finding) => finding.severity === 'warning').length,
+      },
     };
   }
   const channel: ServiceChannel | null = await adapter.getChannel(id);

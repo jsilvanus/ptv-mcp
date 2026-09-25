@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Service, ServiceChannel } from '../ptv/domain.js';
 import {
   checkChannel,
+  checkConnection,
   checkService,
   classificationCode,
   type QualityReport,
@@ -314,5 +315,37 @@ describe('classificationCode', () => {
         names: {},
       }),
     ).toBe('P27.1');
+  });
+});
+
+describe('checkConnection', () => {
+  it('flags contact details in the texts and an unexplained Other charge', () => {
+    const report = checkConnection({
+      chargeType: 'Other',
+      descriptions: { fi: 'Soita 040 123 4567, niin sovitaan aika.' },
+    });
+    expect(report.findings.map((finding) => [finding.checkId, finding.field])).toEqual(
+      expect.arrayContaining([
+        ['Q-STRUCT-1', 'descriptions'],
+        ['Q-CONTACT-1', 'chargeDescriptions'],
+      ]),
+    );
+  });
+
+  it('checks hours like a channel', () => {
+    const report = checkConnection(
+      {
+        serviceHours: [{ type: 'Exceptional', validFrom: '2026-01-01', isClosed: true }],
+      },
+      { today: '2026-09-25' },
+    );
+    expect(report.findings.map((finding) => finding.checkId)).toContain('Q-HOURS-1');
+  });
+
+  it('passes clean extra info', () => {
+    expect(
+      checkConnection({ chargeType: 'FreeOfCharge', descriptions: { fi: 'Varaa aika etukäteen.' } })
+        .findings,
+    ).toEqual([]);
   });
 });

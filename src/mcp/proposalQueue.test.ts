@@ -25,6 +25,7 @@ import {
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
 import { queueChannelProposal } from './channelProposal.js';
+import { queueConnectionProposal } from './connectionProposal.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -630,6 +631,138 @@ describe('proposalQueue', () => {
           channelType: 'WebPage',
         }),
       ).rejects.toThrow(/can't be changed/);
+    });
+  });
+
+  describe('connection_update proposals', () => {
+    function setup() {
+      const adapter = new InMemoryPtvAdapter({
+        services: [{ ...service, serviceChannelIds: ['ch-1'] }],
+        connections: [{ serviceId: 'svc-1', channelId: 'ch-1', chargeType: 'FreeOfCharge' }],
+        capabilities: {
+          apiVersion: 'v11',
+          environment: 'test',
+          credentialScope: 'tenant',
+          supportsRead: true,
+          supportsWrite: true,
+          supportsDraftRead: true,
+        },
+      });
+      const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+      return { adapter, registry };
+    }
+    const hours = [
+      {
+        type: 'DaysOfTheWeek' as const,
+        validForNow: true,
+        openingTimes: [{ dayFrom: 'Monday' as const, from: '09:00', to: '12:00' }],
+      },
+    ];
+
+    it('queues extra-info changes, re-diffs them and applies them on approve_and_apply', async () => {
+      const { adapter, registry } = setup();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueConnectionProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        ctx,
+        'svc-1',
+        'ch-1',
+        { descriptions: { fi: 'Diakoniatyön vastaanotto' }, serviceHours: hours },
+      );
+      expect(queued.validation.valid).toBe(true);
+      expect(queued.diff).toEqual([
+        { field: 'descriptions.fi', before: undefined, after: 'Diakoniatyön vastaanotto' },
+        { field: 'serviceHours', before: undefined, after: hours },
+      ]);
+      expect(rows[0]).toMatchObject({
+        kind: 'connection_update',
+        serviceId: 'svc-1',
+        changes: { channelId: 'ch-1' },
+      });
+
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+        noFourEyes,
+      );
+      expect(resolved.status).toBe('applied');
+      expect(resolved.diff).toEqual([]);
+      expect((await adapter.getConnectionsFor('svc-1'))[0]).toMatchObject({
+        chargeType: 'FreeOfCharge',
+        descriptions: { fi: 'Diakoniatyön vastaanotto' },
+      });
+    });
+
+    it('builds a manual-publishing sheet for the connection on approve_and_export', async () => {
+      const { registry } = setup();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueConnectionProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        ctx,
+        'svc-1',
+        'ch-1',
+        { chargeType: 'Other', chargeDescriptions: { fi: 'Materiaalimaksu 5 euroa' } },
+      );
+      expect(queued.quality.findings).toEqual([]);
+      const approved = await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+      );
+      expect(approved.manualPublish).toMatchObject({
+        target: 'Liitoksen lisätiedot',
+        ptvId: 'svc-1',
+        fields: [
+          { field: 'chargeType', label: 'Maksullisuus', after: 'Muu' },
+          { field: 'chargeDescriptions', after: 'fi: Materiaalimaksu 5 euroa' },
+        ],
+      });
+      expect(approved.manualPublish?.steps[1]).toContain('ch-1');
+      expect(approved.publishedInPtv).toBe(false);
+    });
+
+    it('refuses a connection that does not exist, unknown fields and a non-postal address', async () => {
+      const { registry } = setup();
+      const { api } = fakeProposalService();
+      const queue = (channelId: string, changes: Record<string, unknown>) =>
+        queueConnectionProposal(
+          readerResolver,
+          registry,
+          fakeAuditService(),
+          api,
+          ctx,
+          'svc-1',
+          channelId,
+          changes,
+        );
+      await expect(queue('ch-2', { chargeType: 'Chargeable' })).rejects.toThrow(
+        /not connected to channel ch-2/,
+      );
+      await expect(queue('ch-1', { names: { fi: 'x' } })).rejects.toThrow(/can't be changed/);
+      const queued = await queue('ch-1', {
+        addresses: [{ kind: 'Other', latitude: '1', longitude: '2' }],
+      });
+      expect(queued.validation.valid).toBe(false);
     });
   });
 

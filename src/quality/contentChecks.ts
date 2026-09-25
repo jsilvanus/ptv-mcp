@@ -1,4 +1,12 @@
-import type { CodeListEntry, LocalizedText, Service, ServiceChannel } from '../ptv/domain.js';
+import type {
+  CodeListEntry,
+  ConnectionDetails,
+  LocalizedText,
+  PhoneNumber,
+  Service,
+  ServiceChannel,
+  ServiceHour,
+} from '../ptv/domain.js';
 import type { NewService } from '../ptv/adapter.js';
 
 /**
@@ -458,9 +466,10 @@ export function checkService(
  * fields) are validation errors (src/validation/channelRules.ts); these are
  * the guideline checks on top.
  */
-function channelDetailFindings(channel: ServiceChannel, today: string): QualityFinding[] {
-  const findings: QualityFinding[] = [];
-  const warn = (checkId: string, field: string, message: string, language?: string) =>
+type Warn = (checkId: string, field: string, message: string, language?: string) => void;
+
+function warner(findings: QualityFinding[]): Warn {
+  return (checkId, field, message, language) =>
     findings.push({
       checkId,
       severity: 'warning',
@@ -468,57 +477,45 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
       message,
       ...(language ? { language } : {}),
     });
+}
 
-  for (const field of ['phoneNumbers', 'supportPhones'] as const) {
-    const phones = channel[field] ?? [];
-    for (const phone of phones) {
-      if (phone.chargeType === 'Other' && !phone.chargeDescription) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          `${phone.number}: an extra-charge number needs the price in chargeDescription.`,
-          phone.language,
-        );
-      }
-    }
-    for (const phone of phones) {
-      if (!phone.isFinnishServiceNumber && phone.number.replace(/\D/g, '').length < 5) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          `${phone.number}: too short to be a phone number; check it.`,
-          phone.language,
-        );
-      }
-    }
-    const byLanguage = new Map<string, number>();
-    for (const phone of phones)
-      byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
-    for (const [language, count] of byLanguage) {
-      if (count > 1 && phones.some((p) => p.language === language && !p.additionalInformation)) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          'Several numbers: give each one additional information (e.g. "Vaihde") so customers know which to call.',
-          language,
-        );
-      }
+function phoneFindings(field: string, phones: PhoneNumber[], warn: Warn): void {
+  for (const phone of phones) {
+    if (phone.chargeType === 'Other' && !phone.chargeDescription) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        `${phone.number}: an extra-charge number needs the price in chargeDescription.`,
+        phone.language,
+      );
     }
   }
-
-  if (
-    channel.channelType === 'ServiceLocation' &&
-    channel.addresses !== undefined &&
-    !channel.addresses.some((a) => a.kind === 'Street' && a.purpose !== 'Postal')
-  ) {
-    warn(
-      'Q-CONTACT-1',
-      'addresses',
-      'No street visiting address: Suomi.fi does not show service locations without one.',
-    );
+  for (const phone of phones) {
+    if (!phone.isFinnishServiceNumber && phone.number.replace(/\D/g, '').length < 5) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        `${phone.number}: too short to be a phone number; check it.`,
+        phone.language,
+      );
+    }
   }
+  const byLanguage = new Map<string, number>();
+  for (const phone of phones)
+    byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
+  for (const [language, count] of byLanguage) {
+    if (count > 1 && phones.some((p) => p.language === language && !p.additionalInformation)) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        'Several numbers: give each one additional information (e.g. "Vaihde") so customers know which to call.',
+        language,
+      );
+    }
+  }
+}
 
-  const hours = channel.serviceHours ?? [];
+function serviceHourFindings(hours: ServiceHour[], today: string, warn: Warn): void {
   for (const hour of hours) {
     // A single-day exceptional hour has only validFrom: it ends that day.
     const ends = hour.validTo ?? (hour.type === 'Exceptional' ? hour.validFrom : undefined);
@@ -553,6 +550,28 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
       'Several weekly schedules: give each a title (e.g. "Kesäaika") so customers can tell them apart.',
     );
   }
+}
+
+function channelDetailFindings(channel: ServiceChannel, today: string): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  const warn = warner(findings);
+  for (const field of ['phoneNumbers', 'supportPhones'] as const) {
+    phoneFindings(field, channel[field] ?? [], warn);
+  }
+
+  if (
+    channel.channelType === 'ServiceLocation' &&
+    channel.addresses !== undefined &&
+    !channel.addresses.some((a) => a.kind === 'Street' && a.purpose !== 'Postal')
+  ) {
+    warn(
+      'Q-CONTACT-1',
+      'addresses',
+      'No street visiting address: Suomi.fi does not show service locations without one.',
+    );
+  }
+
+  serviceHourFindings(channel.serviceHours ?? [], today, warn);
   if (channel.channelType === 'EChannel' && channel.accessibility === undefined) {
     warn(
       'Q-CONTACT-1',
@@ -599,5 +618,42 @@ export function checkChannel(
           },
     );
   }
+  return report(findings);
+}
+
+/**
+ * Checks a connection's extra info (liitoksen lisätiedot): its texts like
+ * any free text (contact details belong in the connection's own contact
+ * fields, Q-STRUCT-1), a charge that is Other needs its explanation, and
+ * phones and hours as on channels.
+ */
+export function checkConnection(
+  details: ConnectionDetails,
+  context: { today?: string } = {},
+): QualityReport {
+  const findings: QualityFinding[] = [];
+  for (const field of ['descriptions', 'chargeDescriptions'] as const) {
+    for (const [language, value] of Object.entries(details[field] ?? {})) {
+      const text = textOf(value);
+      if (text) findings.push(...freeTextFindings(field, language, text));
+    }
+  }
+  const warn = warner(findings);
+  if (
+    details.chargeType === 'Other' &&
+    !Object.values(details.chargeDescriptions ?? {}).some(Boolean)
+  ) {
+    warn(
+      'Q-CONTACT-1',
+      'chargeDescriptions',
+      'The charge type is Other: explain the charge in chargeDescriptions.',
+    );
+  }
+  phoneFindings('phoneNumbers', details.phoneNumbers ?? [], warn);
+  serviceHourFindings(
+    details.serviceHours ?? [],
+    context.today ?? new Date().toISOString().slice(0, 10),
+    warn,
+  );
   return report(findings);
 }

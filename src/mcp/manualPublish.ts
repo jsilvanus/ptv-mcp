@@ -79,6 +79,8 @@ const FIELD_LABELS: [field: string, label: string][] = [
   ['supportPhones', 'Käytön tuki: puhelin'],
   ['supportEmails', 'Käytön tuki: sähköposti'],
   ['serviceHours', 'Palveluajat'],
+  ['chargeType', 'Maksullisuus'],
+  ['chargeDescriptions', 'Maksullisuuden lisätieto'],
   ['targetGroups', 'Kohderyhmä'],
   ['serviceClasses', 'Palveluluokka'],
   ['ontologyTerms', 'Asiasanat'],
@@ -111,12 +113,17 @@ export function buildManualPublishSheet(input: {
   languages: string[];
   channelType?: string;
   organizationId?: string;
+  /** connection_update: the connected channel (ptvId is the service). */
+  channelId?: string;
 }): ManualPublishSheet {
   const creating = input.kind === 'service_create' || input.kind === 'channel_create';
   const isChannel = input.kind === 'channel_update' || input.kind === 'channel_create';
+  const isConnection = input.kind === 'connection_update';
   const target = isChannel
     ? `Asiointikanava: ${CHANNEL_TYPE_LABELS[input.channelType ?? ''] ?? input.channelType ?? ''}`
-    : 'Palvelu';
+    : isConnection
+      ? 'Liitoksen lisätiedot'
+      : 'Palvelu';
   const name = input.names.fi ?? Object.values(input.names).find(Boolean) ?? null;
   const fields = input.diff
     .map((entry) => sheetField(entry, isChannel))
@@ -129,19 +136,26 @@ export function buildManualPublishSheet(input: {
   const languages = [...input.languages].sort((a, b) => languageRank(a) - languageRank(b));
   const languageList = languages.join(', ') || '(ei kieliversioita)';
 
-  const steps = creating
+  const steps = isConnection
     ? [
-        `In PTV (palvelutietovaranto.suomi.fi), add a new ${target.toLowerCase()}${input.organizationId ? ` for organisation ${input.organizationId}` : ''}.`,
-        'Fill in the fields below, in every language version listed. Copy each value as it is.',
-        `Save it and publish the language versions ${languageList}, or leave it a draft if the Julkaisutila row says Luonnos.`,
-        "Copy the new item's id from PTV and confirm here (ptv_confirm_manual_publish with ptvId, or Mark as published in the Proposal queue). The MCP checks the item in PTV and closes the proposal.",
-      ]
-    : [
-        `In PTV (palvelutietovaranto.suomi.fi), open the ${target.toLowerCase()} "${name ?? input.ptvId}" (id ${input.ptvId}) and choose Muokkaa.`,
-        `Change the fields below. Copy each new value as it is; ${EMPTY} means clear the field.`,
-        `Publish every language version: ${languageList}. Publishing only some sends the others back to draft.`,
+        `In PTV (palvelutietovaranto.suomi.fi), open the service "${name ?? input.ptvId}" (id ${input.ptvId}) and its Liitokset (connections) tab.`,
+        `Open the connection to channel ${input.channelId ?? ''} and edit its additional information (lisätiedot).`,
+        `Change the fields below. Copy each new value as it is; ${EMPTY} means clear the field. Save the connection.`,
         'When the change shows in PTV, confirm it here (ptv_confirm_manual_publish, or Mark as published in the Proposal queue). The MCP compares PTV with the proposal and closes it.',
-      ];
+      ]
+    : creating
+      ? [
+          `In PTV (palvelutietovaranto.suomi.fi), add a new ${target.toLowerCase()}${input.organizationId ? ` for organisation ${input.organizationId}` : ''}.`,
+          'Fill in the fields below, in every language version listed. Copy each value as it is.',
+          `Save it and publish the language versions ${languageList}, or leave it a draft if the Julkaisutila row says Luonnos.`,
+          "Copy the new item's id from PTV and confirm here (ptv_confirm_manual_publish with ptvId, or Mark as published in the Proposal queue). The MCP checks the item in PTV and closes the proposal.",
+        ]
+      : [
+          `In PTV (palvelutietovaranto.suomi.fi), open the ${target.toLowerCase()} "${name ?? input.ptvId}" (id ${input.ptvId}) and choose Muokkaa.`,
+          `Change the fields below. Copy each new value as it is; ${EMPTY} means clear the field.`,
+          `Publish every language version: ${languageList}. Publishing only some sends the others back to draft.`,
+          'When the change shows in PTV, confirm it here (ptv_confirm_manual_publish, or Mark as published in the Proposal queue). The MCP compares PTV with the proposal and closes it.',
+        ];
 
   return {
     action: creating ? 'create' : 'update',
@@ -186,6 +200,8 @@ export function formatValue(field: string, value: unknown): string {
   switch (field) {
     case 'publishingStatus':
       return PUBLISHING_STATUS_LABELS[value as string] ?? String(value);
+    case 'chargeType':
+      return CONNECTION_CHARGE_LABELS[value as string] ?? String(value);
     case 'accessibility':
       return ACCESSIBILITY_LABELS[value as string] ?? String(value);
     case 'serviceHours':
@@ -231,6 +247,12 @@ const ACCESSIBILITY_LABELS: Record<string, string> = {
   PartiallyCompliant: 'Täyttää osittain kriittiset saavutettavuusvaatimukset',
   NonCompliant: 'Ei täytä kriittisiä saavutettavuusvaatimuksia',
   Unknown: 'Ei tietoa',
+};
+
+const CONNECTION_CHARGE_LABELS: Record<string, string> = {
+  Chargeable: 'Maksullinen',
+  FreeOfCharge: 'Maksuton',
+  Other: 'Muu',
 };
 
 const CHARGE_LABELS: Record<string, string> = {

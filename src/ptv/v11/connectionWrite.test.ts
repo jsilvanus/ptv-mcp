@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planServiceConnections } from './connectionWrite.js';
+import { planConnectionDetails, planServiceConnections } from './connectionWrite.js';
 import type { V11ServiceWire } from './wireModel.js';
 
 function service(relations: V11ServiceWire['serviceChannels']): V11ServiceWire {
@@ -69,5 +69,36 @@ describe('planServiceConnections', () => {
       deleteAllChannelRelations: true,
       channelRelations: [],
     });
+  });
+});
+
+describe('planConnectionDetails', () => {
+  it('changes one connection and resends the others as they are', () => {
+    const body = planConnectionDetails(
+      service([withExtraInfo, { serviceChannel: { id: 'b' } }]),
+      'a',
+      { chargeType: 'FreeOfCharge' },
+    );
+    expect(body.channelRelations).toHaveLength(2);
+    expect(body.channelRelations[0]).toMatchObject({
+      serviceChannelId: 'a',
+      serviceChargeType: 'FreeOfCharge',
+      description: [{ language: 'fi', value: 'Lisätieto', type: 'Description' }],
+    });
+    expect(body.channelRelations[1]).toEqual({ serviceChannelId: 'b' });
+    expect(body).not.toHaveProperty('deleteAllChannelRelations');
+  });
+
+  it('clears a field given empty', () => {
+    const body = planConnectionDetails(service([withExtraInfo]), 'a', { descriptions: {} });
+    expect(body.channelRelations[0]).toMatchObject({
+      serviceChargeType: 'Chargeable',
+      deleteAllDescriptions: true,
+    });
+    expect(body.channelRelations[0]).not.toHaveProperty('description');
+  });
+
+  it('refuses a channel the service is not connected to', () => {
+    expect(() => planConnectionDetails(service(null), 'a', {})).toThrow(/not connected/);
   });
 });

@@ -1,4 +1,5 @@
 import { queueChannelProposal } from './channelProposal.js';
+import { queueConnectionProposal } from './connectionProposal.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -10,7 +11,7 @@ import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
-import type { SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
+import type { ConnectionDetails, SearchParams, Service, ServiceChannel } from '../ptv/domain.js';
 import type { NewChannel } from '../ptv/adapter.js';
 import type { Database } from '../db/client.js';
 import { resolveMembershipRole } from '../auth/rbac.js';
@@ -494,7 +495,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     'ptv_search_connections',
     withOAuthSecurity({
       description:
-        'List published PTV service/channel connections. The organisation context is selected during OAuth authorization.',
+        "List a service's or channel's connections (give the service or channel id), with each connection's extra info (charge type, descriptions, service hours, contact details). Published data.",
       inputSchema: publicReadGetByIdSchema,
     }),
     async (args, extra) => {
@@ -676,6 +677,51 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           ctx,
           args.channelId,
           args.changes as Partial<ServiceChannel>,
+          args.correlationId,
+          args.reviewItemId,
+        );
+        if (item) await linkQueued(ctx, item, result.proposalId);
+        return textResult(result);
+      } catch (err) {
+        return errorResult(describeError(err), deps.publicUrl);
+      }
+    },
+  );
+
+  server.registerTool(
+    'ptv_propose_connection_changes',
+    withOAuthSecurity({
+      description:
+        "Diff a change to a service–channel connection's extra info (liitoksen lisätiedot) and queue it as a proposal. Needs the Contributor role (Ehdottaja). Never writes anything; an Approver+ resolves it with ptv_resolve_proposal (approve_and_apply needs Publisher-level write access). The service and channel must already be connected (connect them with ptv_propose_changes' serviceChannelIds). Use extra info only for what is specific to this service in this channel, e.g. the service's own hours or phone number at a shared service location. Writable fields: chargeType (Chargeable, FreeOfCharge, Other), descriptions and chargeDescriptions (keyed by language, max 500 characters each), serviceHours, emails, phoneNumbers (type Fax for fax numbers), webPages, addresses (postal only: Street, PostOfficeBox or Foreign). A field present in `changes` replaces all its values; an empty one clears it. Read the connection first (ptv_search_connections) and send the full list. Returns validation and automated quality checks right away.",
+      inputSchema: {
+        serviceId: z.string(),
+        channelId: z.string(),
+        changes: z
+          .record(z.string(), z.unknown())
+          .describe('Partial connection extra info: only the fields being changed.'),
+        correlationId: z.string().optional(),
+        reviewItemId: reviewItemIdSchema,
+      },
+    }),
+    async (args, extra) => {
+      try {
+        const ctx = toolContext(extra);
+        const item = args.reviewItemId
+          ? await requireLinkableReviewItem(reviewDeps, ctx, args.reviewItemId, {
+              kind: 'connection_update',
+              targetId: args.serviceId,
+              changes: { channelId: args.channelId },
+            })
+          : null;
+        const result = await queueConnectionProposal(
+          resolveRole,
+          registry,
+          auditService,
+          proposalService,
+          ctx,
+          args.serviceId,
+          args.channelId,
+          args.changes as Partial<ConnectionDetails>,
           args.correlationId,
           args.reviewItemId,
         );

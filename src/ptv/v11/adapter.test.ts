@@ -215,6 +215,47 @@ describe('PtvV11Adapter connection writes', () => {
   });
 });
 
+describe('PtvV11Adapter.applyConnectionChange', () => {
+  it('PUTs every connection, the changed one with its new extra info', async () => {
+    const current = serviceWire({
+      serviceChannels: [
+        { serviceChannel: { id: 'a' }, serviceChargeType: 'FreeOfCharge' },
+        { serviceChannel: { id: 'b' } },
+      ],
+    });
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: () => Response.json({}),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    await adapter.applyConnectionChange({
+      serviceId: SERVICE_ID,
+      channelId: 'a',
+      changes: { descriptions: { fi: 'Vastaanotto' } },
+    });
+
+    const put = calls.find((call) => call.method === 'PUT');
+    expect(put?.authorization).toBe('Bearer api-user-token');
+    expect(put?.body).toMatchObject({
+      channelRelations: [
+        {
+          serviceChannelId: 'a',
+          serviceChargeType: 'FreeOfCharge',
+          description: [{ language: 'fi', value: 'Vastaanotto', type: 'Description' }],
+        },
+        { serviceChannelId: 'b' },
+      ],
+    });
+  });
+});
+
 describe('PtvV11Adapter.applyChannelChange', () => {
   it.each(['EChannel', 'Phone', 'PrintableForm', 'ServiceLocation', 'WebPage'])(
     'PUTs a %s channel to its own type path with the token',

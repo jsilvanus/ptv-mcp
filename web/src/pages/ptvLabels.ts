@@ -34,6 +34,9 @@ export const FIELD_LABELS: Record<string, string> = {
   accessibility: 'Saavutettavuus',
   organizationId: 'Organisaatio',
   serviceIds: 'Liitettävät palvelut',
+  channelId: 'Asiointikanava',
+  chargeType: 'Maksullisuus',
+  chargeDescriptions: 'Maksullisuuden lisätieto',
 };
 
 export const CODE_LIST_FIELDS = [

@@ -232,7 +232,7 @@ export function ProposalQueuePage() {
                   />
                 )}
                 <DiffView diff={selected.diff} />
-                {selected.proposed && (
+                {selected.proposed && selected.kind !== 'connection_update' && (
                   <ProposalPreview key={selected.id} entity={selected.proposed} />
                 )}
                 {selected.quality && (
@@ -297,6 +297,9 @@ const KIND_LABELS: Record<ProposalKind, string> = {
   service_create: 'New service',
   channel_update: 'Channel update',
   channel_create: 'New channel',
+  connection_update: 'Connection details',
+  organisation_update: 'Organisation update',
+  organisation_create: 'New sub-organisation',
 };
 
 function proposalTarget(proposal: ProposalSummary): string {

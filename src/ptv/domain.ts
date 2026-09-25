@@ -268,11 +268,31 @@ export interface ServiceCollection {
  * is responsible for producing this same shape either way (see
  * docs/ptv-v11-notes.md, "No read-back for connections").
  */
-export interface Connection {
+export interface Connection extends ConnectionDetails {
   serviceId: PtvContentId;
   channelId: PtvContentId;
-  descriptions?: LocalizedText;
   modifiedAt?: string;
+}
+
+/**
+ * A connection's extra info (liitoksen lisätiedot): what is specific to
+ * this service in this channel, e.g. the service's own hours or phone
+ * number at a shared service location. Every field is optional.
+ */
+export interface ConnectionDetails {
+  /** Chargeable = the service costs something here, FreeOfCharge, Other. */
+  chargeType?: 'Chargeable' | 'FreeOfCharge' | 'Other';
+  /** Max 500 characters. */
+  descriptions?: LocalizedText;
+  /** More about the charge (ChargeTypeAdditionalInfo), max 500 characters. */
+  chargeDescriptions?: LocalizedText;
+  serviceHours?: ServiceHour[];
+  emails?: LanguageValue[];
+  /** Phone numbers; type Fax for fax numbers. */
+  phoneNumbers?: PhoneNumber[];
+  webPages?: WebLink[];
+  /** Postal addresses only: Street, PostOfficeBox or Foreign. */
+  addresses?: ChannelAddress[];
 }
 
 export interface PaginatedResult<T> {

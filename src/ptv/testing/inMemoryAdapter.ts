@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ApplyChannelChangeResult,
+  ApplyConnectionChangeResult,
+  ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
   NewChannel,
@@ -209,6 +211,29 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return {
       channelId: created.id,
       publishingStatus: created.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyConnectionChange(
+    proposal: ConnectionChangeProposal,
+  ): Promise<ApplyConnectionChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
+    const index = this.connections.findIndex(
+      (c) => c.serviceId === proposal.serviceId && c.channelId === proposal.channelId,
+    );
+    const existing = this.connections[index];
+    if (!existing) {
+      throw new Error(`Service ${proposal.serviceId} is not connected to ${proposal.channelId}`);
+    }
+    this.connections[index] = { ...existing, ...proposal.changes };
+    return {
+      serviceId: proposal.serviceId,
+      channelId: proposal.channelId,
       appliedAt: new Date().toISOString(),
     };
   }

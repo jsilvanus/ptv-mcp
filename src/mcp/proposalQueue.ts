@@ -1,11 +1,16 @@
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { asChannel, createNewChannel, normalizeNewChannel } from './newChannelProposal.js';
 import type { NewChannel } from '../ptv/adapter.js';
-import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
+import {
+  checkChannel,
+  checkConnection,
+  checkService,
+  type QualityReport,
+} from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
+import type { Connection, PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import {
@@ -21,6 +26,13 @@ import {
 } from '../proposals/proposalService.js';
 import type { NewService } from '../ptv/adapter.js';
 import { createNewService, normalizeNewService } from './newServiceProposal.js';
+import {
+  applyConnectionChanges,
+  ConnectionNotFoundError,
+  prepareConnectionProposal,
+  splitConnectionChanges,
+  type ConnectionChanges,
+} from './connectionProposal.js';
 import {
   applyChannelChanges,
   ChannelNotFoundError,
@@ -58,9 +70,10 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
  */
 export function proposedQuality(
   kind: ProposalKind,
-  proposed: Service | NewService | ServiceChannel | null,
+  proposed: Service | NewService | ServiceChannel | Connection | null,
 ): QualityReport | null {
   if (!proposed) return null;
+  if (kind === 'connection_update') return checkConnection(proposed as Connection);
   if (kind === 'channel_create') {
     const serviceIds = (proposed as { serviceIds?: string[] }).serviceIds;
     return checkChannel(proposed as ServiceChannel, {
@@ -97,9 +110,9 @@ export interface ProposalDetails extends ProposalSummary {
    * and when the service or channel can no longer be read, e.g. after an
    * approved archive: PTV then returns 404 for it.
    */
-  current: Service | ServiceChannel | null;
+  current: Service | ServiceChannel | Connection | null;
   /** `null` when the service or channel can no longer be read (see `current`). */
-  proposed: Service | NewService | ServiceChannel | null;
+  proposed: Service | NewService | ServiceChannel | Connection | null;
   /** Oldest first. */
   comments: ProposalComment[];
   /** Required reviewers; approving waits until all have `approved`. */
@@ -175,6 +188,20 @@ function manualPublishState(
   details: DiffDetails,
 ): Pick<ProposalDetails, 'manualPublish' | 'publishedInPtv'> {
   if (proposal.status !== 'approved') return { manualPublish: null, publishedInPtv: null };
+  if (proposal.kind === 'connection_update') {
+    const { channelId } = splitConnectionChanges(proposal.changes as unknown as ConnectionChanges);
+    return {
+      manualPublish: buildManualPublishSheet({
+        kind: proposal.kind,
+        diff: details.diff,
+        ptvId: proposal.serviceId,
+        names: {},
+        languages: [],
+        channelId,
+      }),
+      publishedInPtv: details.current ? details.diff.length === 0 : null,
+    };
+  }
   const entity = (details.proposed ?? details.current) as
     (Partial<ServiceChannel> & { names?: Service['names'] }) | null;
   const creating = isCreate(proposal.kind);
@@ -185,7 +212,7 @@ function manualPublishState(
       kind: proposal.kind,
       diff: creating ? proposal.queuedDiff : details.diff,
       ptvId: creating ? null : proposal.serviceId,
-      names: (details.current ?? entity)?.names ?? {},
+      names: ((details.current ?? entity) as { names?: Service['names'] } | null)?.names ?? {},
       languages: Object.keys(entity?.names ?? {}),
       ...(entity?.channelType ? { channelType: entity.channelType } : {}),
       ...(entity?.organizationId ? { organizationId: entity.organizationId } : {}),
@@ -213,7 +240,13 @@ async function proposalDiffDetails(
   try {
     return await liveProposalDetails(registry, proposal, ctx);
   } catch (err) {
-    if (!(err instanceof ServiceNotFoundError || err instanceof ChannelNotFoundError)) throw err;
+    if (!(
+      err instanceof ServiceNotFoundError ||
+      err instanceof ChannelNotFoundError ||
+      err instanceof ConnectionNotFoundError
+    )) {
+      throw err;
+    }
     // The target is gone (archived services and channels 404), but the
     // proposal record itself is still reviewable.
     return {
@@ -250,6 +283,26 @@ async function liveProposalDetails(
       diff: proposal.queuedDiff,
       current: null,
       proposed: normalizeNewService(proposal.changes),
+    };
+  }
+  if (proposal.kind === 'connection_update') {
+    const { channelId, details } = splitConnectionChanges(
+      proposal.changes as unknown as ConnectionChanges,
+    );
+    const prepared = await prepareConnectionProposal(
+      registry,
+      ctx,
+      proposal.serviceId,
+      channelId,
+      details,
+    );
+    return {
+      ...toSummary(proposal),
+      changes: proposal.changes,
+      queuedDiff: proposal.queuedDiff,
+      diff: prepared.diff,
+      current: prepared.current,
+      proposed: prepared.proposed,
     };
   }
   if (proposal.kind === 'channel_update') {
@@ -627,6 +680,17 @@ export async function resolveProposal(
     return resolveChannelProposal(registry, proposalService, auditService, ctx, proposal, action);
   }
 
+  if (proposal.kind === 'connection_update') {
+    return resolveConnectionProposal(
+      registry,
+      proposalService,
+      auditService,
+      ctx,
+      proposal,
+      action,
+    );
+  }
+
   if (proposal.kind === 'channel_create') {
     return resolveNewChannelProposal(
       registry,
@@ -928,6 +992,73 @@ async function resolveChannelProposal(
       proposalCtx,
       proposal.serviceId,
       changes,
+      proposal.correlationId,
+    );
+  } catch (err) {
+    if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
+      throw err;
+    }
+    await proposalService.markResolved(ctx.tenantId, proposal.id, 'failed', ctx.actingUserId);
+    await record('Failed');
+    throw err;
+  }
+  const applied = await proposalService.markResolved(
+    ctx.tenantId,
+    proposal.id,
+    'applied',
+    ctx.actingUserId,
+  );
+  await record('Applied');
+  return proposalDetails(registry, proposalService, applied, proposalCtx);
+}
+
+/**
+ * Like resolveChannelProposal: approve_and_export leaves the change for
+ * manual entry in PTV's UI; approve_and_apply re-diffs and writes it.
+ */
+async function resolveConnectionProposal(
+  registry: PtvAdapterRegistry,
+  proposalService: ProposalService,
+  auditService: AuditService,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+  action: Exclude<ResolveProposalAction, 'reject'>,
+): Promise<ProposalDetails> {
+  const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
+  const { channelId, details } = splitConnectionChanges(
+    proposal.changes as unknown as ConnectionChanges,
+  );
+  const record = (result: string) =>
+    auditService.record({
+      tenantId: ctx.tenantId,
+      userId: ctx.actingUserId,
+      action: 'ResolveProposal',
+      resourceType: 'Proposal',
+      resourceId: proposal.id,
+      result,
+      correlationId: proposal.correlationId,
+    });
+
+  if (action === 'approve_and_export') {
+    const approved = await proposalService.markResolved(
+      ctx.tenantId,
+      proposal.id,
+      'approved',
+      ctx.actingUserId,
+    );
+    await record('ApprovedForManualPublish');
+    return proposalDetails(registry, proposalService, approved, proposalCtx);
+  }
+  if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
+
+  try {
+    await applyConnectionChanges(
+      registry,
+      auditService,
+      proposalCtx,
+      proposal.serviceId,
+      channelId,
+      details,
       proposal.correlationId,
     );
   } catch (err) {

@@ -1,5 +1,6 @@
 import type {
   Connection,
+  ConnectionDetails,
   GeneralDescription,
   Organization,
   PaginatedResult,
@@ -60,6 +61,20 @@ export interface ChannelChangeProposal {
   channelId: PtvContentId;
   /** Partial: names, descriptions, languages, publishingStatus. */
   changes: Partial<ServiceChannel>;
+}
+
+/** A proposed change to one service–channel connection's extra info. */
+export interface ConnectionChangeProposal {
+  serviceId: PtvContentId;
+  channelId: PtvContentId;
+  /** Only the fields that change; a present field replaces the current value. */
+  changes: Partial<ConnectionDetails>;
+}
+
+export interface ApplyConnectionChangeResult {
+  serviceId: PtvContentId;
+  channelId: PtvContentId;
+  appliedAt: string;
 }
 
 export interface ApplyChannelChangeResult {
@@ -135,4 +150,10 @@ export interface PtvAdapter {
 
   /** Creates a new service channel; same write-capability rules as applyServiceChange. */
   createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult>;
+
+  /**
+   * Writes an approved change to an existing connection's extra info; same
+   * write-capability rules as applyServiceChange.
+   */
+  applyConnectionChange(proposal: ConnectionChangeProposal): Promise<ApplyConnectionChangeResult>;
 }

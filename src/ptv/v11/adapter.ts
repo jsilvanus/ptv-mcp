@@ -1,6 +1,8 @@
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
   ApplyChannelChangeResult,
+  ApplyConnectionChangeResult,
+  ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
   NewChannel,
@@ -51,7 +53,7 @@ import {
   newChannelToV11Body,
   V11_CHANNEL_WRITE_TYPES,
 } from './channelWriteMapping.js';
-import { planServiceConnections } from './connectionWrite.js';
+import { planConnectionDetails, planServiceConnections } from './connectionWrite.js';
 import {
   sharedV11ApiTokenCache,
   type V11ApiTokenCache,
@@ -540,6 +542,25 @@ export class PtvV11Adapter implements PtvAdapter {
     return {
       channelId: created.id,
       publishingStatus: toPublishingStatus(created.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyConnectionChange(
+    proposal: ConnectionChangeProposal,
+  ): Promise<ApplyConnectionChangeResult> {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
+    if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
+    await this.client.put(
+      `/api/v11/Connection/serviceId/${proposal.serviceId}`,
+      planConnectionDetails(current, proposal.channelId, proposal.changes),
+    );
+    return {
+      serviceId: proposal.serviceId,
+      channelId: proposal.channelId,
       appliedAt: new Date().toISOString(),
     };
   }
