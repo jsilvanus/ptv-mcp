@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
-import { SignJWT, jwtVerify, errors } from 'jose';
+import { SignJWT, jwtVerify } from 'jose';
 
 const ACCESS_TTL_SECONDS = 3600;
 
@@ -29,13 +29,64 @@ export interface AuthorizationRequest {
   writeApiVersion?: string | null;
 }
 
+/** An authorization code or refresh token row: what an access token is issued for. */
+type Grant = {
+  user_id: string;
+  scope: string;
+  tenant_id: string | null;
+  environment: 'test' | 'production';
+  read_api_version: string;
+  write_api_version: string | null;
+};
+
+function stringList(value: unknown[]): string[] {
+  return value.filter((v): v is string => typeof v === 'string');
+}
+
+/**
+ * Keeps the string-typed fields of client metadata (a registration request
+ * body or a CIMD document); non-string list entries are dropped.
+ */
+export function parseClientMetadata(value: Record<string, unknown>): OAuthClientMetadata {
+  return {
+    ...(typeof value.client_id === 'string' ? { client_id: value.client_id } : {}),
+    ...(typeof value.client_name === 'string' ? { client_name: value.client_name } : {}),
+    redirect_uris: Array.isArray(value.redirect_uris) ? stringList(value.redirect_uris) : [],
+    ...(Array.isArray(value.grant_types) ? { grant_types: stringList(value.grant_types) } : {}),
+    ...(Array.isArray(value.response_types)
+      ? { response_types: stringList(value.response_types) }
+      : {}),
+    ...(typeof value.token_endpoint_auth_method === 'string'
+      ? { token_endpoint_auth_method: value.token_endpoint_auth_method }
+      : {}),
+    ...(typeof value.application_type === 'string'
+      ? { application_type: value.application_type }
+      : {}),
+  };
+}
+
+/**
+ * A connection without an organisation reads public, published PTV data
+ * only: v11 reads and no writes.
+ */
+export function isAllowedWithoutTenant(
+  readApiVersion: string | undefined,
+  writeApiVersion: string | null | undefined,
+): boolean {
+  return readApiVersion === 'v11' && !writeApiVersion;
+}
+
 export class OAuthService {
+  private readonly secretKey: Uint8Array;
+
   constructor(
     private readonly db: Database,
-    private readonly jwtSecret: string,
+    jwtSecret: string,
     private readonly issuer: string,
     private readonly resource: string,
-  ) {}
+  ) {
+    this.secretKey = Buffer.from(jwtSecret, 'base64');
+  }
 
   async registerClient(metadata: OAuthClientMetadata) {
     if (!Array.isArray(metadata.redirect_uris) || metadata.redirect_uris.length === 0) {
@@ -151,27 +202,7 @@ export class OAuthService {
         throw new Error('Invalid CIMD document');
       }
 
-      return {
-        client_id: clientId,
-        client_name: value.client_name,
-        redirect_uris: value.redirect_uris as string[],
-        ...(Array.isArray(value.grant_types)
-          ? { grant_types: value.grant_types.filter((v): v is string => typeof v === 'string') }
-          : {}),
-        ...(Array.isArray(value.response_types)
-          ? {
-              response_types: value.response_types.filter(
-                (v): v is string => typeof v === 'string',
-              ),
-            }
-          : {}),
-        ...(typeof value.token_endpoint_auth_method === 'string'
-          ? { token_endpoint_auth_method: value.token_endpoint_auth_method }
-          : {}),
-        ...(typeof value.application_type === 'string'
-          ? { application_type: value.application_type }
-          : {}),
-      };
+      return parseClientMetadata(value);
     }
 
     throw new Error('Unable to fetch CIMD document');
@@ -224,11 +255,11 @@ export class OAuthService {
       .setAudience(this.resource)
       .setIssuedAt()
       .setExpirationTime('10m')
-      .sign(Buffer.from(this.jwtSecret, 'base64'));
+      .sign(this.secretKey);
   }
 
   async verifyTenantSelectionToken(token: string) {
-    const { payload } = await jwtVerify(token, Buffer.from(this.jwtSecret, 'base64'), {
+    const { payload } = await jwtVerify(token, this.secretKey, {
       algorithms: ['HS256'],
       issuer: this.issuer,
       audience: this.resource,
@@ -256,8 +287,10 @@ export class OAuthService {
   async createAuthorizationCode(userId: string, request: AuthorizationRequest): Promise<string> {
     if (!request.environment || !request.readApiVersion)
       throw new Error('Invalid authorization selection');
-    // A connection without an organisation reads public PTV data only.
-    if (!request.tenantId && (request.readApiVersion !== 'v11' || request.writeApiVersion))
+    if (
+      !request.tenantId &&
+      !isAllowedWithoutTenant(request.readApiVersion, request.writeApiVersion)
+    )
       throw new Error('A connection without an organisation is v11 read-only');
     if (!(await this.validateClient(request.clientId, request.redirectUri))) {
       throw new Error('Invalid client or redirect_uri');
@@ -274,20 +307,16 @@ export class OAuthService {
   }
 
   async exchangeCode(code: string, clientId: string, redirectUri: string, codeVerifier: string) {
-    const rows = await this.db.execute<{
-      id: string;
-      client_id: string;
-      redirect_uri: string;
-      code_challenge: string;
-      user_id: string;
-      scope: string;
-      tenant_id: string | null;
-      environment: 'test' | 'production';
-      read_api_version: string;
-      write_api_version: string | null;
-      expires_at: Date;
-      consumed_at: Date | null;
-    }>(sql`SELECT * FROM oauth_authorization_codes WHERE code_hash = ${hashToken(code)}`);
+    const rows = await this.db.execute<
+      Grant & {
+        id: string;
+        client_id: string;
+        redirect_uri: string;
+        code_challenge: string;
+        expires_at: Date;
+        consumed_at: Date | null;
+      }
+    >(sql`SELECT * FROM oauth_authorization_codes WHERE code_hash = ${hashToken(code)}`);
     const row = rows[0];
     if (
       !row ||
@@ -302,45 +331,24 @@ export class OAuthService {
     await this.db.execute(
       sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`,
     );
-    if (!row.tenant_id && (row.read_api_version !== 'v11' || row.write_api_version)) {
-      throw new Error('invalid_grant');
-    }
-    const accessToken = await this.issueAccessToken(
-      row.user_id,
-      clientId,
-      row.scope,
-      row.tenant_id,
-      row.environment,
-      row.read_api_version,
-      row.write_api_version,
-    );
+    this.requireAllowedGrant(row);
     const refreshToken = generateOpaqueToken();
     await this.db.execute(sql`
       INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
       VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, ${row.environment}, ${row.read_api_version}, ${row.read_api_version}, ${row.write_api_version}, now() + interval '30 days')
     `);
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: ACCESS_TTL_SECONDS,
-      refresh_token: refreshToken,
-      scope: row.scope,
-    };
+    return this.tokenResponse(row, clientId, refreshToken);
   }
 
   async refresh(refreshToken: string, clientId: string) {
-    const rows = await this.db.execute<{
-      id: string;
-      client_id: string;
-      user_id: string;
-      scope: string;
-      tenant_id: string | null;
-      environment: 'test' | 'production';
-      read_api_version: string;
-      write_api_version: string | null;
-      expires_at: Date;
-      revoked_at: Date | null;
-    }>(sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`);
+    const rows = await this.db.execute<
+      Grant & {
+        id: string;
+        client_id: string;
+        expires_at: Date;
+        revoked_at: Date | null;
+      }
+    >(sql`SELECT * FROM oauth_refresh_tokens WHERE token_hash = ${hashToken(refreshToken)}`);
     const row = rows[0];
     if (
       !row ||
@@ -350,29 +358,41 @@ export class OAuthService {
     ) {
       throw new Error('invalid_grant');
     }
-    if (!row.tenant_id && (row.read_api_version !== 'v11' || row.write_api_version)) {
+    this.requireAllowedGrant(row);
+    return this.tokenResponse(row, clientId);
+  }
+
+  private requireAllowedGrant(grant: Grant): void {
+    if (
+      !grant.tenant_id &&
+      !isAllowedWithoutTenant(grant.read_api_version, grant.write_api_version)
+    )
       throw new Error('invalid_grant');
-    }
+  }
+
+  /** The token endpoint's response; `refresh_token` only when a new one was issued. */
+  private async tokenResponse(grant: Grant, clientId: string, refreshToken?: string) {
     const accessToken = await this.issueAccessToken(
-      row.user_id,
+      grant.user_id,
       clientId,
-      row.scope,
-      row.tenant_id,
-      row.environment,
-      row.read_api_version,
-      row.write_api_version,
+      grant.scope,
+      grant.tenant_id,
+      grant.environment,
+      grant.read_api_version,
+      grant.write_api_version,
     );
     return {
       access_token: accessToken,
       token_type: 'Bearer',
       expires_in: ACCESS_TTL_SECONDS,
-      scope: row.scope,
+      ...(refreshToken ? { refresh_token: refreshToken } : {}),
+      scope: grant.scope,
     };
   }
 
   async verifyAccessToken(token: string) {
     try {
-      const { payload } = await jwtVerify(token, Buffer.from(this.jwtSecret, 'base64'), {
+      const { payload } = await jwtVerify(token, this.secretKey, {
         algorithms: ['HS256'],
         issuer: this.issuer,
         audience: this.resource,
@@ -393,7 +413,8 @@ export class OAuthService {
           typeof payload.write_api_version === 'string' ? payload.write_api_version : undefined,
       };
     } catch (err) {
-      if (err instanceof errors.JOSEError || err instanceof Error) throw new Error('invalid_token');
+      // jose's JOSEError extends Error, so this covers every verification failure.
+      if (err instanceof Error) throw new Error('invalid_token');
       throw err;
     }
   }
@@ -422,7 +443,7 @@ export class OAuthService {
       .setAudience(this.resource)
       .setIssuedAt()
       .setExpirationTime(`${ACCESS_TTL_SECONDS}s`)
-      .sign(Buffer.from(this.jwtSecret, 'base64'));
+      .sign(this.secretKey);
   }
 
   private async verifyPkce(verifier: string, challenge: string) {

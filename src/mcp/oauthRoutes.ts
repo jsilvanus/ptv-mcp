@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { OAuthService } from './oauthService.js';
+import { isAllowedWithoutTenant, parseClientMetadata, type OAuthService } from './oauthService.js';
 import type { AuthService } from '../auth/authService.js';
 import type { TenantService } from '../tenants/tenantService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
@@ -71,37 +71,7 @@ export async function mcpOAuthRoutes(
 
   app.post<{ Body: Record<string, unknown> }>('/oauth/register', async (request, reply) => {
     try {
-      const result = await options.oauthService.registerClient({
-        ...(typeof request.body.client_id === 'string'
-          ? { client_id: request.body.client_id }
-          : {}),
-        ...(typeof request.body.client_name === 'string'
-          ? { client_name: request.body.client_name }
-          : {}),
-        redirect_uris: Array.isArray(request.body.redirect_uris)
-          ? request.body.redirect_uris.filter((v): v is string => typeof v === 'string')
-          : [],
-        ...(Array.isArray(request.body.grant_types)
-          ? {
-              grant_types: request.body.grant_types.filter(
-                (v): v is string => typeof v === 'string',
-              ),
-            }
-          : {}),
-        ...(Array.isArray(request.body.response_types)
-          ? {
-              response_types: request.body.response_types.filter(
-                (v): v is string => typeof v === 'string',
-              ),
-            }
-          : {}),
-        ...(typeof request.body.token_endpoint_auth_method === 'string'
-          ? { token_endpoint_auth_method: request.body.token_endpoint_auth_method }
-          : {}),
-        ...(typeof request.body.application_type === 'string'
-          ? { application_type: request.body.application_type }
-          : {}),
-      });
+      const result = await options.oauthService.registerClient(parseClientMetadata(request.body));
       return reply.code(201).send(result);
     } catch (err) {
       return reply.badRequest(err instanceof Error ? err.message : 'Invalid client metadata');
@@ -184,70 +154,56 @@ export async function mcpOAuthRoutes(
         if (environment !== 'test' && environment !== 'production')
           return reply.badRequest('Invalid PTV environment');
 
-        // No organisation: public, published PTV data through v11, read-only.
         if (tenantId === '') {
-          if (readApiVersion !== 'v11' || writeApiVersion) {
+          // No organisation: public, published PTV data only.
+          if (!isAllowedWithoutTenant(readApiVersion, writeApiVersion)) {
             return reply.badRequest(
               'Without an organisation only v11 reads are available (no writes)',
             );
           }
-          const code = await options.oauthService.createAuthorizationCode(selection.userId, {
-            clientId: selection.clientId,
-            redirectUri: selection.redirectUri,
-            codeChallenge: selection.codeChallenge,
-            scope: selection.scope,
-            environment,
-            readApiVersion,
-            writeApiVersion: null,
-          });
-          const redirect = new URL(selection.redirectUri);
-          redirect.searchParams.set('code', code);
-          if (selection.state) redirect.searchParams.set('state', selection.state);
-          redirect.searchParams.set('iss', options.publicUrl);
-          return reply.redirect(redirect.toString());
-        }
+        } else {
+          const memberships = await options.tenantService.listTenantsForUser(selection.userId);
+          const membership = memberships.find((item) => item.tenantId === tenantId);
+          if (!membership) return reply.badRequest('You are not a member of that organisation');
 
-        const memberships = await options.tenantService.listTenantsForUser(selection.userId);
-        const membership = memberships.find((item) => item.tenantId === tenantId);
-        if (!membership) return reply.badRequest('You are not a member of that organisation');
-
-        // v11 published reads are a baseline capability. Ensure the default
-        // config exists here as well as during account connection, so users who
-        // connected v11 before the default was introduced are not blocked by a
-        // stale tenant configuration.
-        if (readApiVersion === 'v11') {
-          await options.adapterConfigService.ensureV11ReadDefaults(membership.tenantId);
+          // v11 published reads are a baseline capability. Ensure the default
+          // config exists here as well as during account connection, so users who
+          // connected v11 before the default was introduced are not blocked by a
+          // stale tenant configuration.
+          if (readApiVersion === 'v11') {
+            await options.adapterConfigService.ensureV11ReadDefaults(membership.tenantId);
+          }
+          const configs = await options.adapterConfigService.list(membership.tenantId);
+          const readConfig = configs.find(
+            (item) =>
+              item.environment === environment &&
+              item.apiVersion === readApiVersion &&
+              item.supportsRead,
+          );
+          const writeConfig = writeApiVersion
+            ? configs.find(
+                (item) =>
+                  item.environment === environment &&
+                  item.apiVersion === writeApiVersion &&
+                  item.supportsWrite,
+              )
+            : undefined;
+          if (!readConfig)
+            return reply.badRequest(
+              'That read PTV connection is not configured for this organisation',
+            );
+          if (writeApiVersion && !writeConfig)
+            return reply.badRequest(
+              'That write PTV connection is not configured for this organisation',
+            );
         }
-        const configs = await options.adapterConfigService.list(membership.tenantId);
-        const readConfig = configs.find(
-          (item) =>
-            item.environment === environment &&
-            item.apiVersion === readApiVersion &&
-            item.supportsRead,
-        );
-        const writeConfig = writeApiVersion
-          ? configs.find(
-              (item) =>
-                item.environment === environment &&
-                item.apiVersion === writeApiVersion &&
-                item.supportsWrite,
-            )
-          : undefined;
-        if (!readConfig)
-          return reply.badRequest(
-            'That read PTV connection is not configured for this organisation',
-          );
-        if (writeApiVersion && !writeConfig)
-          return reply.badRequest(
-            'That write PTV connection is not configured for this organisation',
-          );
 
         const code = await options.oauthService.createAuthorizationCode(selection.userId, {
           clientId: selection.clientId,
           redirectUri: selection.redirectUri,
           codeChallenge: selection.codeChallenge,
           scope: selection.scope,
-          tenantId,
+          ...(tenantId ? { tenantId } : {}),
           environment,
           readApiVersion,
           writeApiVersion,
