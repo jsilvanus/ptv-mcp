@@ -8,6 +8,7 @@ import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigSer
 import type { Database } from '../db/client.js';
 import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
 import { PtvV12Client } from '../ptv/v12/client.js';
+import { isPtvEnvironment } from './context.js';
 
 interface ConfigBody {
   environment: PtvEnvironment;
@@ -54,17 +55,18 @@ export async function ptvV12Routes(
     async (request, reply) => {
       const { tenantId } = request.params;
       const { environment, apiKey } = request.body;
-      if (!environment || !['test', 'production'].includes(environment)) {
+      if (!isPtvEnvironment(environment)) {
         return reply.badRequest('environment must be test or production');
       }
       if (!apiKey?.trim()) {
         return reply.badRequest('apiKey is required');
       }
 
-      const hadKey = await options.tenantEnvironmentService
-        .getDecryptedCredentials(tenantId, environment, 'v12')
-        .then(() => true)
-        .catch(() => false);
+      const hadKey = await options.tenantEnvironmentService.hasCredentials(
+        tenantId,
+        environment,
+        'v12',
+      );
       await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v12', {
         apiKey: apiKey.trim(),
       });
@@ -91,12 +93,12 @@ export async function ptvV12Routes(
     },
   );
 
-  app.post<{ Params: { tenantId: string; environment: PtvEnvironment } }>(
+  app.post<{ Params: { tenantId: string; environment: string } }>(
     '/tenants/:tenantId/ptv/v12/:environment/test',
     { preHandler: [authenticate, requireTenantAdmin] },
     async (request, reply) => {
       const { tenantId, environment } = request.params;
-      if (!['test', 'production'].includes(environment)) {
+      if (!isPtvEnvironment(environment)) {
         return reply.badRequest('environment must be test or production');
       }
 

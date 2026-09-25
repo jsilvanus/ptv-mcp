@@ -21,10 +21,10 @@ export class TenantEnvironmentNotFoundError extends Error {
 
 /**
  * Envelope-encrypted storage for `TenantEnvironment` (Phase 3 Stream B) —
- * a tenant-scoped credential (e.g. v12's future API key). Storage and
- * encryption only: **no route wires into this yet, deliberately** — there
- * is nothing to configure until Phase 9's `PtvV12Adapter` exists, per
- * docs/phase-plan.md's Phase 3 scope note. Exercised by tests only.
+ * a tenant-scoped credential: v12's API key and v11's IN-API user. Tenant
+ * admins set them through routes/ptvV12.ts and routes/ptvV11ApiUser.ts;
+ * `DbPtvAdapterRegistry` reads them for adapters whose `credentialScope`
+ * is `tenant`.
  */
 export class TenantEnvironmentService {
   constructor(
@@ -68,6 +68,26 @@ export class TenantEnvironmentService {
           },
         });
     });
+  }
+
+  /** Whether active credentials are stored, without decrypting them. */
+  async hasCredentials(
+    tenantId: string,
+    environment: PtvEnvironment,
+    apiVersion: string,
+  ): Promise<boolean> {
+    const record = await withContext(this.db, { tenantId }, async (tx) =>
+      tx.query.tenantEnvironments.findFirst({
+        where: and(
+          eq(tenantEnvironments.tenantId, tenantId),
+          eq(tenantEnvironments.environment, environment),
+          eq(tenantEnvironments.apiVersion, apiVersion),
+          eq(tenantEnvironments.active, true),
+        ),
+        columns: { id: true },
+      }),
+    );
+    return record !== undefined;
   }
 
   async getDecryptedCredentials(

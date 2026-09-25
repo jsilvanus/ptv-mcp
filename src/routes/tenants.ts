@@ -1,11 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/client.js';
-import {
-  MembershipNotFoundError,
-  SlugAlreadyTakenError,
-  type TenantService,
-  UserNotFoundError,
-} from '../tenants/tenantService.js';
+import type { TenantService } from '../tenants/tenantService.js';
 import {
   createAuthenticate,
   createRequireRole,
@@ -54,15 +49,8 @@ export async function tenantRoutes(
       if (!name || !slug) {
         return reply.badRequest('name and slug are required');
       }
-      try {
-        const { tenantId } = await tenantService.createTenant(name, slug, request.userId!);
-        return reply.code(201).send({ tenantId, name, slug });
-      } catch (err) {
-        if (err instanceof SlugAlreadyTakenError) {
-          return reply.conflict(err.message);
-        }
-        throw err;
-      }
+      const { tenantId } = await tenantService.createTenant(name, slug, request.userId!);
+      return reply.code(201).send({ tenantId, name, slug });
     },
   );
 
@@ -89,15 +77,8 @@ export async function tenantRoutes(
         return reply.badRequest('email and role are required');
       }
       if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
-      try {
-        await tenantService.addMember(tenantId, email, role, request.userId!);
-        return reply.code(204).send();
-      } catch (err) {
-        if (err instanceof UserNotFoundError) {
-          return reply.notFound(err.message);
-        }
-        throw err;
-      }
+      await tenantService.addMember(tenantId, email, role, request.userId!);
+      return reply.code(204).send();
     },
   );
 
@@ -111,15 +92,8 @@ export async function tenantRoutes(
         return reply.badRequest('role is required');
       }
       if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
-      try {
-        await tenantService.updateMemberRole(tenantId, userId, role, request.userId!);
-        return reply.code(204).send();
-      } catch (err) {
-        if (err instanceof MembershipNotFoundError) {
-          return reply.notFound(err.message);
-        }
-        throw err;
-      }
+      await tenantService.updateMemberRole(tenantId, userId, role, request.userId!);
+      return reply.code(204).send();
     },
   );
 
