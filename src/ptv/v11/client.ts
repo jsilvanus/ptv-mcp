@@ -1,4 +1,5 @@
 import type { PtvEnvironment } from '../adapter.js';
+import { isRetryable, retryDelayMs, sleep } from '../http.js';
 
 /**
  * Base URLs confirmed live 2026-09-16 (see docs/ptv-v11-notes.md) — both
@@ -205,22 +206,4 @@ function parseFieldErrors(text: string): [string, string][] {
     }
   }
   return result;
-}
-
-function isRetryable(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
-function retryDelayMs(attempt: number, retryAfterHeader: string | null): number {
-  if (retryAfterHeader) {
-    const seconds = Number(retryAfterHeader);
-    if (Number.isFinite(seconds)) return seconds * 1000;
-  }
-  const base = 250 * 2 ** attempt;
-  const jitter = Math.random() * base * 0.25;
-  return base + jitter;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

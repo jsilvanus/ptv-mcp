@@ -182,37 +182,3 @@ export function needsDeleteFlag(entityType: EntityType, fieldName: string): stri
   }
   return flags[fieldName] ?? null;
 }
-
-/**
- * Returns all delete flags and their target fields for a given entity type.
- *
- * @param entityType The entity type
- * @returns An object mapping field names to their delete flag property names
- *
- * @example
- * const serviceFlags = getDeleteFlags('Service');
- * // { lifeEvents: 'deleteAllLifeEvents', industrialClasses: 'deleteAllIndustrialClasses', ... }
- */
-export function getDeleteFlags(entityType: EntityType): Record<string, string> {
-  const flags = deleteFlagMap[entityType];
-  if (!flags) {
-    throw new Error(`Unknown entity type: ${entityType}`);
-  }
-  return { ...flags };
-}
-
-/**
- * Helper to determine if a field is "full-replace" (no delete flag exists).
- * Full-replace fields require you to send the complete new list/value to update them.
- *
- * @param entityType The entity type
- * @param fieldName The field name
- * @returns true if the field is full-replace, false if a delete flag exists
- *
- * @example
- * isFullReplaceField('Service', 'names') // => true (no delete flag)
- * isFullReplaceField('Service', 'lifeEvents') // => false (has deleteAllLifeEvents)
- */
-export function isFullReplaceField(entityType: EntityType, fieldName: string): boolean {
-  return needsDeleteFlag(entityType, fieldName) === null;
-}

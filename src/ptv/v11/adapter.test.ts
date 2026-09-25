@@ -31,6 +31,30 @@ function serviceWire(overrides: Partial<V11ServiceWire> = {}): V11ServiceWire {
   };
 }
 
+describe('PtvV11Adapter organisation-scoped search', () => {
+  it('downloads the organisation list once per adapter instance across pages', async () => {
+    const organizationId = 'ae788356-6950-48fc-b3ff-63243f74fe53';
+    const { fetchImpl, calls } = fakeFetch({
+      'GET /api/v11/Service/list/organization': () =>
+        Response.json({
+          pageNumber: 1,
+          pageSize: 1000,
+          pageCount: 1,
+          itemList: [serviceWire(), serviceWire({ id: 'second' })],
+        }),
+    });
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+
+    const first = await adapter.searchServices({ organizationId, page: 1, pageSize: 1 });
+    const second = await adapter.searchServices({ organizationId, page: 2, pageSize: 1 });
+
+    expect(first.items.map((item) => item.id)).toEqual([SERVICE_ID]);
+    expect(second.items.map((item) => item.id)).toEqual(['second']);
+    expect(second.totalCount).toBe(2);
+    expect(calls).toHaveLength(1);
+  });
+});
+
 interface Call {
   method: string;
   path: string;

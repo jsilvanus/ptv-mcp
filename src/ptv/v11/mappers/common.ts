@@ -1,4 +1,4 @@
-import type { CodeListEntry, LocalizedText, PublishingStatus } from '../../domain.js';
+import type { CodeListEntry, LocalizedText, PublishingStatus, ServiceType } from '../../domain.js';
 import type { V11CodeListItem, V11LocalizedItem, V11PublishingStatus } from '../wireModel.js';
 
 /**
@@ -86,6 +86,19 @@ export function toPublishingStatus(status: V11PublishingStatus): PublishingStatu
     return status as PublishingStatus;
   }
   throw new Error(`Unknown v11 publishingStatus: ${status}`);
+}
+
+const SERVICE_TYPE_MAP: Record<string, ServiceType> = {
+  Service: 'Service',
+  ProfessionalQualification: 'ProfessionalQualification',
+  PermitOrObligation: 'PermitOrObligation',
+};
+
+/** Services and general descriptions share v11's service type values; `entity` names the owner in the error. */
+export function toServiceType(wireType: string, entity = 'service'): ServiceType {
+  const mapped = SERVICE_TYPE_MAP[wireType];
+  if (!mapped) throw new Error(`Unknown v11 ${entity} type: ${wireType}`);
+  return mapped;
 }
 
 /**
