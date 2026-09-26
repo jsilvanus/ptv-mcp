@@ -1995,3 +1995,49 @@ connection forms no longer clear the page-level error when saving.
 resolve action runs and shares its error line with the loaders, so the
 hook would not simplify it. No `useApiQuery`: the load-on-mount effects
 differ too much (403 handling, selection) for one hook to save much.
+
+## 2026-09-26 — Split `mcpServer.ts` by tool area; v12 mappers out of the adapter
+
+Behaviour-preserving refactor. The tool listing (names, titles,
+descriptions, input schemas, annotations, `securitySchemes`), resource
+templates, prompts and server instructions were dumped before and after
+and are byte-for-byte identical, in the same order.
+
+- **`src/mcp/mcpServer.ts`** (1244 → 100 lines) now only builds the
+  per-request memos and dependencies and composes:
+  `tools/shared.ts` (the `tool()` registrar with its try/catch →
+  `errorResult`, `AuthenticationRequiredError`, and
+  `toolContext`/`readToolContext`/`resourceToolContext`, which now share
+  the read/write API version checks), `tools/readTools.ts`,
+  `tools/proposalTools.ts`, `tools/reviewTools.ts` (the inbox, quality
+  checks and review campaigns) and `resources.ts`. Tool modules take one
+  `ToolDeps` (`ReviewDeps` plus the validator and four-eyes lookup) in
+  place of the separate `reviewDeps`/`listMembers`/`requireFourEyes`
+  closures. The five proposal tools that take `reviewItemId` share
+  `queueForReviewItem` (check the item, queue, link). Resources still
+  throw rather than return tool errors; their canonical URI is now the
+  template expanded with the URI's own variables, which is what the five
+  hand-written URI callbacks built. `AuthenticationRequiredError` is
+  re-exported from `mcpServer.ts`.
+- **`src/ptv/v12/`**: the mappers moved to `mappers/` (`common`,
+  `service`, `serviceChannel`, `organization`, `serviceCollection`,
+  `generalDescription`, `connection`, `codeList`, like v11's), the wire
+  types to `wireModel.ts` (built from shared timestamp/organisation/
+  localized-text parts), and the envelope readers to `pagination.ts`.
+  Mappers share `contentIdOf`, `namesOf`, `descriptionsOf` and
+  `languagesOf`. In the adapter: services and channels share
+  `hydratedSearch`, collections and general descriptions
+  `organizationSearch`; 404-as-null reads go through `getOrNull`
+  (`getService` keeps its wider try, which also covers the connection
+  lookup); `withChannelIds` and `getConnectionsForServices` share
+  `connectionsOfServices`; text filters use `matchesQuery`; `fetchAll`
+  and the always-100 `pageSize` argument are gone (`V12_MAX_PAGE_SIZE`).
+  `chunk()` (in `src/ptv/http.ts`) replaces three batching loops.
+  `adapter.test.ts` imports `mapV12Service` from `mappers/service.js`.
+  Adapter: 1181 → 645 lines.
+
+No intentional behaviour changes. Left out: the code-name completion
+(`withCodeNames` and its helpers) stays in the v12 adapter, since it
+works on the adapter's cache and client; v11's own batching loops were
+not moved to `chunk()`; the proposal/review modules the tools call are
+unchanged (another pass is simplifying them).

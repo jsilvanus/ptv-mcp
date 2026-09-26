@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { V11ChangeValidator } from '../../validation/changeValidator.js';
-import { mapV12Service } from './adapter.js';
+import { mapV12Service } from './mappers/service.js';
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type { Organization } from '../domain.js';
 
