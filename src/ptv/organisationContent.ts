@@ -123,7 +123,7 @@ export async function collectOrganisationContent(
   const [connectedElsewhere, generalDescriptions] = await Promise.all([
     mapWithConcurrency(unconnected, PAGE_FETCH_CONCURRENCY, (channel) =>
       adapter
-        .getConnectionsFor(channel.id)
+        .getConnectionsFor(channel.id, 'channel')
         .then((connections) => connections.length)
         .catch(() => 0),
     ),
@@ -147,14 +147,25 @@ export async function collectOrganisationContent(
   };
 }
 
-/** Every connection of the services, with its extra info, read PAGE_FETCH_CONCURRENCY at a time. */
+/**
+ * Every connection of the services, with its extra info, in one batched
+ * read (see PtvAdapter.getConnectionsForServices). A failed batch read
+ * falls back to one read per service, so one unreadable service leaves
+ * out only its own connections.
+ */
 export async function connectionsOf(
   adapter: PtvAdapter,
   services: Service[],
 ): Promise<Connection[]> {
-  const connected = services.filter((service) => service.serviceChannelIds.length > 0);
-  const perService = await mapWithConcurrency(connected, PAGE_FETCH_CONCURRENCY, (service) =>
-    adapter.getConnectionsFor(service.id).catch(() => [] as Connection[]),
-  );
-  return perService.flat();
+  const connected = services
+    .filter((service) => service.serviceChannelIds.length > 0)
+    .map((service) => service.id);
+  try {
+    return await adapter.getConnectionsForServices(connected);
+  } catch {
+    const perService = await mapWithConcurrency(connected, PAGE_FETCH_CONCURRENCY, (id) =>
+      adapter.getConnectionsFor(id, 'service').catch(() => [] as Connection[]),
+    );
+    return perService.flat();
+  }
 }

@@ -84,6 +84,8 @@ function v12Factory(options: AdapterConstructionOptions): PtvAdapter {
   return new PtvV12Adapter({
     environment: options.environment,
     apiKey,
+    ...(options.tenantId ? { tenantId: options.tenantId } : {}),
+    ...(options.organizationCache ? { organizationCache: options.organizationCache } : {}),
     ...(options.codeNameCache ? { codeNameCache: options.codeNameCache } : {}),
   });
 }

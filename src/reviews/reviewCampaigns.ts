@@ -427,7 +427,9 @@ export async function getReviewItem(
     const service = current as Service;
     quality = checkService(service, await serviceCheckContext(adapter, service));
   } else if (current && item.targetKind === 'channel') {
-    const connections = await adapter.getConnectionsFor(item.targetId).catch(() => undefined);
+    const connections = await adapter
+      .getConnectionsFor(item.targetId, 'channel')
+      .catch(() => undefined);
     quality = checkChannel(
       current as ServiceChannel,
       connections ? { connectedServiceCount: connections.length } : {},

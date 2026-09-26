@@ -1,3 +1,4 @@
+import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
   ApplyChannelChangeResult,
   ApplyConnectionChangeResult,
@@ -7,6 +8,7 @@ import type {
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
+  ConnectionEndpoint,
   NewChannel,
   NewService,
   PtvAdapter,
@@ -180,6 +182,8 @@ export class PtvV12Adapter implements PtvAdapter {
   private readonly client: PtvV12Client;
   private readonly capabilities: PtvAdapterCapabilities;
   private readonly codeNames: CodeNameCache;
+  private readonly organizationCache?: PtvOrganizationCacheService | undefined;
+  private readonly tenantId?: string | undefined;
   /**
    * Organisation-scoped search results, keyed by search path + organisation
    * id. Each MCP page of an organisation search needs the organisation's
@@ -197,9 +201,14 @@ export class PtvV12Adapter implements PtvAdapter {
      * Postgres-backed one (via the registry), tests their own.
      */
     codeNameCache?: CodeNameCache;
+    /** Tenant-scoped persistent organisation catalogue cache, shared with v11. */
+    organizationCache?: PtvOrganizationCacheService;
+    tenantId?: string;
   }) {
     this.client = new PtvV12Client(options);
     this.codeNames = options.codeNameCache ?? sharedCodeNameCache;
+    this.organizationCache = options.organizationCache;
+    this.tenantId = options.tenantId;
     this.capabilities = {
       apiVersion: 'v12',
       environment: options.environment,
@@ -289,6 +298,36 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async searchOrganisations(params: SearchParams): Promise<PaginatedResult<Organization>> {
+    const query = params.query?.trim();
+    const organizations = await this.organizationCatalogue();
+    const filtered = query
+      ? organizations.filter((org) => matchesText(query, ...Object.values(org.names)))
+      : organizations;
+    return paginate(filtered, params);
+  }
+
+  /**
+   * The whole organisation catalogue: from the tenant's persistent cache
+   * (shared with v11, up to its TTL stale) when there is one, refreshed
+   * from PTV when it has gone stale.
+   */
+  private async organizationCatalogue(): Promise<Organization[]> {
+    if (!this.organizationCache || !this.tenantId) return this.fetchOrganizationCatalogue();
+    const cacheKey = {
+      tenantId: this.tenantId,
+      environment: this.capabilities.environment,
+      apiVersion: 'v12',
+    } as const;
+    if (!(await this.organizationCache.hasFreshCatalogue(cacheKey))) {
+      await this.organizationCache.replaceCatalogue(
+        cacheKey,
+        await this.fetchOrganizationCatalogue(),
+      );
+    }
+    return this.organizationCache.search(cacheKey);
+  }
+
+  private async fetchOrganizationCatalogue(): Promise<Organization[]> {
     const all = await this.fetchAll(
       '/api/v12/organization/search',
       (item) => mapV12Organization(item as V12OrganizationWire),
@@ -299,15 +338,10 @@ export class PtvV12Adapter implements PtvAdapter {
       // because v12 exposes no organization-name query parameter.
       { languageVersions: ['fi'] },
     );
-    const query = params.query?.trim();
     // v12 search is a catalogue feed; search results can omit fields present
     // on the individual resource. Hydrate every organization before applying
     // the MCP query so the public interface does not depend on search DTO shape.
-    const hydrated = await this.hydrate(all, hasNames, '/api/v12/organization', mapV12Organization);
-    const filtered = query
-      ? hydrated.filter((org) => matchesText(query, ...Object.values(org.names)))
-      : hydrated;
-    return paginate(filtered, params);
+    return this.hydrate(all, hasNames, '/api/v12/organization', mapV12Organization);
   }
 
   async getChannel(id: PtvContentId): Promise<ServiceChannel | null> {
@@ -442,15 +476,16 @@ export class PtvV12Adapter implements PtvAdapter {
     );
   }
 
-  async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
+  async getConnectionsFor(
+    entityId: PtvContentId,
+    kind?: ConnectionEndpoint,
+  ): Promise<Connection[]> {
     // The id may be a service or a channel; v12 filters by either server-side.
+    const search = (filter: 'serviceContentIds' | 'channelContentIds') =>
+      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { [filter]: [entityId] });
     const [asService, asChannel] = await Promise.all([
-      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, {
-        serviceContentIds: [entityId],
-      }),
-      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, {
-        channelContentIds: [entityId],
-      }),
+      kind === 'channel' ? [] : search('serviceContentIds'),
+      kind === 'service' ? [] : search('channelContentIds'),
     ]);
     return [...asService, ...asChannel]
       .map(mapV12Connection)
@@ -458,6 +493,28 @@ export class PtvV12Adapter implements PtvAdapter {
         (connection) => connection.serviceId === entityId || connection.channelId === entityId,
       );
   }
+
+  /** `/connection/search` by service, CONNECTION_SEARCH_MAX_IDS services per request. */
+  async getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]> {
+    const ids = [...new Set(serviceIds)];
+    const batches: string[][] = [];
+    for (let i = 0; i < ids.length; i += CONNECTION_SEARCH_MAX_IDS) {
+      batches.push(ids.slice(i, i + CONNECTION_SEARCH_MAX_IDS));
+    }
+    const connections = (
+      await Promise.all(
+        batches.map((serviceContentIds) =>
+          this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { serviceContentIds }),
+        ),
+      )
+    )
+      .flat()
+      .map(mapV12Connection);
+    return serviceIds.flatMap((id) =>
+      connections.filter((connection) => connection.serviceId === id),
+    );
+  }
+
   async listCodes(codeListName: string): Promise<CodeListEntry[]> {
     const path = V12_REFERENCE_CODE_LIST_PATHS[codeListName];
     if (!path) {

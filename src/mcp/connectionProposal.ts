@@ -86,7 +86,7 @@ export async function prepareConnectionProposal(
   if (unsupported.length > 0) throw new UnsupportedConnectionFieldError(unsupported);
 
   const adapter = await resolveReadAdapter(registry, ctx);
-  const current = (await adapter.getConnectionsFor(serviceId)).find(
+  const current = (await adapter.getConnectionsFor(serviceId, 'service')).find(
     (connection) => connection.serviceId === serviceId && connection.channelId === channelId,
   );
   if (!current) throw new ConnectionNotFoundError(serviceId, channelId);
