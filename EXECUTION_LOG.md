@@ -1957,3 +1957,41 @@ check that the consent POST and `verifyCredentials()` (which is all
 `mcp:token` calls; the script itself is top-level and not importable)
 create no refresh-token row, and that `verifyCredentials()` shares
 `login()`'s lockout.
+
+## 2026-09-26 — Web UI: page splits and `useAsyncAction`
+
+Behaviour-preserving refactor of the `web/` SPA; no API, route or text
+changes.
+
+- **`ReviewCampaignsPage.tsx`** (737 lines) now only loads data and
+  composes panels from `web/src/pages/reviews/`: `CampaignList`,
+  `StartCampaignForm`, `CampaignPanel` (filters, assigning, closing),
+  `ItemTable`, `ItemPanel` (confirm/send/reopen) with
+  `AttachProposalForm`, and `labels.ts` (status/kind labels,
+  `ReviewItemDetails`). The page-wide `run()`/`busy` is gone: each panel
+  runs its own actions and calls the page's `refresh` afterwards.
+- **`PtvConnectionsPage.tsx`**: the v12 API-key and v11 API-user forms are
+  `ptvConnections/V12ApiKeyForm` and `V11ApiUserForm`, each with its own
+  state and a `{ ok, message }` status (`FormStatus`) instead of guessing
+  success from the message text. The user's connections and the tenant's
+  v12/v11 configuration now load in parallel (`Promise.allSettled`, so
+  the user's own connections still show when only the tenant part
+  fails); a 403 on the tenant part still reads as "none".
+  `loadConnections` is a `useCallback` on the tenant id: the effect used
+  to list only `currentTenant?.tenantId` as a dependency.
+- **`web/src/hooks/useAsyncAction.ts`**: `busy`/`error`/`run(action,
+  message)` around an async handler, using `errorMessage`. Adopted in
+  MembersPage (add form; row actions keep `pendingUserId`),
+  TenantSettingsPanel, TenantsPage, ProposalComments, ManualPublishPanel
+  and the review panels.
+- `react/exhaustive-deps` is now an error in `web/.oxlintrc.json`; the
+  PtvConnectionsPage effect above was the only violation.
+
+Deviations: action errors on the review page now show in the panel that
+ran the action (it was one message at the top of the page), and one
+panel's action no longer disables the other panels' buttons. The PTV
+connection forms no longer clear the page-level error when saving.
+`ProposalQueuePage` keeps its own resolve handling: it tracks which
+resolve action runs and shares its error line with the loaders, so the
+hook would not simplify it. No `useApiQuery`: the load-on-mount effects
+differ too much (403 handling, selection) for one hook to save much.

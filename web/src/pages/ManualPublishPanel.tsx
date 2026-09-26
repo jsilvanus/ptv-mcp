@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { apiFetch, errorMessage } from '../api/client';
+import { apiFetch } from '../api/client';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import type { ManualPublishSheet, ProposalDetails } from '../api/types';
 
 /**
@@ -23,8 +24,7 @@ export function ManualPublishPanel({
   onConfirmed: (updated: ProposalDetails) => void;
 }) {
   const [ptvId, setPtvId] = useState('');
-  const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy: confirming, error, run } = useAsyncAction();
   const [copied, setCopied] = useState<number | null>(null);
 
   async function copy(index: number, value: string): Promise<void> {
@@ -37,9 +37,7 @@ export function ManualPublishPanel({
   }
 
   async function confirm(): Promise<void> {
-    setConfirming(true);
-    setError(null);
-    try {
+    await run(async () => {
       const updated = await apiFetch<ProposalDetails>(
         `/tenants/${tenantId}/proposals/${proposalId}/confirm-published`,
         {
@@ -48,11 +46,7 @@ export function ManualPublishPanel({
         },
       );
       onConfirmed(updated);
-    } catch (err) {
-      setError(errorMessage(err, 'Could not confirm the publishing.'));
-    } finally {
-      setConfirming(false);
-    }
+    }, 'Could not confirm the publishing.');
   }
 
   return (

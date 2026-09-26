@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../api/client';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import type { TenantSettings } from '../api/types';
 
 /** Tenant-admin settings shown on the members page; currently just four-eyes. */
 export function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
   const [settings, setSettings] = useState<TenantSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Load and save errors share one message, as there is only one control.
+  const { busy: saving, error, setError, run } = useAsyncAction();
 
   useEffect(() => {
     apiFetch<TenantSettings>(`/tenants/${tenantId}/settings`)
       .then(setSettings)
       .catch((err: unknown) => setError(errorMessage(err, 'Could not load settings.')));
-  }, [tenantId]);
+  }, [tenantId, setError]);
 
   async function toggleFourEyes(requireFourEyes: boolean): Promise<void> {
     if (
@@ -23,20 +24,14 @@ export function TenantSettingsPanel({ tenantId }: { tenantId: string }) {
     ) {
       return;
     }
-    setError(null);
-    setSaving(true);
-    try {
+    await run(async () => {
       setSettings(
         await apiFetch<TenantSettings>(`/tenants/${tenantId}/settings`, {
           method: 'PUT',
           body: JSON.stringify({ requireFourEyes }),
         }),
       );
-    } catch (err) {
-      setError(errorMessage(err, 'Could not save settings.'));
-    } finally {
-      setSaving(false);
-    }
+    }, 'Could not save settings.');
   }
 
   return (

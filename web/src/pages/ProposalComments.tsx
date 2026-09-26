@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { apiFetch, errorMessage } from '../api/client';
+import { apiFetch } from '../api/client';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import type { ProposalComment } from '../api/types';
 
 /**
@@ -18,26 +19,19 @@ export function ProposalComments({
   onAdded: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy: sending, error, run } = useAsyncAction();
 
   async function handleSubmit(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (!draft.trim()) return;
-    setSending(true);
-    setError(null);
-    try {
+    await run(async () => {
       await apiFetch(`/tenants/${tenantId}/proposals/${proposalId}/comments`, {
         method: 'POST',
         body: JSON.stringify({ comment: draft }),
       });
       setDraft('');
       await onAdded();
-    } catch (err) {
-      setError(errorMessage(err, 'Could not add comment.'));
-    } finally {
-      setSending(false);
-    }
+    }, 'Could not add comment.');
   }
 
   return (
