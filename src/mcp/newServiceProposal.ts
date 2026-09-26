@@ -1,12 +1,11 @@
-import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyServiceChangeResult, NewService } from '../ptv/adapter.js';
 import type { Service } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import { auditedApply, queueKindProposal } from './proposalPipeline.js';
+import { auditedApply, queueKindProposal, type QueuedFields } from './proposalPipeline.js';
 import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
@@ -44,17 +43,11 @@ export function asService(service: NewService): Service {
   return { ...service, id: '' };
 }
 
-export interface QueuedNewServiceResult {
+/** Validated at queue time, so problems show before anyone approves. */
+export type QueuedNewServiceResult = {
   proposed: NewService;
   diff: ServiceDiffEntry[];
-  /** Validation run at queue time so problems show before anyone approves. */
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-  /** Automated content checks on the proposed service. */
-  quality: QualityReport;
-}
+} & QueuedFields;
 
 /**
  * `ptv_propose_new_service`: queues a `service_create` proposal. Nothing

@@ -1,13 +1,12 @@
 import { resolveReadAdapter } from './toolContext.js';
-import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult } from '../ptv/adapter.js';
 import type { PtvContentId, ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import { auditedApply, queueKindProposal } from './proposalPipeline.js';
-import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
+import { auditedApply, queueKindProposal, type QueuedFields } from './proposalPipeline.js';
+import { diffFields, unknownFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const COMMON_CHANNEL_FIELDS = [
@@ -87,17 +86,13 @@ export async function prepareChannelProposal(
   channelId: PtvContentId,
   changes: Partial<ServiceChannel>,
 ): Promise<PreparedChannelProposal> {
-  const unsupported = Object.keys(changes).filter(
-    (field) => !(WRITABLE_CHANNEL_FIELDS as readonly string[]).includes(field),
-  );
+  const unsupported = unknownFields(changes, WRITABLE_CHANNEL_FIELDS);
   if (unsupported.length > 0) throw new UnsupportedChannelFieldError(unsupported);
 
   const adapter = await resolveReadAdapter(registry, ctx);
   const current = await adapter.getChannel(channelId);
   if (!current) throw new ChannelNotFoundError(channelId);
-  const wrongType = Object.keys(changes).filter(
-    (field) => !CHANNEL_TYPE_FIELDS[current.channelType].includes(field),
-  );
+  const wrongType = unknownFields(changes, CHANNEL_TYPE_FIELDS[current.channelType]);
   if (wrongType.length > 0) throw new UnsupportedChannelFieldError(wrongType, current.channelType);
   const proposed: ServiceChannel = { ...current, ...changes };
   // Same field semantics as a service's names/descriptions/languages.
@@ -105,14 +100,8 @@ export async function prepareChannelProposal(
   return { channelId, current, proposed, diff };
 }
 
-export interface QueuedChannelProposalResult extends PreparedChannelProposal {
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-  /** Automated content checks on the proposed channel. */
-  quality: QualityReport;
-}
+/** The prepared change, its validation and automated content checks, and the queued proposal. */
+export type QueuedChannelProposalResult = PreparedChannelProposal & QueuedFields;
 
 /** `ptv_propose_channel_changes`: queues a `channel_update` proposal (Contributor+). */
 export async function queueChannelProposal(

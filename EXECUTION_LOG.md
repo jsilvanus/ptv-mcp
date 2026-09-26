@@ -1996,6 +1996,64 @@ resolve action runs and shares its error line with the loaders, so the
 hook would not simplify it. No `useApiQuery`: the load-on-mount effects
 differ too much (403 handling, selection) for one hook to save much.
 
+## 2026-09-26 — Simplify pass: proposal kinds, quality/validation, reviews
+
+Behaviour-preserving cleanup of the proposal pipeline, the checks and
+review campaigns; no tool, schema, REST, audit or `Q-*` changes.
+
+- **Proposal kinds** (`src/mcp/proposalKinds.ts`): the repeated handler
+  bodies are shared helpers: `nothingToCheck` (approve_and_export for the
+  five kinds with no export check), `proposedSubject` (the sheet subject
+  of five kinds), `queuedLiveDiff(toProposed)` (the three create kinds'
+  liveDiff) and `ownOrganization` (the created-item check of new services
+  and channels).
+- **Per-kind modules**: `unknownFields(input, allowed)` and `setFields(item)`
+  (`src/mcp/proposeChanges.ts`, next to `diffFields`) replace five copies of
+  the unsupported-field filter and two of the new-item "set fields" filter
+  (`channelFieldsOf` is gone). The six `Queued*Result` types are the
+  prepared change `& QueuedFields` (`src/mcp/proposalPipeline.ts`, derived
+  from `QueuedChange`) instead of each repeating validation, quality,
+  correlation id, proposal id and status.
+- **Proposal audit entries** (`src/mcp/proposalQueue.ts`): `auditProposal`
+  records the seven `resourceType: 'Proposal'` actions (view, comment,
+  request review, sign-off, resolve, confirm published, and review
+  campaigns' RequestReview on linking); same fields as before.
+  `requireCommentLength` is shared by comments and sign-offs;
+  `ProposalDetails.current` uses `CurrentEntity`.
+- **Validation**: `requireName` and `requireWritablePublishingStatus`
+  (`src/validation/changeValidator.ts`) replace the service, channel and
+  organisation copies of the name and Modified/Withdrawn rules; messages
+  are unchanged (the service one keeps its "or propose publishingStatus
+  Published" hint). `EMAIL`, `checkUrl` and `checkPhone` in
+  `channelRules.ts` are no longer exported (only used there).
+- **Quality**: `checkService` uses the existing `warner`; `todayIso()`
+  replaces two inline date expressions. `src/quality/serviceCheckContext.ts`
+  gains `channelCheckContext(adapter, channelId)` (the live connection
+  count, used by `ptv_check_quality` and review items) and
+  `collectedCheckContexts(content)` (service/channel contexts from content
+  already read, used by the content report and campaign start, which built
+  them inline).
+- **Reviews/export**: `displayName` (`src/format/ptvFormat.ts`) is the
+  fi → sv → en → any name both the content report and review items used;
+  `noProgress()` is the empty campaign progress in both review modules.
+  `withProposals` groups linked proposals by item once instead of
+  filtering the whole list per item (a 5000-item campaign was quadratic).
+  `requireReviewerOf` resolves the role once and returns whether the actor
+  is a Publisher+, so linking a proposal no longer looks the role up three
+  times; `hasRole` is gone.
+
+No intentional behaviour changes. Left out: the update/create `apply*`
+and `createNew*` wrappers around `auditedApply` still repeat a small
+plan shape per kind (a shared helper would save little and hide what each
+writes); the quality and validation overlap on contact details is kept
+on purpose (validation holds PTV's hard format rules, quality the
+guideline warnings; the free-text `EMAIL` pattern in `contentChecks.ts`
+searches text and the one in `channelRules.ts` anchors a whole value, so
+they differ), including the Q-HOURS-1 warning for an exceptional hour
+without validFrom that validation also reports as an error; the new
+channel/organisation queue functions' result key order; `src/mcp/mcpServer.ts`
+and `src/ptv/v12/` (another pass); test code.
+
 ## 2026-09-26 — Split `mcpServer.ts` by tool area; v12 mappers out of the adapter
 
 Behaviour-preserving refactor. The tool listing (names, titles,

@@ -9,7 +9,7 @@ import {
   type QualityFinding,
   type QualityReport,
 } from '../quality/contentChecks.js';
-import { serviceCheckContext } from '../quality/serviceCheckContext.js';
+import { channelCheckContext, serviceCheckContext } from '../quality/serviceCheckContext.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { ChannelNotFoundError } from './channelProposal.js';
 import type { ReadToolContext } from './toolContext.js';
@@ -60,11 +60,10 @@ export async function checkQuality(
   }
   const channel: ServiceChannel | null = await adapter.getChannel(id);
   if (!channel) throw new ChannelNotFoundError(id);
-  const connections = await adapter.getConnectionsFor(id, 'channel').catch(() => undefined);
   return {
     kind,
     id,
     name: channel.names.fi ?? Object.values(channel.names)[0] ?? null,
-    report: checkChannel(channel, connections ? { connectedServiceCount: connections.length } : {}),
+    report: checkChannel(channel, await channelCheckContext(adapter, id)),
   };
 }

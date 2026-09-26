@@ -1,12 +1,17 @@
 import { resolveReadAdapter } from '../mcp/toolContext.js';
-import { serviceCheckContext } from '../quality/serviceCheckContext.js';
+import {
+  channelCheckContext,
+  collectedCheckContexts,
+  serviceCheckContext,
+} from '../quality/serviceCheckContext.js';
 import {
   collectOrganisationContent,
   organisationsInScope,
   OrganizationNotFoundError,
 } from '../ptv/organisationContent.js';
 import { randomUUID } from 'node:crypto';
-import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
+import { displayName } from '../format/ptvFormat.js';
+import { ROLE_RANK } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
 import {
   NotAuthorizedError,
@@ -14,6 +19,7 @@ import {
   type MembershipRoleResolver,
 } from '../mcp/authorization.js';
 import {
+  auditProposal,
   findReviewCandidate,
   notAReviewCandidateMessage,
   reviewCandidatesOf,
@@ -31,14 +37,15 @@ import type {
   ProposalService,
 } from '../proposals/proposalService.js';
 import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
-import type {
-  CampaignProgress,
-  LinkedProposal,
-  NewReviewItem,
-  ReviewCampaignRecord,
-  ReviewItemView,
-  ReviewService,
-  ReviewTargetKind,
+import {
+  noProgress,
+  type CampaignProgress,
+  type LinkedProposal,
+  type NewReviewItem,
+  type ReviewCampaignRecord,
+  type ReviewItemView,
+  type ReviewService,
+  type ReviewTargetKind,
 } from './reviewService.js';
 
 /**
@@ -93,8 +100,8 @@ export interface ReviewDeps {
   listMembers: MemberLister;
 }
 
-function displayName(names: LocalizedText): string {
-  return names.fi ?? names.sv ?? names.en ?? Object.values(names).find(Boolean) ?? '(nimetön)';
+function targetName(names: LocalizedText): string {
+  return displayName(names) ?? '(nimetön)';
 }
 
 /** organisationsInScope, reporting an unknown organisation as a campaign error. */
@@ -116,11 +123,11 @@ async function collectItems(
   organisations: Organization[],
 ): Promise<NewReviewItem[]> {
   const content = await collectOrganisationContent(adapter, organisations);
-  const orgNames = new Map(organisations.map((org) => [org.id, org.names]));
+  const checkContexts = collectedCheckContexts(content);
   const items: NewReviewItem[] = organisations.map((org) => ({
     targetKind: 'organisation',
     targetId: org.id,
-    targetName: displayName(org.names),
+    targetName: targetName(org.names),
     organizationId: org.id,
     findings: [],
   }));
@@ -128,26 +135,19 @@ async function collectItems(
     items.push({
       targetKind: 'service',
       targetId: service.id,
-      targetName: displayName(service.names),
+      targetName: targetName(service.names),
       organizationId: service.organizationId,
-      findings: checkService(service, {
-        organisationNames: orgNames.get(service.organizationId),
-        generalDescription: service.generalDescriptionId
-          ? content.generalDescriptions.get(service.generalDescriptionId)
-          : undefined,
-      }).findings,
+      findings: checkService(service, checkContexts.service(service)).findings,
     });
   }
   for (const channel of content.channels) {
     items.push({
       targetKind: 'channel',
       targetId: channel.id,
-      targetName: displayName(channel.names),
+      targetName: targetName(channel.names),
       channelType: channel.channelType,
       organizationId: channel.organizationId,
-      findings: checkChannel(channel, {
-        connectedServiceCount: content.connectedServiceCount.get(channel.id) ?? 0,
-      }).findings,
+      findings: checkChannel(channel, checkContexts.channel(channel)).findings,
     });
   }
   return items.slice(0, MAX_CAMPAIGN_ITEMS);
@@ -183,15 +183,6 @@ function checkNote(note: string | undefined): string | null {
   return text;
 }
 
-async function hasRole(
-  deps: ReviewDeps,
-  ctx: ToolContext,
-  minRole: MembershipRole,
-): Promise<boolean> {
-  const role = await deps.resolveRole(ctx.tenantId, ctx.actingUserId);
-  return role !== null && ROLE_RANK[role] >= ROLE_RANK[minRole];
-}
-
 function requireOpen(campaign: ReviewCampaignRecord): void {
   if (campaign.status !== 'open') {
     throw new ReviewCampaignError(`Review campaign "${campaign.name}" is closed`);
@@ -213,13 +204,7 @@ async function summaries(
   return campaigns.map((campaign) => ({
     ...campaign,
     createdByName: names.get(campaign.createdByUserId) ?? null,
-    progress: progress.get(campaign.id) ?? {
-      total: 0,
-      open: 0,
-      confirmed: 0,
-      changesProposed: 0,
-      unassigned: 0,
-    },
+    progress: progress.get(campaign.id) ?? noProgress(),
   }));
 }
 
@@ -232,10 +217,13 @@ async function withProposals(
     tenantId,
     items.map((item) => item.id),
   );
-  return items.map((item) => ({
-    ...item,
-    proposals: linked.filter((proposal) => proposal.reviewItemId === item.id),
-  }));
+  const byItem = new Map<string, LinkedProposal[]>();
+  for (const proposal of linked) {
+    const proposals = byItem.get(proposal.reviewItemId);
+    if (proposals) proposals.push(proposal);
+    else byItem.set(proposal.reviewItemId, [proposal]);
+  }
+  return items.map((item) => ({ ...item, proposals: byItem.get(item.id) ?? [] }));
 }
 
 /**
@@ -427,27 +415,32 @@ export async function getReviewItem(
     const service = current as Service;
     quality = checkService(service, await serviceCheckContext(adapter, service));
   } else if (current && item.targetKind === 'channel') {
-    const connections = await adapter
-      .getConnectionsFor(item.targetId, 'channel')
-      .catch(() => undefined);
     quality = checkChannel(
       current as ServiceChannel,
-      connections ? { connectedServiceCount: connections.length } : {},
+      await channelCheckContext(adapter, item.targetId),
     );
   }
   const [withLinks] = await withProposals(deps, ctx.tenantId, [item]);
   return { ...withLinks!, campaign, current, quality };
 }
 
+/** The item's reviewer or a Publisher+ (Contributor+ either way); returns whether a Publisher+. */
 async function requireReviewerOf(
   deps: ReviewDeps,
   ctx: ToolContext,
   item: ReviewItemView,
-): Promise<void> {
-  await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  if (item.assigneeUserId === ctx.actingUserId) return;
-  if (await hasRole(deps, ctx, 'publisher')) return;
-  throw new NotAuthorizedError(ctx.tenantId, 'publisher');
+): Promise<boolean> {
+  const role = await requireTenantRole(
+    deps.resolveRole,
+    ctx.tenantId,
+    ctx.actingUserId,
+    'contributor',
+  );
+  const isPublisher = ROLE_RANK[role] >= ROLE_RANK.publisher;
+  if (item.assigneeUserId !== ctx.actingUserId && !isPublisher) {
+    throw new NotAuthorizedError(ctx.tenantId, 'publisher');
+  }
+  return isPublisher;
 }
 
 /**
@@ -463,8 +456,7 @@ export async function requireLinkableReviewItem(
   proposal: { kind: ProposalKind; targetId?: string; changes?: Record<string, unknown> },
 ): Promise<ReviewItemView> {
   const item = await deps.reviewService.getItem(ctx.tenantId, itemId);
-  await requireReviewerOf(deps, ctx, item);
-  const isPublisher = await hasRole(deps, ctx, 'publisher');
+  const isPublisher = await requireReviewerOf(deps, ctx, item);
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, item.campaignId);
   requireOpen(campaign);
   if (campaign.environment !== ctx.environment) {
@@ -534,15 +526,9 @@ export async function linkProposalToReviewItem(
       [reviewer],
       ctx.actingUserId,
     );
-    await deps.auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'RequestReview',
-      resourceType: 'Proposal',
-      resourceId: proposal.id,
-      afterState: { reviewerUserIds: [reviewer], reviewItemId: item.id },
-      result: 'Requested',
-      correlationId: proposal.correlationId,
+    await auditProposal(deps.auditService, ctx, proposal, 'RequestReview', 'Requested', {
+      reviewerUserIds: [reviewer],
+      reviewItemId: item.id,
     });
   }
   await audit(deps, ctx, 'LinkProposal', 'ReviewItem', item.id, campaign.correlationId, 'Linked', {

@@ -73,6 +73,11 @@ export interface CampaignProgress {
   unassigned: number;
 }
 
+/** A campaign without items. */
+export function noProgress(): CampaignProgress {
+  return { total: 0, open: 0, confirmed: 0, changesProposed: 0, unassigned: 0 };
+}
+
 /** A proposal linked to a review item, as far as review lists need it. */
 export interface LinkedProposal {
   id: string;
@@ -249,7 +254,7 @@ export class ReviewService {
         .groupBy(reviewItems.campaignId),
     );
     for (const id of campaignIds) {
-      result.set(id, { total: 0, open: 0, confirmed: 0, changesProposed: 0, unassigned: 0 });
+      result.set(id, noProgress());
     }
     for (const row of rows) {
       const { campaignId, ...counts } = row;
