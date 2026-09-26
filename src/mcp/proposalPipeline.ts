@@ -74,6 +74,9 @@ export interface QueuedChange<T, V> {
   quality: QualityReport;
 }
 
+/** What queueing adds to a kind's prepared change in its tool's result. */
+export type QueuedFields = Omit<QueuedChange<unknown, ValidationResult>, 'prepared'>;
+
 /**
  * The steps every proposal is queued with (Contributor+): check the texts,
  * prepare, validate, audit the Propose* action, store it as `pending`, and

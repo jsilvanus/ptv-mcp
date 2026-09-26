@@ -1,5 +1,11 @@
 import { MAX_ONTOLOGY_TERMS, MAX_SERVICE_CLASSES } from '../ptv/limits.js';
-import type { Service, ServiceChannel, ServiceType } from '../ptv/domain.js';
+import type {
+  LocalizedText,
+  PublishingStatus,
+  Service,
+  ServiceChannel,
+  ServiceType,
+} from '../ptv/domain.js';
 import { validateChannelDetails } from './channelRules.js';
 
 /** Dot-path validation error for a field in the Service shape. */
@@ -61,15 +67,7 @@ export class V11ChangeValidator implements ChangeValidator {
 
   /** Rule 1: names must have at least one non-empty string. */
   private validateNames(proposed: Service, errors: ValidationError[]): void {
-    const hasValidName = Object.values(proposed.names ?? {}).some(
-      (v) => typeof v === 'string' && v.trim().length > 0,
-    );
-    if (!hasValidName) {
-      errors.push({
-        field: 'names',
-        message: 'Must have at least one non-empty language version',
-      });
-    }
+    requireName(proposed.names, errors);
   }
 
   /** Rule 2: organizationId must be non-empty. */
@@ -246,18 +244,12 @@ export class V11ChangeValidator implements ChangeValidator {
    * entity with status Modified"), and Withdrawn has no v11 write value.
    */
   private validateWritablePublishingStatus(proposed: Service, errors: ValidationError[]): void {
-    if (proposed.publishingStatus === 'Modified') {
-      errors.push({
-        field: 'publishingStatus',
-        message:
-          "PTV has an unpublished modified version of this service; the v11 API can't update it. Publish or discard it in PTV's web UI first, or propose publishingStatus Published.",
-      });
-    } else if (proposed.publishingStatus === 'Withdrawn') {
-      errors.push({
-        field: 'publishingStatus',
-        message: 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
-      });
-    }
+    requireWritablePublishingStatus(
+      proposed.publishingStatus,
+      'service',
+      errors,
+      ', or propose publishingStatus Published',
+    );
   }
 
   /**
@@ -282,30 +274,51 @@ export class V11ChangeValidator implements ChangeValidator {
 
 const KOKO_URI = /^http:\/\/www\.yso\.fi\/onto\/koko\/p\d+$/;
 
+/** Services, channels and organisations need a name in at least one language. */
+export function requireName(names: LocalizedText | undefined, errors: ValidationError[]): void {
+  const hasName = Object.values(names ?? {}).some(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  );
+  if (!hasName) {
+    errors.push({ field: 'names', message: 'Must have at least one non-empty language version' });
+  }
+}
+
+/**
+ * Only Draft, Published and Archived can be written through the v11 API
+ * (rule 12): a Modified version locks the item until it is published or
+ * discarded in PTV's UI, and Withdrawn has no v11 write value.
+ */
+export function requireWritablePublishingStatus(
+  status: PublishingStatus | undefined,
+  what: 'service' | 'channel' | 'organisation',
+  errors: ValidationError[],
+  modifiedHint = '',
+): void {
+  if (status === 'Modified') {
+    errors.push({
+      field: 'publishingStatus',
+      message: `PTV has an unpublished modified version of this ${what}; the v11 API can't update it. Publish or discard it in PTV's web UI first${modifiedHint}.`,
+    });
+  } else if (status === 'Withdrawn') {
+    errors.push({
+      field: 'publishingStatus',
+      message: 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
+    });
+  }
+}
+
 /**
  * Rules for a proposed (merged) service channel: a name, at least one
  * language, and a publishing status the v11 API can write (see rule 12).
  */
 export function validateChannel(proposed: ServiceChannel, creating = false): ValidationResult {
   const errors: ValidationError[] = [];
-  const hasName = Object.values(proposed.names ?? {}).some(
-    (value) => typeof value === 'string' && value.trim().length > 0,
-  );
-  if (!hasName) {
-    errors.push({ field: 'names', message: 'Must have at least one non-empty language version' });
-  }
+  requireName(proposed.names, errors);
   if (!Array.isArray(proposed.languages) || proposed.languages.length === 0) {
     errors.push({ field: 'languages', message: 'Must be a non-empty array' });
   }
-  if (proposed.publishingStatus === 'Modified' || proposed.publishingStatus === 'Withdrawn') {
-    errors.push({
-      field: 'publishingStatus',
-      message:
-        proposed.publishingStatus === 'Modified'
-          ? "PTV has an unpublished modified version of this channel; the v11 API can't update it. Publish or discard it in PTV's web UI first."
-          : 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
-    });
-  }
+  requireWritablePublishingStatus(proposed.publishingStatus, 'channel', errors);
   if (creating) {
     // Language versions are the languages the channel is described in (its
     // names); `languages` lists the languages it serves customers in.

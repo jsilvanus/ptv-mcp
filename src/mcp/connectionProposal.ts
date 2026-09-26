@@ -1,13 +1,12 @@
 import { resolveReadAdapter } from './toolContext.js';
-import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyConnectionChangeResult } from '../ptv/adapter.js';
 import type { Connection, ConnectionDetails, PtvContentId } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import { auditedApply, queueKindProposal } from './proposalPipeline.js';
-import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
+import { auditedApply, queueKindProposal, type QueuedFields } from './proposalPipeline.js';
+import { diffFields, unknownFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** The extra-info fields a `connection_update` proposal may change. */
@@ -80,9 +79,7 @@ export async function prepareConnectionProposal(
   channelId: PtvContentId,
   changes: Partial<ConnectionDetails>,
 ): Promise<PreparedConnectionProposal> {
-  const unsupported = Object.keys(changes).filter(
-    (field) => !(CONNECTION_DETAIL_FIELDS as readonly string[]).includes(field),
-  );
+  const unsupported = unknownFields(changes, CONNECTION_DETAIL_FIELDS);
   if (unsupported.length > 0) throw new UnsupportedConnectionFieldError(unsupported);
 
   const adapter = await resolveReadAdapter(registry, ctx);
@@ -96,14 +93,8 @@ export async function prepareConnectionProposal(
   return { serviceId, channelId, current, proposed, diff };
 }
 
-export interface QueuedConnectionProposalResult extends PreparedConnectionProposal {
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-  /** Automated content checks on the proposed extra info. */
-  quality: QualityReport;
-}
+/** The prepared change, its validation and automated content checks, and the queued proposal. */
+export type QueuedConnectionProposalResult = PreparedConnectionProposal & QueuedFields;
 
 /** `ptv_propose_connection_changes`: queues a `connection_update` proposal (Contributor+). */
 export async function queueConnectionProposal(

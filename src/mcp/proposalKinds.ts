@@ -303,6 +303,31 @@ function sameTarget(
 /** New items and organisation changes may come from any review item. */
 const anyReviewItem = (): null => null;
 
+/** approve_and_export for kinds validated when queued and re-diffed on every read. */
+const nothingToCheck = async (): Promise<undefined> => undefined;
+
+/** A sheet subject from the proposal's entity alone (see entitySubject). */
+const proposedSubject = (_changes: unknown, details: LiveDiff<object>): SheetSubject =>
+  entitySubject(details);
+
+/** A new item's liveDiff: nothing in PTV to diff against, so the queue-time diff stands. */
+function queuedLiveDiff<C, P>(toProposed: (changes: C) => P) {
+  return async (
+    _registry: PtvAdapterRegistry,
+    _ctx: ToolContext,
+    { changes, queuedDiff }: Pick<StoredProposal<C>, 'changes' | 'queuedDiff'>,
+  ): Promise<LiveDiff<P>> => ({ diff: queuedDiff, current: null, proposed: toProposed(changes) });
+}
+
+/** A new service or channel must belong to the proposal's organisation and carry its names. */
+const ownOrganization = (changes: {
+  organizationId: string;
+  names?: LocalizedText;
+}): { organizationId: string; names: LocalizedText } => ({
+  organizationId: changes.organizationId,
+  names: changes.names ?? {},
+});
+
 /**
  * Every proposal kind, described in one place; a kind missing here is a
  * compile error. The handlers are plain functions calling into the kind's
@@ -355,7 +380,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     sheet: {
       target: () => 'Palvelu',
       channel: false,
-      subject: (_changes, details) => entitySubject(details),
+      subject: proposedSubject,
       steps: updateSteps,
     },
     reviewItemMismatch: (item, targetId, changes) =>
@@ -376,11 +401,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     },
     parse: (stored) => normalizeNewService(stored as Partial<Service>),
     store: (changes) => changes,
-    liveDiff: async (_registry, _ctx, { changes, queuedDiff }) => ({
-      diff: queuedDiff,
-      current: null,
-      proposed: changes,
-    }),
+    liveDiff: queuedLiveDiff((changes: NewService) => changes),
     validate: (proposed, validator) => requireValidator(validator).validate(asService(proposed)),
     qualityContext: proposedServiceContext,
     quality: (proposed, context) => checkService(proposed, { ...context, creating: true }),
@@ -398,17 +419,14 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     },
     created: {
       what: 'service',
-      expected: (changes) => ({
-        organizationId: changes.organizationId,
-        names: changes.names ?? {},
-      }),
+      expected: ownOrganization,
       read: (adapter, ptvId) => adapter.getService(ptvId),
     },
     isNotFound: (err) => err instanceof ServiceNotFoundError,
     sheet: {
       target: () => 'Palvelu',
       channel: false,
-      subject: (_changes, details) => entitySubject(details),
+      subject: proposedSubject,
       steps: (facts) => createSteps(addNewStep(facts), facts),
     },
     reviewItemMismatch: anyReviewItem,
@@ -430,7 +448,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     // A channel update doesn't know the channel's connections, so its
     // Q-STRUCT-5 is left to the review item and ptv_check_quality.
     quality: (proposed) => checkChannel(proposed),
-    approveForExport: async () => undefined,
+    approveForExport: nothingToCheck,
     apply: async (deps, ctx, { targetId, changes, correlationId }) => {
       await applyChannelChanges(
         deps.registry,
@@ -446,7 +464,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     sheet: {
       target: channelTarget,
       channel: true,
-      subject: (_changes, details) => entitySubject(details),
+      subject: proposedSubject,
       steps: updateSteps,
     },
     reviewItemMismatch: (item, targetId) => sameTarget(item, 'channel', targetId),
@@ -462,11 +480,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     },
     parse: (stored) => normalizeNewChannel(stored as Partial<NewChannel>),
     store: (changes) => changes,
-    liveDiff: async (_registry, _ctx, { changes, queuedDiff }) => ({
-      diff: queuedDiff,
-      current: null,
-      proposed: asChannel(changes),
-    }),
+    liveDiff: queuedLiveDiff(asChannel),
     validate: (proposed) => validateChannel(asChannel(proposed), true),
     // A new channel is connected to exactly its serviceIds.
     quality: (proposed) =>
@@ -474,7 +488,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
         connectedServiceCount: proposed.serviceIds?.length ?? 0,
         creating: true,
       }),
-    approveForExport: async () => undefined,
+    approveForExport: nothingToCheck,
     apply: async (deps, ctx, { changes, correlationId }) => {
       const { channelId } = await createNewChannel(
         deps.registry,
@@ -487,17 +501,14 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     },
     created: {
       what: 'channel',
-      expected: (changes) => ({
-        organizationId: changes.organizationId,
-        names: changes.names ?? {},
-      }),
+      expected: ownOrganization,
       read: (adapter, ptvId) => adapter.getChannel(ptvId),
     },
     isNotFound: (err) => err instanceof ChannelNotFoundError,
     sheet: {
       target: channelTarget,
       channel: true,
-      subject: (_changes, details) => entitySubject(details),
+      subject: proposedSubject,
       steps: (facts) => createSteps(addNewStep(facts), facts),
     },
     reviewItemMismatch: anyReviewItem,
@@ -518,7 +529,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
       prepareConnectionProposal(registry, ctx, targetId, changes.channelId, changes.details),
     validate: (proposed) => validateConnectionDetails(proposed),
     quality: (proposed) => checkConnection(proposed),
-    approveForExport: async () => undefined,
+    approveForExport: nothingToCheck,
     apply: async (deps, ctx, { targetId, changes, correlationId }) => {
       await applyConnectionChanges(
         deps.registry,
@@ -567,7 +578,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
       prepareOrganizationProposal(registry, ctx, targetId, changes),
     validate: (proposed) => validateOrganization(proposed),
     quality: (proposed) => checkOrganization(proposed),
-    approveForExport: async () => undefined,
+    approveForExport: nothingToCheck,
     apply: async (deps, ctx, { targetId, changes, correlationId }) => {
       await applyOrganizationChanges(
         deps.registry,
@@ -583,7 +594,7 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     sheet: {
       target: () => 'Organisaatio',
       channel: false,
-      subject: (_changes, details) => entitySubject(details),
+      subject: proposedSubject,
       steps: updateSteps,
     },
     reviewItemMismatch: anyReviewItem,
@@ -600,13 +611,15 @@ export const PROPOSAL_KINDS: { [K in ProposalKind]: KindHandler<K> } = {
     // Stored normalized at queue time (the parent's defaults filled in).
     parse: (stored) => stored as NewOrganization,
     store: (changes) => changes,
-    liveDiff: async (_registry, _ctx, { changes, queuedDiff }) => {
-      const proposed: NewOrganization & { id: PtvContentId } = { ...changes, id: '' };
-      return { diff: queuedDiff, current: null, proposed };
-    },
+    liveDiff: queuedLiveDiff(
+      (changes: NewOrganization): NewOrganization & { id: PtvContentId } => ({
+        ...changes,
+        id: '',
+      }),
+    ),
     validate: (proposed) => validateOrganization(proposed, true),
     quality: (proposed) => checkOrganization(proposed),
-    approveForExport: async () => undefined,
+    approveForExport: nothingToCheck,
     apply: async (deps, ctx, { changes, correlationId }) => {
       const { organizationId } = await createNewOrganization(
         deps.registry,

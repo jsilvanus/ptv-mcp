@@ -3,13 +3,7 @@ import type { QualityReport, ServiceCheckContext } from '../quality/contentCheck
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type {
-  Connection,
-  Organization,
-  PtvContentId,
-  Service,
-  ServiceChannel,
-} from '../ptv/domain.js';
+import type { PtvContentId, Service } from '../ptv/domain.js';
 import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import {
@@ -36,6 +30,7 @@ import {
   kindHandler,
   proposedServiceContext,
   type AppliedOutcome,
+  type CurrentEntity,
   type ProposedEntity,
 } from './proposalKinds.js';
 import { prepareProposal, type ProposeChangesResult } from './proposeChanges.js';
@@ -86,7 +81,7 @@ export interface ProposalDetails extends ProposalSummary {
    * and when the service or channel can no longer be read, e.g. after an
    * approved archive: PTV then returns 404 for it.
    */
-  current: Service | ServiceChannel | Connection | Organization | null;
+  current: CurrentEntity | null;
   /** `null` when the service or channel can no longer be read (see `current`). */
   proposed: ProposedEntity | null;
   /** Oldest first. */
@@ -116,6 +111,30 @@ export class InvalidResolveActionError extends Error {
     );
     this.name = 'InvalidResolveActionError';
   }
+}
+
+/**
+ * Records an action on a proposal (resourceType Proposal), under the
+ * proposal's own correlation id.
+ */
+export function auditProposal(
+  auditService: AuditService,
+  ctx: Pick<ToolContext, 'tenantId' | 'actingUserId'>,
+  proposal: Pick<ProposalRecord, 'id' | 'correlationId'>,
+  action: string,
+  result: string,
+  afterState?: object,
+): Promise<unknown> {
+  return auditService.record({
+    tenantId: ctx.tenantId,
+    userId: ctx.actingUserId,
+    action,
+    resourceType: 'Proposal',
+    resourceId: proposal.id,
+    ...(afterState ? { afterState } : {}),
+    result,
+    correlationId: proposal.correlationId,
+  });
 }
 
 export function toSummary(proposal: ProposalRecord): ProposalSummary {
@@ -293,15 +312,7 @@ export async function getProposal(
 ): Promise<ProposalDetails> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ReviewProposal',
-    resourceType: 'Proposal',
-    resourceId: proposal.id,
-    result: 'Viewed',
-    correlationId: proposal.correlationId,
-  });
+  await auditProposal(auditService, ctx, proposal, 'ReviewProposal', 'Viewed');
   return proposalDetails(registry, proposalService, proposal, ctx);
 }
 
@@ -314,6 +325,12 @@ export class InvalidCommentError extends Error {
 
 /** Longest comment accepted; a review note, not a document. */
 export const MAX_COMMENT_LENGTH = 4000;
+
+function requireCommentLength(text: string): void {
+  if (text.length > MAX_COMMENT_LENGTH) {
+    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
+  }
+}
 
 /**
  * Adds a comment to a proposal (Contributor+), whatever its status, so the
@@ -331,9 +348,7 @@ export async function commentOnProposal(
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const text = body.trim();
   if (text === '') throw new InvalidCommentError('Comment is empty');
-  if (text.length > MAX_COMMENT_LENGTH) {
-    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
-  }
+  requireCommentLength(text);
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   const comment = await proposalService.addComment(
     ctx.tenantId,
@@ -341,15 +356,9 @@ export async function commentOnProposal(
     ctx.actingUserId,
     text,
   );
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'CommentProposal',
-    resourceType: 'Proposal',
-    resourceId: proposal.id,
-    afterState: { commentId: comment.id, body: text },
-    result: 'Commented',
-    correlationId: proposal.correlationId,
+  await auditProposal(auditService, ctx, proposal, 'CommentProposal', 'Commented', {
+    commentId: comment.id,
+    body: text,
   });
   return comment;
 }
@@ -468,15 +477,8 @@ export async function requestReview(
     reviewerUserIds,
     ctx.actingUserId,
   );
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'RequestReview',
-    resourceType: 'Proposal',
-    resourceId: proposal.id,
-    afterState: { reviewerUserIds },
-    result: 'Requested',
-    correlationId: proposal.correlationId,
+  await auditProposal(auditService, ctx, proposal, 'RequestReview', 'Requested', {
+    reviewerUserIds,
   });
   return result;
 }
@@ -498,9 +500,7 @@ export async function signOffProposal(
 ): Promise<ProposalReviewer[]> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const text = comment?.trim() || null;
-  if (text && text.length > MAX_COMMENT_LENGTH) {
-    throw new InvalidCommentError(`Comment is longer than ${MAX_COMMENT_LENGTH} characters`);
-  }
+  if (text) requireCommentLength(text);
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
   requirePending(proposal);
   const reviewers = await proposalService.recordDecision(
@@ -510,16 +510,14 @@ export async function signOffProposal(
     decision,
     text,
   );
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'SignOffProposal',
-    resourceType: 'Proposal',
-    resourceId: proposal.id,
-    afterState: { decision, comment: text },
-    result: decision === 'approved' ? 'Approved' : 'ChangesRequested',
-    correlationId: proposal.correlationId,
-  });
+  await auditProposal(
+    auditService,
+    ctx,
+    proposal,
+    'SignOffProposal',
+    decision === 'approved' ? 'Approved' : 'ChangesRequested',
+    { decision, comment: text },
+  );
   return reviewers;
 }
 
@@ -557,16 +555,7 @@ export async function resolveProposal(
   }
 
   const record = (result: string, afterState?: object) =>
-    auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ResolveProposal',
-      resourceType: 'Proposal',
-      resourceId: proposalId,
-      ...(afterState ? { afterState } : {}),
-      result,
-      correlationId: proposal.correlationId,
-    });
+    auditProposal(auditService, ctx, proposal, 'ResolveProposal', result, afterState);
 
   if (action === 'reject') {
     const rejected = await proposalService.markResolved(
@@ -679,16 +668,14 @@ export async function confirmManualPublish(
     }
   }
   const published = await proposalService.markPublished(ctx.tenantId, proposalId, createdId);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ConfirmManualPublish',
-    resourceType: 'Proposal',
-    resourceId: proposalId,
-    ...(createdId ? { afterState: { ptvId: createdId } } : {}),
-    result: 'Published',
-    correlationId: proposal.correlationId,
-  });
+  await auditProposal(
+    auditService,
+    ctx,
+    proposal,
+    'ConfirmManualPublish',
+    'Published',
+    createdId ? { ptvId: createdId } : undefined,
+  );
   return proposalDetails(registry, proposalService, published, proposalCtx);
 }
 

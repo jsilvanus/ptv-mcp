@@ -23,12 +23,12 @@ const ADDRESS_INFO_MAX = 150;
 const CONNECTION_TEXT_MAX = 500;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const POSTAL_CODE = /^\d{5}$/;
 /** PTV accepts phone numbers in fi, sv and en only (V4VmOpenApiPhone). */
 const PHONE_LANGUAGES = ['fi', 'sv', 'en'];
 
-export function checkUrl(url: string, field: string, errors: ValidationError[]): void {
+function checkUrl(url: string, field: string, errors: ValidationError[]): void {
   if (!/^https?:\/\//i.test(url)) {
     errors.push({ field, message: `URL must start with http:// or https://: ${url}` });
   } else if (url.length > URL_MAX) {
@@ -43,7 +43,7 @@ export function checkUrl(url: string, field: string, errors: ValidationError[]):
   }
 }
 
-export function checkPhone(phone: PhoneNumber, field: string, errors: ValidationError[]): void {
+function checkPhone(phone: PhoneNumber, field: string, errors: ValidationError[]): void {
   const digits = phone.number.replace(/[\s-]/g, '');
   if (!/^\d+$/.test(digits)) {
     errors.push({

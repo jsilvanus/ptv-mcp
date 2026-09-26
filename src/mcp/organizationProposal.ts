@@ -1,14 +1,13 @@
 import { OrganizationNotFoundError } from '../ptv/organisationContent.js';
 import { resolveReadAdapter } from './toolContext.js';
-import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyOrganizationChangeResult, NewOrganization } from '../ptv/adapter.js';
 import type { Organization, PtvContentId } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import type { MembershipRoleResolver } from './authorization.js';
-import { auditedApply, queueKindProposal } from './proposalPipeline.js';
-import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
+import { auditedApply, queueKindProposal, type QueuedFields } from './proposalPipeline.js';
+import { diffFields, setFields, unknownFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** The organisation fields an `organisation_update` proposal may change. */
@@ -67,9 +66,7 @@ export async function prepareOrganizationProposal(
   organizationId: PtvContentId,
   changes: Partial<Organization>,
 ): Promise<PreparedOrganizationProposal> {
-  const unsupported = Object.keys(changes).filter(
-    (field) => !(WRITABLE_ORGANIZATION_FIELDS as readonly string[]).includes(field),
-  );
+  const unsupported = unknownFields(changes, WRITABLE_ORGANIZATION_FIELDS);
   if (unsupported.length > 0) throw new UnsupportedOrganizationFieldError(unsupported);
   const adapter = await resolveReadAdapter(registry, ctx);
   const current = await adapter.getOrganisation(organizationId);
@@ -83,13 +80,8 @@ export async function prepareOrganizationProposal(
   };
 }
 
-export interface QueuedOrganizationProposalResult extends PreparedOrganizationProposal {
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-  quality: QualityReport;
-}
+/** The prepared change, its validation and automated content checks, and the queued proposal. */
+export type QueuedOrganizationProposalResult = PreparedOrganizationProposal & QueuedFields;
 
 /** `ptv_propose_organisation_changes`: queues an `organisation_update` proposal (Contributor+). */
 export async function queueOrganizationProposal(
@@ -158,8 +150,10 @@ export function normalizeNewOrganization(
   input: Partial<NewOrganization>,
   parent: Organization,
 ): NewOrganization {
-  const allowed: readonly string[] = [...WRITABLE_ORGANIZATION_FIELDS, ...CREATE_ONLY_FIELDS];
-  const unsupported = Object.keys(input).filter((field) => !allowed.includes(field));
+  const unsupported = unknownFields(input, [
+    ...WRITABLE_ORGANIZATION_FIELDS,
+    ...CREATE_ONLY_FIELDS,
+  ]);
   if (unsupported.length > 0) throw new UnsupportedOrganizationFieldError(unsupported, true);
   const organizationType = input.organizationType ?? parent.organizationType;
   if (!organizationType) {
@@ -183,15 +177,10 @@ export function normalizeNewOrganization(
   } as NewOrganization;
 }
 
-export interface QueuedNewOrganizationResult {
+export type QueuedNewOrganizationResult = {
   proposed: NewOrganization;
   diff: ServiceDiffEntry[];
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  quality: QualityReport;
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-}
+} & QueuedFields;
 
 const EMPTY_ORGANIZATION = { names: {}, summaries: {}, descriptions: {} };
 
@@ -254,9 +243,7 @@ async function prepareNewOrganization(
   const proposed = normalizeNewOrganization(input, parent);
   const diff = diffFields<Partial<Organization>>(
     EMPTY_ORGANIZATION,
-    Object.fromEntries(
-      Object.entries(proposed).filter(([, value]) => value !== undefined && value !== ''),
-    ) as Partial<Organization>,
+    setFields(proposed) as Partial<Organization>,
   );
   return { proposed, diff };
 }
