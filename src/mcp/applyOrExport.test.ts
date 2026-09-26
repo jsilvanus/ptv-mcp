@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PtvAdapter } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry, PtvAdapterResolutionRequest } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
-import type { Service } from '../ptv/domain.js';
+import { v11Capabilities, validService } from '../ptv/testing/fixtures.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import { NotAuthorizedError } from './authorization.js';
@@ -19,23 +19,11 @@ const ctx: ToolContext = {
 const fakeEditorResolver = async () => 'approver' as const;
 const fakeReaderResolver = async () => 'contributor' as const;
 
-const baseService: Service = {
-  id: 'svc-1',
-  organizationId: 'org-1',
-  serviceType: 'Service',
-  publishingStatus: 'Published',
+const baseService = validService({
   names: { fi: 'Vanha nimi' },
   summaries: { fi: 'Tiivistelmä' },
   descriptions: { fi: 'Kuvaus' },
-  serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
-  ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
-  targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
-  lifeEvents: [],
-  industrialClasses: [],
-  languages: ['fi'],
-  serviceChannelIds: [],
-  modifiedAt: '2026-01-01T00:00:00Z',
-};
+});
 
 function fakeRegistry(
   adapter: PtvAdapter,
@@ -47,14 +35,7 @@ function fakeRegistry(
 function buildAdapter(supportsWrite: boolean): InMemoryPtvAdapter {
   return new InMemoryPtvAdapter({
     services: [baseService],
-    capabilities: {
-      apiVersion: 'v11',
-      environment: 'test',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite,
-      supportsDraftRead: false,
-    },
+    capabilities: v11Capabilities({ supportsWrite }),
   });
 }
 

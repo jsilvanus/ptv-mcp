@@ -1,59 +1,30 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { memberships, tenants, users } from '../db/schema/index.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
 import { UserPtvConnectionService } from '../credentials/userPtvConnectionService.js';
 import { InMemoryPtvAdapter } from './testing/inMemoryAdapter.js';
 import { PtvAdapterResolutionError } from './registry.js';
 import { DbPtvAdapterRegistry, type AdapterConstructionOptions } from './dbAdapterRegistry.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('DbPtvAdapterRegistry', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
   const masterKey = randomBytes(32).toString('base64');
 
-  const configService = new PtvAdapterConfigService(db);
+  const fixtures = new IntegrationFixtures(db, config);
+  const configService = fixtures.adapterConfigs;
   const tenantEnvironmentService = new TenantEnvironmentService(db, masterKey);
   const userConnectionService = new UserPtvConnectionService(db, masterKey);
 
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
-
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
   async function setUp(role: 'contributor' | 'approver' | 'publisher' | 'tenant_admin') {
-    const tenantId = randomUUID();
-    const userId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: tenantId, name: 'Registry Test', slug: `reg-${tenantId}` });
-    await db
-      .insert(users)
-      .values({ id: userId, email: `${userId}@example.test`, name: 'Test', passwordHash: 'x' });
-    createdTenantIds.push(tenantId);
-    createdUserIds.push(userId);
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role });
-    });
+    const tenantId = await fixtures.tenant({ name: 'Registry Test', slugPrefix: 'reg' });
+    const userId = await fixtures.user();
+    await fixtures.addMembership(tenantId, userId, role);
     return { tenantId, userId };
   }
 
@@ -95,14 +66,7 @@ describe('DbPtvAdapterRegistry', () => {
 
   it('rejects a user with no membership in the tenant at all', async () => {
     const { tenantId } = await setUp('publisher');
-    const outsiderId = randomUUID();
-    await db.insert(users).values({
-      id: outsiderId,
-      email: `${outsiderId}@example.test`,
-      name: 'Outsider',
-      passwordHash: 'x',
-    });
-    createdUserIds.push(outsiderId);
+    const outsiderId = await fixtures.user('Outsider');
     await configService.upsert(tenantId, 'production', 'v11', {
       authMode: 'oauth2',
       credentialScope: 'user',

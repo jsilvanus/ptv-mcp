@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PtvAdapterResolutionError, type PtvAdapterRegistry } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
+import { v11Capabilities, validService } from '../ptv/testing/fixtures.js';
 import type { Organization, Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import {
@@ -43,23 +44,13 @@ const members: MemberLister = async () => [
   { userId: 'user-3', name: 'Viewer', email: 'viewer@example.test', role: 'viewer' },
 ];
 
-const service: Service = {
-  id: 'svc-1',
-  organizationId: 'org-1',
-  serviceType: 'Service',
-  publishingStatus: 'Published',
-  names: { fi: 'Vanha nimi' },
-  summaries: {},
-  descriptions: {},
-  serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
-  ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
-  targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
-  lifeEvents: [],
-  industrialClasses: [],
-  languages: ['fi'],
-  serviceChannelIds: [],
-  modifiedAt: '2026-01-01T00:00:00Z',
-};
+const service = validService({ names: { fi: 'Vanha nimi' } });
+/** A v11 adapter writing through the tenant's API user, which also reads drafts. */
+const apiUserCapabilities = v11Capabilities({
+  credentialScope: 'tenant',
+  supportsWrite: true,
+  supportsDraftRead: true,
+});
 
 function buildRegistry(supportsWrite = true): PtvAdapterRegistry {
   return {
@@ -69,14 +60,7 @@ function buildRegistry(supportsWrite = true): PtvAdapterRegistry {
       }
       return new InMemoryPtvAdapter({
         services: [{ ...service }],
-        capabilities: {
-          apiVersion: 'v11',
-          environment: request.environment,
-          credentialScope: 'user',
-          supportsRead: true,
-          supportsWrite,
-          supportsDraftRead: false,
-        },
+        capabilities: v11Capabilities({ environment: request.environment, supportsWrite }),
       });
     }),
   };
@@ -453,14 +437,7 @@ describe('proposalQueue', () => {
   it('returns the applied proposal when the archived service can no longer be read', async () => {
     const adapter = new InMemoryPtvAdapter({
       services: [{ ...service }],
-      capabilities: {
-        apiVersion: 'v11',
-        environment: 'test',
-        credentialScope: 'user',
-        supportsRead: true,
-        supportsWrite: true,
-        supportsDraftRead: false,
-      },
+      capabilities: v11Capabilities({ supportsWrite: true }),
     });
     // PTV answers 404 for an archived service, public and active reads alike.
     let archived = false;
@@ -593,14 +570,7 @@ describe('proposalQueue', () => {
     };
     const adapter = new InMemoryPtvAdapter({
       channels: [channel],
-      capabilities: {
-        apiVersion: 'v11',
-        environment: 'test',
-        credentialScope: 'tenant',
-        supportsRead: true,
-        supportsWrite: true,
-        supportsDraftRead: true,
-      },
+      capabilities: apiUserCapabilities,
     });
     const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
 
@@ -648,14 +618,7 @@ describe('proposalQueue', () => {
       const adapter = new InMemoryPtvAdapter({
         services: [{ ...service, serviceChannelIds: ['ch-1'] }],
         connections: [{ serviceId: 'svc-1', channelId: 'ch-1', chargeType: 'FreeOfCharge' }],
-        capabilities: {
-          apiVersion: 'v11',
-          environment: 'test',
-          credentialScope: 'tenant',
-          supportsRead: true,
-          supportsWrite: true,
-          supportsDraftRead: true,
-        },
+        capabilities: apiUserCapabilities,
       });
       const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
       return { adapter, registry };
@@ -800,14 +763,7 @@ describe('proposalQueue', () => {
     function setup() {
       const adapter = new InMemoryPtvAdapter({
         organizations: [{ ...root }, { ...parish }],
-        capabilities: {
-          apiVersion: 'v11',
-          environment: 'test',
-          credentialScope: 'tenant',
-          supportsRead: true,
-          supportsWrite: true,
-          supportsDraftRead: true,
-        },
+        capabilities: apiUserCapabilities,
       });
       const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
       return { adapter, registry };

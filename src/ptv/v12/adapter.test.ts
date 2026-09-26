@@ -3,6 +3,20 @@ import { V11ChangeValidator } from '../../validation/changeValidator.js';
 import { mapV12Service } from './mappers/service.js';
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type { Organization } from '../domain.js';
+import { PtvV12Adapter } from './adapter.js';
+
+/** A 200 JSON response, as PTV returns it. */
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** A test-environment adapter over `fetchImpl`. */
+function v12Adapter(fetchImpl: typeof fetch): PtvV12Adapter {
+  return new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+}
 
 describe('PTV v12 service mapping', () => {
   it('maps languageVersions and v12 scalar fields without losing content', () => {
@@ -99,18 +113,9 @@ describe('PTV v12 service search parameters', () => {
     const requestedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {
       requestedUrls.push(String(input));
-      return new Response(JSON.stringify({ items: [], totalCount: 0 }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return json({ items: [], totalCount: 0 });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({
-      environment: 'test',
-      apiKey: 'test-key',
-      fetchImpl,
-    });
+    const adapter = v12Adapter(fetchImpl);
 
     await adapter.searchServices({
       query: 'nuoret',
@@ -145,18 +150,9 @@ describe('PTV v12 organizationContentIds filters', () => {
     const requestedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input) => {
       requestedUrls.push(String(input));
-      return new Response(JSON.stringify({ items: [], totalItems: 0, totalCount: 0 }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return json({ items: [], totalItems: 0, totalCount: 0 });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({
-      environment: 'test',
-      apiKey: 'test-key',
-      fetchImpl,
-    });
+    const adapter = v12Adapter(fetchImpl);
 
     const params = { organizationId: '2de11b91-2552-4f51-b10e-5dfad8bade77' };
     await adapter.searchServices(params);
@@ -185,20 +181,11 @@ describe('PTV v12 organizationContentIds filters', () => {
     const fetchImpl: typeof fetch = async (input) => {
       requestedUrls.push(String(input));
       if (String(input).includes('/organization/search')) {
-        return new Response(JSON.stringify({ items: [], totalItems: 0 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return json({ items: [], totalItems: 0 });
       }
       throw new Error(`Unexpected URL: ${String(input)}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({
-      environment: 'test',
-      apiKey: 'test-key',
-      fetchImpl,
-    });
+    const adapter = v12Adapter(fetchImpl);
 
     await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
 
@@ -216,41 +203,30 @@ describe('PTV v12 search hydration', () => {
       const url = String(input);
       requested.push(url);
       if (url.includes('/service/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [
-              {
-                contentId: 'service-1',
-                languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
-              },
-            ],
-            totalCount: 1,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [
+            {
+              contentId: 'service-1',
+              languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+            },
+          ],
+          totalCount: 1,
+        });
       }
       if (url.includes('/service/service-1')) {
-        return new Response(
-          JSON.stringify({
-            contentId: 'service-1',
-            organization: { contentId: 'org-1' },
-            languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
-            modifiedAt: '2026-09-19T00:00:00Z',
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'service-1',
+          organization: { contentId: 'org-1' },
+          languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+        });
       }
       if (url.includes('/connection/search')) {
-        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return json({ items: [], totalItems: 0, totalPages: 1 });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchServices({ query: 'Kirkkoon liittyminen' });
 
     expect(result.items).toHaveLength(1);
@@ -262,29 +238,21 @@ describe('PTV v12 search hydration', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/organization/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [{ contentId: 'org-1' }],
-            totalCount: 1,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [{ contentId: 'org-1' }],
+          totalCount: 1,
+        });
       }
       if (url.includes('/organization/org-1')) {
-        return new Response(
-          JSON.stringify({
-            contentId: 'org-1',
-            languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
-            modifiedAt: '2026-09-19T00:00:00Z',
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'org-1',
+          languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
 
     expect(result.items).toHaveLength(1);
@@ -298,31 +266,23 @@ describe('PTV v12 search hydration', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service-channel/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [{ contentId: 'channel-1' }],
-            totalCount: 1,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [{ contentId: 'channel-1' }],
+          totalCount: 1,
+        });
       }
       if (url.includes('/service-channel/channel-1')) {
-        return new Response(
-          JSON.stringify({
-            contentId: 'channel-1',
-            organization: { contentId: 'org-1' },
-            languageVersions: { fi: { name: 'Keskuskirkko' } },
-            modifiedAt: '2026-09-19T00:00:00Z',
-            serviceChannelType: 'ServiceLocation',
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'channel-1',
+          organization: { contentId: 'org-1' },
+          languageVersions: { fi: { name: 'Keskuskirkko' } },
+          modifiedAt: '2026-09-19T00:00:00Z',
+          serviceChannelType: 'ServiceLocation',
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchChannels({ query: 'Keskuskirkko' });
 
     expect(result.items).toHaveLength(1);
@@ -339,20 +299,17 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service/service-1')) {
-        return new Response(
-          JSON.stringify({
-            contentId: 'service-1',
-            organizationContentId: 'org-1',
-            languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
-            modified: '2024-10-30T20:30:10.613502Z',
-            serviceClasses: ['class-1'],
-            ontologyTerms: ['term-1'],
-            targetGroups: ['target-1'],
-            lifeEvents: ['life-1'],
-            industrialClasses: ['TOL-1'],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'service-1',
+          organizationContentId: 'org-1',
+          languageVersions: { fi: { name: 'Kirkkoon liittyminen' } },
+          modified: '2024-10-30T20:30:10.613502Z',
+          serviceClasses: ['class-1'],
+          ontologyTerms: ['term-1'],
+          targetGroups: ['target-1'],
+          lifeEvents: ['life-1'],
+          industrialClasses: ['TOL-1'],
+        });
       }
       if (
         url.includes('/connection/search') ||
@@ -360,16 +317,11 @@ describe('PTV v12 read parity mappings', () => {
           url,
         )
       ) {
-        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return json({ items: [], totalItems: 0, totalPages: 1 });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.getService('service-1');
 
     expect(result).toMatchObject({
@@ -388,26 +340,21 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/organization/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [
-              {
-                contentId: 'org-1',
-                businessCode: '0152574-9',
-                languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
-                modified: '2024-10-30T20:30:10.613502Z',
-              },
-            ],
-            totalCount: 1,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [
+            {
+              contentId: 'org-1',
+              businessCode: '0152574-9',
+              languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+              modified: '2024-10-30T20:30:10.613502Z',
+            },
+          ],
+          totalCount: 1,
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
 
     expect(result.items[0]).toMatchObject({
@@ -422,34 +369,29 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service-collection/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [
-              {
-                contentId: 'collection-1',
-                organizationContentId: 'org-1',
-                languageVersions: { fi: { name: 'Kirkon jäsenyys', description: 'Kuvaus' } },
-                services: ['service-1'],
-                modified: '2026-09-19T00:00:00Z',
-              },
-              {
-                contentId: 'collection-2',
-                organizationContentId: 'org-2',
-                languageVersions: { fi: { name: 'Muu kokonaisuus' } },
-                services: ['service-2'],
-                modified: '2026-09-19T00:00:00Z',
-              },
-            ],
-            totalCount: 2,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [
+            {
+              contentId: 'collection-1',
+              organizationContentId: 'org-1',
+              languageVersions: { fi: { name: 'Kirkon jäsenyys', description: 'Kuvaus' } },
+              services: ['service-1'],
+              modified: '2026-09-19T00:00:00Z',
+            },
+            {
+              contentId: 'collection-2',
+              organizationContentId: 'org-2',
+              languageVersions: { fi: { name: 'Muu kokonaisuus' } },
+              services: ['service-2'],
+              modified: '2026-09-19T00:00:00Z',
+            },
+          ],
+          totalCount: 2,
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchServiceCollections({
       organizationId: 'org-1',
       page: 1,
@@ -473,23 +415,18 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       requested.push(url);
-      return new Response(
-        JSON.stringify({
-          items: [
-            {
-              contentId: 'org-1',
-              languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
-              modified: '2026-09-19T00:00:00Z',
-            },
-          ],
-          totalCount: 1,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return json({
+        items: [
+          {
+            contentId: 'org-1',
+            languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
+            modified: '2026-09-19T00:00:00Z',
+          },
+        ],
+        totalCount: 1,
+      });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
 
     expect(requested[0]).toContain('languageVersions=fi');
@@ -499,33 +436,23 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/service/service-1')) {
-        return new Response(
-          JSON.stringify({
-            contentId: 'service-1',
-            organizationContentId: 'org-1',
-            languageVersions: { fi: { name: 'Palvelu' } },
-            serviceClasses: [{ code: 'class-1', name: { fi: 'Palveluluokka' } }],
-            ontologyTerms: [
-              { code: 'term-1', languageVersions: { fi: { name: 'Ontologiatermi' } } },
-            ],
-            targetGroups: [{ code: 'target-1', names: { fi: 'Kohderyhmä' } }],
-            lifeEvents: [{ code: 'life-1', label: { fi: 'Elämäntapahtuma' } }],
-            industrialClasses: [{ code: 'TOL-1', displayName: { fi: 'Toimiala' } }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'service-1',
+          organizationContentId: 'org-1',
+          languageVersions: { fi: { name: 'Palvelu' } },
+          serviceClasses: [{ code: 'class-1', name: { fi: 'Palveluluokka' } }],
+          ontologyTerms: [{ code: 'term-1', languageVersions: { fi: { name: 'Ontologiatermi' } } }],
+          targetGroups: [{ code: 'target-1', names: { fi: 'Kohderyhmä' } }],
+          lifeEvents: [{ code: 'life-1', label: { fi: 'Elämäntapahtuma' } }],
+          industrialClasses: [{ code: 'TOL-1', displayName: { fi: 'Toimiala' } }],
+        });
       }
       if (url.includes('/connection/search')) {
-        return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 1 }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return json({ items: [], totalItems: 0, totalPages: 1 });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.getService('service-1');
 
     expect(result).toMatchObject({
@@ -541,32 +468,27 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       if (url.includes('/general-description/search')) {
-        return new Response(
-          JSON.stringify({
-            items: [
-              {
-                contentId: 'gd-1',
-                organizationContentId: 'org-1',
-                languageVersions: { fi: { name: 'Pohjakuvaus 1', description: 'Kuvaus' } },
-                modified: '2026-09-19T00:00:00Z',
-              },
-              {
-                contentId: 'gd-2',
-                organizationContentId: 'org-2',
-                languageVersions: { fi: { name: 'Pohjakuvaus 2' } },
-                modified: '2026-09-19T00:00:00Z',
-              },
-            ],
-            totalCount: 2,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          items: [
+            {
+              contentId: 'gd-1',
+              organizationContentId: 'org-1',
+              languageVersions: { fi: { name: 'Pohjakuvaus 1', description: 'Kuvaus' } },
+              modified: '2026-09-19T00:00:00Z',
+            },
+            {
+              contentId: 'gd-2',
+              organizationContentId: 'org-2',
+              languageVersions: { fi: { name: 'Pohjakuvaus 2' } },
+              modified: '2026-09-19T00:00:00Z',
+            },
+          ],
+          totalCount: 2,
+        });
       }
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchGeneralDescriptions({ organizationId: 'org-1' });
 
     expect(result.totalCount).toBe(1);
@@ -581,19 +503,14 @@ describe('PTV v12 read parity mappings', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
       requested.push(url);
-      return new Response(
-        JSON.stringify([
-          {
-            code: 'FI',
-            languageVersions: { fi: { name: 'Suomi' } },
-          },
-        ]),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return json([
+        {
+          code: 'FI',
+          languageVersions: { fi: { name: 'Suomi' } },
+        },
+      ]);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
 
     for (const name of [
       'countries',
@@ -639,22 +556,17 @@ describe('PTV v12 catalogue pagination', () => {
                   languageVersions: { fi: { name: 'Riihimäen seurakunta' } },
                 },
               ];
-        return new Response(
-          JSON.stringify({
-            page: Number(page),
-            pageSize: 100,
-            totalItems: 101,
-            totalPages: 2,
-            items,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          page: Number(page),
+          pageSize: 100,
+          totalItems: 101,
+          totalPages: 2,
+          items,
+        });
       }
       throw new Error(`Unexpected URL: ${url.toString()}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchOrganisations({ query: 'Riihimäen seurakunta' });
 
     expect(requestedPages).toEqual(['1', '2']);
@@ -663,12 +575,6 @@ describe('PTV v12 catalogue pagination', () => {
 });
 
 describe('PTV v12 wire-shape mappings', () => {
-  const json = (body: unknown) =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
-
   it('maps v12 service field names and the PermitOrOtherObligation subtype', () => {
     const result = mapV12Service({
       contentId: 'service-1',
@@ -703,9 +609,7 @@ describe('PTV v12 wire-shape mappings', () => {
         });
       throw new Error(`Unexpected URL: ${url}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const hierarchy = await adapter.getOrganisationHierarchy('child');
 
     expect(hierarchy.map((org) => org.id)).toEqual(['child', 'parent']);
@@ -720,9 +624,7 @@ describe('PTV v12 wire-shape mappings', () => {
         serviceLanguages: ['fi'],
         languageVersions: { fi: { name: 'Puhelinpalvelu' } },
       });
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
 
     expect(await adapter.getChannel('channel-1')).toMatchObject({
       channelType: 'Phone',
@@ -740,9 +642,7 @@ describe('PTV v12 wire-shape mappings', () => {
         : [];
       return json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const connections = await adapter.getConnectionsFor('service-1');
 
     expect(connections).toMatchObject([{ serviceId: 'service-1', channelId: 'channel-1' }]);
@@ -785,9 +685,7 @@ describe('PTV v12 wire-shape mappings', () => {
       }
       throw new Error(`Unexpected URL: ${url.toString()}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
 
     expect((await adapter.getService('service-1'))?.serviceChannelIds).toEqual([
       'channel-1',
@@ -820,9 +718,7 @@ describe('PTV v12 wire-shape mappings', () => {
           },
         ],
       });
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchServiceCollections({});
 
     expect(result.items[0]?.serviceIds).toEqual(['service-1']);
@@ -839,9 +735,7 @@ describe('PTV v12 wire-shape mappings', () => {
         items: [{ contentId: `org-${page}`, languageVersions: { fi: { name: `Org ${page}` } } }],
       });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const result = await adapter.searchOrganisations({});
 
     expect(result.items.map((org) => org.id)).toEqual(['org-1', 'org-2', 'org-3', 'org-4']);
@@ -850,11 +744,6 @@ describe('PTV v12 wire-shape mappings', () => {
 });
 
 describe('PTV v12 classification code names', () => {
-  const json = (body: unknown) =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
   const page = (items: unknown[]) =>
     json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
   const ontologyUri = 'http://www.yso.fi/onto/koko/p4416';
@@ -894,7 +783,6 @@ describe('PTV v12 classification code names', () => {
 
   it('fills names by code and by URI, and serves repeats from the cache', async () => {
     const requested: URL[] = [];
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     const adapter = new PtvV12Adapter({
       environment: 'test',
@@ -924,7 +812,6 @@ describe('PTV v12 classification code names', () => {
   });
 
   it('persists resolved names to the store, so a fresh process skips PTV lookups', async () => {
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     type Store = import('./codeNameCache.js').CodeNameStore;
     type Row = import('./codeNameCache.js').StoredCodeName;
@@ -967,7 +854,6 @@ describe('PTV v12 classification code names', () => {
 
   it('falls back to PTV when the store fails', async () => {
     const requested: URL[] = [];
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     const failing = {
       load: async () => {
@@ -989,7 +875,6 @@ describe('PTV v12 classification code names', () => {
   it('batches code lookups to 20 per request', async () => {
     const requested: URL[] = [];
     const codes = Array.from({ length: 25 }, (_, i) => `P${i + 1}`);
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     const adapter = new PtvV12Adapter({
       environment: 'test',
@@ -1075,42 +960,34 @@ describe('PTV v12 classifications are writable through v11', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(String(input));
       const page = (items: unknown[]) =>
-        new Response(
-          JSON.stringify({
-            page: 1,
-            pageSize: 100,
-            totalItems: items.length,
-            totalPages: 1,
-            items,
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        json({
+          page: 1,
+          pageSize: 100,
+          totalItems: items.length,
+          totalPages: 1,
+          items,
+        });
       if (url.pathname === '/api/v12/service/service-1')
-        return new Response(
-          JSON.stringify({
-            contentId: 'service-1',
-            organizationContentId: 'org-1',
-            serviceType: 'Service',
-            languageVersions: {
-              fi: { name: 'Kodin siunaaminen', summary: 'Tiivistelmä', description: 'Kuvaus' },
-            },
-            serviceClasses: ['P25.6'],
-            // Industrial classes need KR2 and a subgroup (validator rule 13).
-            targetGroups: ['KR1', 'KR2', 'KR2.3'],
-            lifeEvents: ['KE4'],
-            industrialClasses: [`${base}/jhs/toimiala_1_20080101/code/55109`],
-            ontologyTerms: ['http://www.yso.fi/onto/koko/p76271'],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
+        return json({
+          contentId: 'service-1',
+          organizationContentId: 'org-1',
+          serviceType: 'Service',
+          languageVersions: {
+            fi: { name: 'Kodin siunaaminen', summary: 'Tiivistelmä', description: 'Kuvaus' },
+          },
+          serviceClasses: ['P25.6'],
+          // Industrial classes need KR2 and a subgroup (validator rule 13).
+          targetGroups: ['KR1', 'KR2', 'KR2.3'],
+          lifeEvents: ['KE4'],
+          industrialClasses: [`${base}/jhs/toimiala_1_20080101/code/55109`],
+          ontologyTerms: ['http://www.yso.fi/onto/koko/p76271'],
+        });
       if (url.pathname === '/api/v12/connection/search') return page([]);
       const list = lists[url.pathname];
       if (list)
         return page(list.map((item) => ({ ...item, name: { fi: `nimi ${item.code ?? ''}` } })));
       throw new Error(`Unexpected URL: ${url.toString()}`);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     const adapter = new PtvV12Adapter({
       environment: 'test',
@@ -1138,27 +1015,22 @@ describe('PTV v12 ontology term search', () => {
     const fetchImpl: typeof fetch = async (input) => {
       const url = new URL(String(input));
       requested.push(url);
-      return new Response(
-        JSON.stringify({
-          page: 2,
-          pageSize: 20,
-          totalItems: 23,
-          totalPages: 2,
-          items: [
-            {
-              uri: 'http://www.yso.fi/onto/koko/p71748',
-              type: null,
-              parentUris: [],
-              isValid: true,
-              name: { fi: 'kaste (uskonto)', sv: 'dop (religion)', en: 'baptism' },
-            },
-          ],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return json({
+        page: 2,
+        pageSize: 20,
+        totalItems: 23,
+        totalPages: 2,
+        items: [
+          {
+            uri: 'http://www.yso.fi/onto/koko/p71748',
+            type: null,
+            parentUris: [],
+            isValid: true,
+            name: { fi: 'kaste (uskonto)', sv: 'dop (religion)', en: 'baptism' },
+          },
+        ],
+      });
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
     const { CodeNameCache } = await import('./codeNameCache.js');
     const cache = new CodeNameCache();
     const adapter = new PtvV12Adapter({
@@ -1198,13 +1070,9 @@ describe('PTV v12 ontology term search', () => {
     let pageSize: string | null = null;
     const fetchImpl: typeof fetch = async (input) => {
       pageSize = new URL(String(input)).searchParams.get('pageSize');
-      return new Response(JSON.stringify({ items: [], totalItems: 0, totalPages: 0 }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      return json({ items: [], totalItems: 0, totalPages: 0 });
     };
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
 
     await adapter.searchOntologyTerms({ query: 'kaste', pageSize: 500 });
 
@@ -1213,11 +1081,6 @@ describe('PTV v12 ontology term search', () => {
 });
 
 describe('PTV v12 connection batches and organisation cache', () => {
-  const json = (body: unknown) =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    });
   const page = (items: unknown[]) =>
     json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
 
@@ -1234,9 +1097,7 @@ describe('PTV v12 connection batches and organisation cache', () => {
       );
     };
     const ids = Array.from({ length: 25 }, (_, i) => `service-${i}`);
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
     const connections = await adapter.getConnectionsForServices(ids);
 
     expect(requested.map((url) => url.searchParams.getAll('serviceContentIds').length)).toEqual([
@@ -1252,9 +1113,7 @@ describe('PTV v12 connection batches and organisation cache', () => {
       requested.push(url);
       return page([{ serviceContentId: 'service-1', channelContentId: 'channel-1' }]);
     };
-
-    const { PtvV12Adapter } = await import('./adapter.js');
-    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const adapter = v12Adapter(fetchImpl);
 
     expect(await adapter.getConnectionsFor('channel-1', 'channel')).toHaveLength(1);
     expect(requested).toHaveLength(1);
@@ -1262,7 +1121,6 @@ describe('PTV v12 connection batches and organisation cache', () => {
   });
 
   it('serves organisation searches from the tenant cache until it goes stale', async () => {
-    const { PtvV12Adapter } = await import('./adapter.js');
     const stored = new Map<string, Organization[]>();
     const cache = {
       hasFreshCatalogue: async (key: { apiVersion: string }) => stored.has(key.apiVersion),

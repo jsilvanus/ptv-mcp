@@ -1,26 +1,19 @@
-import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
 import { AuditService } from '../audit/auditService.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('audit log routes', () => {
   const config = loadConfig();
+  const db: Database = createDatabase(config.databaseUrl);
+  const auditService = new AuditService(db);
+  const fixtures = new IntegrationFixtures(db, config);
   let app: FastifyInstance;
-  let db: Database;
-  let auditService: AuditService;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
-    db = createDatabase(config.databaseUrl);
-    auditService = new AuditService(db);
     app = await buildApp({ config: { ...config, logLevel: 'silent' }, db });
   });
 
@@ -28,38 +21,13 @@ describe('audit log routes', () => {
     await app.close();
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
   async function setUp(role: 'contributor' | 'tenant_admin') {
-    const tenantId = randomUUID();
-    const userId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: tenantId, name: 'Audit Route Test', slug: `art-${tenantId}` });
-    await db
-      .insert(users)
-      .values({ id: userId, email: `${userId}@example.test`, name: 'Test', passwordHash: 'x' });
-    createdTenantIds.push(tenantId);
-    createdUserIds.push(userId);
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role });
-    });
-    const token = await signAccessToken({ sub: userId }, config.jwtSecret);
+    const tenantId = await fixtures.tenant({ name: 'Audit Route Test', slugPrefix: 'art' });
+    const userId = await fixtures.user();
+    await fixtures.addMembership(tenantId, userId, role);
+    const token = await fixtures.webToken(userId);
     return { tenantId, userId, token };
   }
 

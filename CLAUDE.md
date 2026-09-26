@@ -188,7 +188,9 @@ carries `tenant_id`/`environment`/`read_api_version`/`write_api_version`
 login-session token to call `/mcp` in code or tests** — construct an
 `OAuthService` with the exact same `(jwtSecret, issuer, resource)` as
 `src/app.ts` uses (`issuer === resource === config.mcpPublicUrl`, no
-`/mcp` suffix on either) and call `issueAccessToken` directly instead.
+`/mcp` suffix on either) and call `issueAccessToken` directly instead (integration tests use
+`IntegrationFixtures.mcpToken` in `src/testing/integrationFixtures.ts`,
+which does exactly this).
 A mismatched `resource`/audience between two `OAuthService` instances
 (e.g. one minting, another verifying) makes every token silently fail
 verification — `npm run mcp:token` (`src/mcp/token.ts`) had exactly this
@@ -199,6 +201,8 @@ Every tool's `title` and annotations (`readOnlyHint`, `destructiveHint`,
 `useToolMetadata` refuses to register a tool without an entry. Only tools
 that can write to PTV (`ptv_resolve_proposal`, `ptv_apply_changes`) are
 destructive; proposal/review tools only change the MCP's own queue.
+
+Tool registrations live in `src/mcp/tools/` (`readTools.ts`, `proposalTools.ts`, `reviewTools.ts`, with the `tool()` registrar and `toolContext` helpers in `shared.ts`) and resources in `src/mcp/resources.ts`; `mcpServer.ts` only builds their dependencies and composes them.
 
 ### Guides, skills and server instructions
 

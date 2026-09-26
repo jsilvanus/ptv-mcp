@@ -1,40 +1,22 @@
-import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { auditEntries, memberships, proposals, tenants, users } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
+import type { MembershipRole } from '../auth/rbac.js';
 import { AuditService } from '../audit/auditService.js';
-import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
-import { OAuthService } from '../mcp/oauthService.js';
-import type { Service } from '../ptv/domain.js';
+import { inMemoryV11Factory, validService } from '../ptv/testing/fixtures.js';
+import { IntegrationFixtures, listenLocally } from '../testing/integrationFixtures.js';
+import { connectMcpClient, toolJson, toolText } from '../testing/mcpClient.js';
 
-const BASE_SERVICE: Service = {
+const BASE_SERVICE = validService({
   id: 'phase8-service-1',
   organizationId: 'phase8-org-1',
-  serviceType: 'Service',
-  publishingStatus: 'Published',
   names: { fi: 'Phase 8 service' },
-  summaries: {},
-  descriptions: {},
-  serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
-  ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
-  targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
-  lifeEvents: [],
-  industrialClasses: [],
-  languages: ['fi'],
-  serviceChannelIds: [],
   modifiedAt: '2026-09-16T00:00:00Z',
-};
+});
 
 describe('Phase 8 sync point', () => {
   const config = loadConfig();
@@ -44,153 +26,46 @@ describe('Phase 8 sync point', () => {
     jwtSecret: config.jwtSecret,
     mailer: new LoggingMailer(() => {}),
   });
-  const configService = new PtvAdapterConfigService(db);
   const auditService = new AuditService(db);
-  // Must match src/app.ts's OAuthService construction (same issuer/resource)
-  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
-  // them, unlike AuthService's web-session JWT (no iss/aud/tenant claims).
-  const oauthService = new OAuthService(
-    db,
-    config.jwtSecret,
-    config.mcpPublicUrl,
-    config.mcpPublicUrl,
-  );
+  const fixtures = new IntegrationFixtures(db, config);
 
   let app: FastifyInstance;
   let baseUrl: string;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
     app = await buildApp({
       config: { ...config, logLevel: 'silent' },
       db,
       adapterFactories: {
-        v11: (options) =>
-          new InMemoryPtvAdapter({
-            services: [{ ...BASE_SERVICE }],
-            capabilities: {
-              apiVersion: 'v11',
-              environment: options.environment,
-              credentialScope: 'user',
-              supportsRead: true,
-              supportsWrite: options.canWrite,
-              supportsDraftRead: false,
-            },
-          }),
+        v11: inMemoryV11Factory(() => ({ services: [{ ...BASE_SERVICE }] })),
       },
     });
-    await app.listen({ host: '127.0.0.1', port: 0 });
-    const address = app.server.address();
-    if (address === null || typeof address === 'string') {
-      throw new Error('Expected a network address for the listening server');
-    }
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    baseUrl = await listenLocally(app);
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(proposals).where(eq(proposals.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
   afterAll(async () => {
     await app.close();
   });
 
-  async function registerUser(name: string): Promise<{ userId: string }> {
-    const email = `phase8-${randomUUID()}@example.test`;
-    const { userId } = await authService.register(email, name, 'correct-password');
-    createdUserIds.push(userId);
-    await authService.login(email, 'correct-password');
-    return { userId };
+  const createTenant = (name: string) =>
+    fixtures.tenant({ name, slugPrefix: 'phase8', v11: { supportsWrite: true } });
+
+  /** Registers a user with `role` in `tenantId` and mints their MCP token for it. */
+  async function member(tenantId: string, role: MembershipRole, name: string) {
+    const { userId } = await fixtures.registeredUser(authService, 'phase8', name);
+    await fixtures.addMembership(tenantId, userId, role);
+    return { userId, token: await fixtures.mcpToken(userId, tenantId) };
   }
 
-  /**
-   * MCP tools have no per-call tenant/environment argument — see
-   * toolContext() in mcpServer.ts — so exercising a user against a
-   * particular tenant means minting a token bound to that tenant, not
-   * passing one in `arguments`.
-   */
-  async function mintToken(userId: string, tenantId: string): Promise<string> {
-    return oauthService.issueAccessToken(
-      userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      tenantId,
-      'test',
-      'v11',
-      'v11',
-    );
-  }
-
-  async function createTenant(name: string): Promise<string> {
-    const tenantId = randomUUID();
-    await db.insert(tenants).values({ id: tenantId, name, slug: `phase8-${tenantId}` });
-    createdTenantIds.push(tenantId);
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: true,
-      supportsDraftRead: false,
-    });
-    return tenantId;
-  }
-
-  async function addMembership(
-    tenantId: string,
-    userId: string,
-    role: 'contributor' | 'approver' | 'publisher' | 'tenant_admin',
-  ): Promise<void> {
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role });
-    });
-  }
-
-  async function connectedClient(token: string): Promise<Client> {
-    const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseUrl), {
-      requestInit: { headers: { Authorization: 'Bearer ' + token } },
-    });
-    const client = new Client({ name: 'phase8-sync-point', version: '1.0.0' });
-    await client.connect(transport as unknown as Transport);
-    return client;
-  }
-
-  function parseToolResult<T>(result: unknown): T {
-    const content = (result as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
-    const first = content[0];
-    if (!first || first.type !== 'text' || typeof first.text !== 'string') {
-      throw new Error('Expected text tool content');
-    }
-    return JSON.parse(first.text) as T;
-  }
+  const connectedClient = (token: string) => connectMcpClient(baseUrl, token, 'phase8-sync-point');
 
   it('queues, reviews, and resolves proposals with the contributor/approver split and one correlationId', async () => {
     const tenantId = await createTenant('Phase 8 queue tenant');
-    const [readerUser, editorUser] = await Promise.all([
-      registerUser('Reader'),
-      registerUser('Editor'),
-    ]);
-    await Promise.all([
-      addMembership(tenantId, readerUser.userId, 'contributor'),
-      addMembership(tenantId, editorUser.userId, 'approver'),
-    ]);
     const [reader, editor] = await Promise.all([
-      mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
-      mintToken(editorUser.userId, tenantId).then((token) => ({ ...editorUser, token })),
+      member(tenantId, 'contributor', 'Reader'),
+      member(tenantId, 'approver', 'Editor'),
     ]);
 
     const readerClient = await connectedClient(reader.token);
@@ -204,7 +79,7 @@ describe('Phase 8 sync point', () => {
       },
     });
     expect(queued.isError).not.toBe(true);
-    const queuedPayload = parseToolResult<{ proposalId: string; correlationId: string }>(queued);
+    const queuedPayload = toolJson<{ proposalId: string; correlationId: string }>(queued);
 
     // A contributor (Ehdottaja) can view the queue but not resolve.
     const readerList = await readerClient.callTool({
@@ -217,9 +92,7 @@ describe('Phase 8 sync point', () => {
       arguments: { proposalId: queuedPayload.proposalId, action: 'reject' },
     });
     expect(readerResolve.isError).toBe(true);
-    expect((readerResolve.content as Array<{ text: string }>)[0]?.text).toContain(
-      "requires at least 'approver' role",
-    );
+    expect(toolText(readerResolve)).toContain("requires at least 'approver' role");
     await readerClient.close();
 
     const editorClient = await connectedClient(editor.token);
@@ -228,7 +101,7 @@ describe('Phase 8 sync point', () => {
       arguments: { tenantId, environment: 'test', status: 'pending' },
     });
     expect(listPending.isError).not.toBe(true);
-    const pendingPayload = parseToolResult<Array<{ id: string }>>(listPending);
+    const pendingPayload = toolJson<Array<{ id: string }>>(listPending);
     expect(pendingPayload.some((proposal) => proposal.id === queuedPayload.proposalId)).toBe(true);
 
     const proposal = await editorClient.callTool({
@@ -240,7 +113,7 @@ describe('Phase 8 sync point', () => {
       },
     });
     expect(proposal.isError).not.toBe(true);
-    const proposalPayload = parseToolResult<{ diff: Array<{ field: string }> }>(proposal);
+    const proposalPayload = toolJson<{ diff: Array<{ field: string }> }>(proposal);
     expect(proposalPayload.diff.length).toBeGreaterThan(0);
 
     const resolved = await editorClient.callTool({
@@ -253,14 +126,14 @@ describe('Phase 8 sync point', () => {
       },
     });
     expect(resolved.isError).not.toBe(true);
-    const resolvedPayload = parseToolResult<{ status: string }>(resolved);
+    const resolvedPayload = toolJson<{ status: string }>(resolved);
     expect(resolvedPayload.status).toBe('rejected');
 
     const listAfter = await editorClient.callTool({
       name: 'ptv_list_proposals',
       arguments: { tenantId, environment: 'test', status: 'pending' },
     });
-    const afterPayload = parseToolResult<Array<{ id: string }>>(listAfter);
+    const afterPayload = toolJson<Array<{ id: string }>>(listAfter);
     expect(afterPayload.some((proposalRow) => proposalRow.id === queuedPayload.proposalId)).toBe(
       false,
     );
@@ -279,17 +152,9 @@ describe('Phase 8 sync point', () => {
 
   it('returns not_authorized for approve_and_apply from editor-only resolver and keeps proposal pending', async () => {
     const tenantId = await createTenant('Phase 8 apply gate tenant');
-    const [readerUser, editorUser] = await Promise.all([
-      registerUser('Reader'),
-      registerUser('Editor'),
-    ]);
-    await Promise.all([
-      addMembership(tenantId, readerUser.userId, 'contributor'),
-      addMembership(tenantId, editorUser.userId, 'approver'),
-    ]);
     const [reader, editor] = await Promise.all([
-      mintToken(readerUser.userId, tenantId).then((token) => ({ ...readerUser, token })),
-      mintToken(editorUser.userId, tenantId).then((token) => ({ ...editorUser, token })),
+      member(tenantId, 'contributor', 'Reader'),
+      member(tenantId, 'approver', 'Editor'),
     ]);
 
     const readerClient = await connectedClient(reader.token);
@@ -302,7 +167,7 @@ describe('Phase 8 sync point', () => {
         changes: { names: { fi: 'Needs publisher approval for apply' } },
       },
     });
-    const queuedPayload = parseToolResult<{ proposalId: string }>(queued);
+    const queuedPayload = toolJson<{ proposalId: string }>(queued);
     await readerClient.close();
 
     const editorClient = await connectedClient(editor.token);
@@ -316,13 +181,13 @@ describe('Phase 8 sync point', () => {
       },
     });
     expect(applyAttempt.isError).toBe(true);
-    expect((applyAttempt.content as Array<{ text: string }>)[0]?.text).toContain('not_authorized');
+    expect(toolText(applyAttempt)).toContain('not_authorized');
 
     const pending = await editorClient.callTool({
       name: 'ptv_get_proposal',
       arguments: { tenantId, environment: 'test', proposalId: queuedPayload.proposalId },
     });
-    const proposal = parseToolResult<{ status: string }>(pending);
+    const proposal = toolJson<{ status: string }>(pending);
     expect(proposal.status).toBe('pending');
     await editorClient.close();
   });

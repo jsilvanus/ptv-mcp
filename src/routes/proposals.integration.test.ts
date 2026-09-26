@@ -1,72 +1,38 @@
-import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries, memberships, proposals, tenants, users } from '../db/schema/index.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { auditEntries } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
-import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
-import { OAuthService } from '../mcp/oauthService.js';
-import type { Service } from '../ptv/domain.js';
+import { inMemoryV11Factory, validService } from '../ptv/testing/fixtures.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
+import { injectToolCall } from '../testing/mcpClient.js';
 
-const BASE_SERVICE: Service = {
+const BASE_SERVICE = validService({
   id: 'route-proposal-service',
   organizationId: 'route-org',
-  serviceType: 'Service',
-  publishingStatus: 'Published',
   names: { fi: 'Route service' },
-  summaries: {},
-  descriptions: {},
-  serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
-  ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
-  targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
-  lifeEvents: [],
-  industrialClasses: [],
-  languages: ['fi'],
-  serviceChannelIds: [],
   modifiedAt: '2026-09-16T00:00:00Z',
-};
+});
 
 describe('proposal routes', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
-  const configService = new PtvAdapterConfigService(db);
-  // Must match src/app.ts's OAuthService construction (same issuer/resource)
-  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
-  // them, unlike signAccessToken's web-session JWT (no iss/aud/tenant
-  // claims), which is what /tenants/:id/proposals's own auth expects.
-  const oauthService = new OAuthService(
-    db,
-    config.jwtSecret,
-    config.mcpPublicUrl,
-    config.mcpPublicUrl,
-  );
+  // `fixtures.mcpToken` is the MCP OAuth token /mcp verifies;
+  // `fixtures.webToken` the web-session JWT the /tenants/:id/proposals
+  // REST routes expect. They are not interchangeable.
+  const fixtures = new IntegrationFixtures(db, config);
   let app: FastifyInstance;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
     app = await buildApp({
       config: { ...config, logLevel: 'silent' },
       db,
       adapterFactories: {
-        v11: (options) =>
-          new InMemoryPtvAdapter({
-            services: [{ ...BASE_SERVICE }],
-            capabilities: {
-              apiVersion: 'v11',
-              environment: options.environment,
-              credentialScope: 'user',
-              supportsRead: true,
-              supportsWrite: options.canWrite,
-              supportsDraftRead: false,
-            },
-          }),
+        v11: inMemoryV11Factory(() => ({ services: [{ ...BASE_SERVICE }] })),
       },
     });
   });
@@ -75,112 +41,38 @@ describe('proposal routes', () => {
     await app.close();
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(proposals).where(eq(proposals.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
-  async function createUser(role?: MembershipRole) {
-    const userId = randomUUID();
-    const tenantId = randomUUID();
-    await db.insert(users).values({
-      id: userId,
-      email: `${userId}@example.test`,
-      name: 'Proposal route user',
-      passwordHash: 'x',
-    });
-    createdUserIds.push(userId);
-    const token = await signAccessToken({ sub: userId }, config.jwtSecret);
-
-    await db.insert(tenants).values({
-      id: tenantId,
+  /** A user in a fresh tenant with v11 configured; a member with `role` if given. */
+  async function createUser(role?: MembershipRole, options: { requireFourEyes?: boolean } = {}) {
+    const userId = await fixtures.user('Proposal route user');
+    const token = await fixtures.webToken(userId);
+    const tenantId = await fixtures.tenant({
       name: 'Proposal route tenant',
-      slug: `pr-${tenantId}`,
+      slugPrefix: 'pr',
+      v11: { supportsWrite: true },
+      ...options,
     });
-    createdTenantIds.push(tenantId);
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: true,
-      supportsDraftRead: false,
-    });
-    if (role) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.insert(memberships).values({ tenantId, userId, role });
-      });
-    }
-
+    if (role) await fixtures.addMembership(tenantId, userId, role);
     return { userId, tenantId, token };
   }
 
   it('lets a contributor propose and view but not resolve, an approver resolve, and blocks a viewer', async () => {
     const editor = await createUser('approver');
-    const readerId = randomUUID();
-    await db.insert(users).values({
-      id: readerId,
-      email: `${readerId}@example.test`,
-      name: 'Reader',
-      passwordHash: 'x',
-    });
-    createdUserIds.push(readerId);
-    const readerToken = await signAccessToken({ sub: readerId }, config.jwtSecret);
-    await withContext(db, { tenantId: editor.tenantId }, async (tx) => {
-      await tx.insert(memberships).values({
-        tenantId: editor.tenantId,
-        userId: readerId,
-        role: 'contributor',
-      });
-    });
+    const readerId = await fixtures.user('Reader');
+    const readerToken = await fixtures.webToken(readerId);
+    await fixtures.addMembership(editor.tenantId, readerId, 'contributor');
     // The /mcp call below needs a real MCP OAuth token (tenant/environment/
     // api-version claims), not the plain web-session JWT `readerToken` is
     // — that one is still correct for the REST /tenants/:id/proposals
     // check further down, which goes through a different auth path.
-    const readerMcpToken = await oauthService.issueAccessToken(
-      readerId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      editor.tenantId,
-      'test',
-      'v11',
-      'v11',
-    );
+    const readerMcpToken = await fixtures.mcpToken(readerId, editor.tenantId);
 
-    const queuedByReader = await app.inject({
-      method: 'POST',
-      url: '/mcp',
-      headers: {
-        authorization: 'Bearer ' + readerMcpToken,
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      payload: {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'ptv_propose_changes',
-          arguments: {
-            tenantId: editor.tenantId,
-            environment: 'test',
-            serviceId: BASE_SERVICE.id,
-            changes: { names: { fi: 'Route queued' } },
-          },
-        },
-      },
+    const queuedByReader = await injectToolCall(app, readerMcpToken, 'ptv_propose_changes', {
+      tenantId: editor.tenantId,
+      environment: 'test',
+      serviceId: BASE_SERVICE.id,
+      changes: { names: { fi: 'Route queued' } },
     });
     expect(queuedByReader.statusCode).toBe(200);
 
@@ -193,24 +85,13 @@ describe('proposal routes', () => {
     expect(listAsReader.statusCode).toBe(200);
 
     // Viewers (Katselija) are read-only: no proposal queue.
-    const viewerId = randomUUID();
-    await db.insert(users).values({
-      id: viewerId,
-      email: `${viewerId}@example.test`,
-      name: 'Viewer',
-      passwordHash: 'x',
-    });
-    createdUserIds.push(viewerId);
-    await withContext(db, { tenantId: editor.tenantId }, async (tx) => {
-      await tx
-        .insert(memberships)
-        .values({ tenantId: editor.tenantId, userId: viewerId, role: 'viewer' });
-    });
+    const viewerId = await fixtures.user('Viewer');
+    await fixtures.addMembership(editor.tenantId, viewerId, 'viewer');
     const listAsViewer = await app.inject({
       method: 'GET',
       url: `/tenants/${editor.tenantId}/proposals`,
       headers: {
-        authorization: 'Bearer ' + (await signAccessToken({ sub: viewerId }, config.jwtSecret)),
+        authorization: 'Bearer ' + (await fixtures.webToken(viewerId)),
       },
     });
     expect(listAsViewer.statusCode).toBe(403);
@@ -339,38 +220,12 @@ describe('proposal routes', () => {
   });
 
   it('exports an approved proposal with a manual-publishing sheet and confirms it against PTV', async () => {
-    const publisher = await createUser('publisher');
-    await db
-      .update(tenants)
-      .set({ requireFourEyes: false })
-      .where(eq(tenants.id, publisher.tenantId));
-    const mcpToken = await oauthService.issueAccessToken(
-      publisher.userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      publisher.tenantId,
-      'test',
-      'v11',
-      'v11',
-    );
+    const publisher = await createUser('publisher', { requireFourEyes: false });
+    const mcpToken = await fixtures.mcpToken(publisher.userId, publisher.tenantId);
     const propose = async (names: Record<string, string>) => {
-      const response = await app.inject({
-        method: 'POST',
-        url: '/mcp',
-        headers: {
-          authorization: 'Bearer ' + mcpToken,
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-        },
-        payload: {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: {
-            name: 'ptv_propose_changes',
-            arguments: { serviceId: BASE_SERVICE.id, changes: { names } },
-          },
-        },
+      const response = await injectToolCall(app, mcpToken, 'ptv_propose_changes', {
+        serviceId: BASE_SERVICE.id,
+        changes: { names },
       });
       expect(response.statusCode).toBe(200);
       const list = await app.inject({

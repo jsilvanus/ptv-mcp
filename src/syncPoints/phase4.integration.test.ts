@@ -1,20 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { AuditService } from '../audit/auditService.js';
-import { OAuthService } from '../mcp/oauthService.js';
+import { IntegrationFixtures, listenLocally } from '../testing/integrationFixtures.js';
+import { connectMcpClient, toolJson } from '../testing/mcpClient.js';
 
 /**
  * Phase 4's stated sync point (docs/phase-plan.md): "end-to-end script —
@@ -42,99 +35,51 @@ describe('Phase 4 sync point', () => {
     jwtSecret: config.jwtSecret,
     mailer: new LoggingMailer(() => {}),
   });
-  const configService = new PtvAdapterConfigService(db);
   const auditService = new AuditService(db);
-  // Must match src/app.ts's OAuthService construction (same issuer/resource)
-  // — mints real MCP OAuth access tokens the way httpTransport.ts verifies
-  // them, unlike AuthService's web-session JWT (no iss/aud/tenant claims).
-  const oauthService = new OAuthService(
-    db,
-    config.jwtSecret,
-    config.mcpPublicUrl,
-    config.mcpPublicUrl,
-  );
+  const fixtures = new IntegrationFixtures(db, config);
 
   // Real, published record in PTV's test environment (confirmed live during
   // Phase 2 — see src/ptv/v11/adapter.integration.test.ts).
   const KNOWN_SERVICE_ID = 'af60add0-c3be-40f6-9c22-3e29c2b8da0a';
 
   let app: FastifyInstance;
-  let baseUrl: string;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   afterAll(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
+    await fixtures.cleanup();
     await app.close();
   });
 
   it('searches a real service via v11, proposes a rewrite, validates it, exports it, with every step audited', async () => {
     app = await buildApp({ config: { ...config, logLevel: 'silent' }, db });
-    await app.listen({ host: '127.0.0.1', port: 0 });
-    const address = app.server.address();
-    if (address === null || typeof address === 'string') {
-      throw new Error('Expected a network address for the listening server');
-    }
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    const baseUrl = await listenLocally(app);
 
     // 1. Register + log in a real user (Phase 3 Stream A / Phase 4 auth reuse).
-    const email = `phase4-sync-${randomUUID()}@example.test`;
-    const { userId } = await authService.register(email, 'Phase 4 Sync Point', 'correct-password');
-    createdUserIds.push(userId);
-    await authService.login(email, 'correct-password');
+    const { userId } = await fixtures.registeredUser(
+      authService,
+      'phase4-sync',
+      'Phase 4 Sync Point',
+    );
 
     // 2. Create a tenant, make this user an Editor (propose/export need Editor+, not just Reader).
-    const tenantId = randomUUID();
-    await db
-      .insert(tenants)
+    const tenantId = await fixtures.tenant({
+      name: 'Phase 4 Sync Tenant',
+      slugPrefix: 'p4',
       // Exercises the direct export tool, which four-eyes refuses.
-      .values({
-        id: tenantId,
-        name: 'Phase 4 Sync Tenant',
-        slug: `p4-${tenantId}`,
-        requireFourEyes: false,
-      });
-    createdTenantIds.push(tenantId);
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role: 'approver' });
+      requireFourEyes: false,
+      v11: { supportsWrite: true },
     });
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: true,
-      supportsDraftRead: false,
-    });
+    await fixtures.addMembership(tenantId, userId, 'approver');
 
     // 3. Connect a real MCP client over the real HTTP transport. MCP tools
     // take tenant/environment/api-version from the OAuth token's own
-    // claims (toolContext() in mcpServer.ts), not from AuthService's
-    // web-session JWT (session.accessToken has none of those claims).
-    const mcpToken = await oauthService.issueAccessToken(
-      userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      tenantId,
-      'test',
-      'v11',
-      'v11',
+    // claims (toolContext() in src/mcp/tools/shared.ts), not from
+    // AuthService's web-session JWT (session.accessToken has none of those
+    // claims).
+    const client = await connectMcpClient(
+      baseUrl,
+      await fixtures.mcpToken(userId, tenantId),
+      'phase4-sync-point',
     );
-    const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseUrl), {
-      requestInit: { headers: { Authorization: `Bearer ${mcpToken}` } },
-    });
-    const client = new Client({ name: 'phase4-sync-point', version: '1.0.0' });
-    await client.connect(transport as unknown as Transport);
 
     // 4. Search a real service via v11.
     const getResult = await client.callTool({
@@ -142,10 +87,7 @@ describe('Phase 4 sync point', () => {
       arguments: { tenantId, environment: 'test', id: KNOWN_SERVICE_ID },
     });
     expect(getResult.isError).not.toBe(true);
-    const currentService = JSON.parse((getResult.content as Array<{ text: string }>)[0]!.text) as {
-      id: string;
-      names: Record<string, string>;
-    };
+    const currentService = toolJson<{ id: string; names: Record<string, string> }>(getResult);
     expect(currentService.id).toBe(KNOWN_SERVICE_ID);
 
     // 5. Propose a rewrite.
@@ -159,11 +101,11 @@ describe('Phase 4 sync point', () => {
       },
     });
     expect(proposeResult.isError).not.toBe(true);
-    const proposal = JSON.parse((proposeResult.content as Array<{ text: string }>)[0]!.text) as {
+    const proposal = toolJson<{
       proposed: unknown;
       diff: unknown[];
       correlationId: string;
-    };
+    }>(proposeResult);
     expect(proposal.diff.length).toBeGreaterThan(0);
     const { correlationId } = proposal;
 
@@ -173,9 +115,7 @@ describe('Phase 4 sync point', () => {
       arguments: { tenantId, environment: 'test', proposed: proposal.proposed, correlationId },
     });
     expect(validateResult.isError).not.toBe(true);
-    const validation = JSON.parse((validateResult.content as Array<{ text: string }>)[0]!.text) as {
-      valid: boolean;
-    };
+    const validation = toolJson<{ valid: boolean }>(validateResult);
     expect(validation.valid).toBe(true);
 
     // 7. Export for manual publish — the terminal step MVP-0 offers without
@@ -191,9 +131,7 @@ describe('Phase 4 sync point', () => {
       },
     });
     expect(exportResult.isError).not.toBe(true);
-    const exported = JSON.parse((exportResult.content as Array<{ text: string }>)[0]!.text) as {
-      languages: Record<string, { name?: string }>;
-    };
+    const exported = toolJson<{ languages: Record<string, { name?: string }> }>(exportResult);
     expect(exported.languages.fi?.name).toBe('Phase 4 sync point rewrite');
 
     await client.close();

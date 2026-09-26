@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Service, ServiceType } from '../ptv/domain.js';
+import type { Service } from '../ptv/domain.js';
 import { V11ChangeValidator } from './changeValidator.js';
 
 /** Helper: minimal valid Service fixture that passes all rules. */
@@ -32,6 +32,30 @@ function validService(): Service {
 describe('V11ChangeValidator', () => {
   const validator = new V11ChangeValidator();
 
+  /** `validService()` with `overrides`; a field set to `undefined` is left out of the type check. */
+  const withFields = (overrides: Record<string, unknown>) =>
+    ({ ...validService(), ...overrides }) as Service;
+  const hasError = (service: Service, field: string) =>
+    validator.validate(service).errors.some((e) => e.field === field);
+
+  /** Asserts `service` is invalid with an error on `field`. */
+  function expectError(service: Service, field: string) {
+    const result = validator.validate(service);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.field === field)).toBe(true);
+  }
+
+  const ontologyTerms = (length: number) =>
+    Array.from({ length }, (_, i) => ({
+      uri: `http://www.yso.fi/onto/koko/p${i}`,
+      names: { fi: `Term ${i}` },
+    }));
+  const serviceClasses = (length: number) =>
+    Array.from({ length }, (_, i) => ({
+      uri: `http://example.com/class${i}`,
+      names: { fi: `Class ${i}` },
+    }));
+
   describe('apiVersion', () => {
     it('has apiVersion = "v11"', () => {
       expect(validator.apiVersion).toBe('v11');
@@ -48,8 +72,7 @@ describe('V11ChangeValidator', () => {
 
   describe('names validation (Rule 1)', () => {
     it('fails when names is an empty object', () => {
-      const service = { ...validService(), names: {} };
-      const result = validator.validate(service);
+      const result = validator.validate(withFields({ names: {} }));
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual({
         field: 'names',
@@ -57,170 +80,81 @@ describe('V11ChangeValidator', () => {
       });
     });
 
-    it('fails when all name values are empty strings', () => {
-      const service = { ...validService(), names: { fi: '', en: '   ' } };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'names')).toBe(true);
-    });
-
-    it('fails when names is undefined', () => {
-      const service = { ...validService() } as Service;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (service as any).names = undefined;
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'names')).toBe(true);
+    it.each([
+      ['all name values are empty strings', { fi: '', en: '   ' }],
+      ['names is undefined', undefined],
+    ])('fails when %s', (_case, names) => {
+      expectError(withFields({ names }), 'names');
     });
 
     it('passes when at least one name has a non-empty value', () => {
-      const service = { ...validService(), names: { fi: 'Palvelu', en: '' } };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'names')).toBe(false);
+      expect(hasError(withFields({ names: { fi: 'Palvelu', en: '' } }), 'names')).toBe(false);
     });
   });
 
   describe('organizationId validation (Rule 2)', () => {
-    it('fails when organizationId is empty string', () => {
-      const service = { ...validService(), organizationId: '' };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'organizationId')).toBe(true);
-    });
-
-    it('fails when organizationId is whitespace only', () => {
-      const service = { ...validService(), organizationId: '   ' };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'organizationId')).toBe(true);
-    });
-
-    it('fails when organizationId is undefined', () => {
-      const service = { ...validService() } as Service;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (service as any).organizationId = undefined;
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'organizationId')).toBe(true);
+    it.each([
+      ['empty string', ''],
+      ['whitespace only', '   '],
+      ['undefined', undefined],
+    ])('fails when organizationId is %s', (_case, organizationId) => {
+      expectError(withFields({ organizationId }), 'organizationId');
     });
 
     it('passes when organizationId is a non-empty string', () => {
-      const service = { ...validService(), organizationId: 'org-789' };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'organizationId')).toBe(false);
+      expect(hasError(withFields({ organizationId: 'org-789' }), 'organizationId')).toBe(false);
     });
   });
 
   describe('serviceType validation (Rule 3)', () => {
     it('fails when serviceType is invalid', () => {
-      const service = { ...validService() } as Service;
-      service.serviceType = 'InvalidType' as unknown as ServiceType;
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'serviceType')).toBe(true);
+      expectError(withFields({ serviceType: 'InvalidType' }), 'serviceType');
     });
 
-    it('passes for serviceType: Service', () => {
-      const service = { ...validService() } as Service;
-      service.serviceType = 'Service';
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'serviceType')).toBe(false);
-    });
-
-    it('passes for serviceType: ProfessionalQualification', () => {
-      const service = { ...validService() } as Service;
-      service.serviceType = 'ProfessionalQualification';
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'serviceType')).toBe(false);
-    });
-
-    it('passes for serviceType: PermitOrObligation', () => {
-      const service = { ...validService() } as Service;
-      service.serviceType = 'PermitOrObligation';
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'serviceType')).toBe(false);
-    });
+    it.each(['Service', 'ProfessionalQualification', 'PermitOrObligation'] as const)(
+      'passes for serviceType: %s',
+      (serviceType) => {
+        expect(hasError(withFields({ serviceType }), 'serviceType')).toBe(false);
+      },
+    );
   });
 
   describe('languages validation (Rule 4)', () => {
-    it('fails when languages is empty array', () => {
-      const service = { ...validService(), languages: [] };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'languages')).toBe(true);
-    });
-
-    it('fails when languages is undefined', () => {
-      const service = { ...validService() } as Service;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (service as any).languages = undefined;
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'languages')).toBe(true);
+    it.each([
+      ['empty array', []],
+      ['undefined', undefined],
+    ])('fails when languages is %s', (_case, languages) => {
+      expectError(withFields({ languages }), 'languages');
     });
 
     it('passes when languages is non-empty array', () => {
-      const service = { ...validService(), languages: ['fi'] };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'languages')).toBe(false);
+      expect(hasError(withFields({ languages: ['fi'] }), 'languages')).toBe(false);
     });
   });
 
   describe('ontologyTerms limit (Rule 5)', () => {
     it('fails when ontologyTerms has more than 10 entries', () => {
-      const terms = Array.from({ length: 11 }, (_, i) => ({
-        uri: `http://www.yso.fi/onto/koko/p${i}`,
-        names: { fi: `Term ${i}` },
-      }));
-      const service = { ...validService(), ontologyTerms: terms };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms')).toBe(true);
+      expectError(withFields({ ontologyTerms: ontologyTerms(11) }), 'ontologyTerms');
     });
 
-    it('passes when ontologyTerms has exactly 10 entries', () => {
-      const terms = Array.from({ length: 10 }, (_, i) => ({
-        uri: `http://www.yso.fi/onto/koko/p${i}`,
-        names: { fi: `Term ${i}` },
-      }));
-      const service = { ...validService(), ontologyTerms: terms };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms')).toBe(false);
-    });
-
-    it('passes when ontologyTerms has fewer than 10 entries', () => {
-      const service = validService();
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms')).toBe(false);
+    it.each([
+      ['exactly 10', ontologyTerms(10)],
+      ['fewer than 10', validService().ontologyTerms],
+    ])('passes when ontologyTerms has %s entries', (_case, terms) => {
+      expect(hasError(withFields({ ontologyTerms: terms }), 'ontologyTerms')).toBe(false);
     });
   });
 
   describe('serviceClasses limit (Rule 6)', () => {
     it('fails when serviceClasses has more than 4 entries', () => {
-      const classes = Array.from({ length: 5 }, (_, i) => ({
-        uri: `http://example.com/class${i}`,
-        names: { fi: `Class ${i}` },
-      }));
-      const service = { ...validService(), serviceClasses: classes };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'serviceClasses')).toBe(true);
+      expectError(withFields({ serviceClasses: serviceClasses(5) }), 'serviceClasses');
     });
 
-    it('passes when serviceClasses has exactly 4 entries', () => {
-      const classes = Array.from({ length: 4 }, (_, i) => ({
-        uri: `http://example.com/class${i}`,
-        names: { fi: `Class ${i}` },
-      }));
-      const service = { ...validService(), serviceClasses: classes };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'serviceClasses')).toBe(false);
-    });
-
-    it('passes when serviceClasses has fewer than 4 entries', () => {
-      const service = validService();
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'serviceClasses')).toBe(false);
+    it.each([
+      ['exactly 4', serviceClasses(4)],
+      ['fewer than 4', validService().serviceClasses],
+    ])('passes when serviceClasses has %s entries', (_case, classes) => {
+      expect(hasError(withFields({ serviceClasses: classes }), 'serviceClasses')).toBe(false);
     });
   });
 
@@ -268,115 +202,69 @@ describe('V11ChangeValidator', () => {
   });
 
   describe('URI field validation (Rule 7)', () => {
-    it('fails when serviceClasses entry has no uri', () => {
-      const service = {
-        ...validService(),
-        serviceClasses: [{ code: 'CODE1', names: { fi: 'Class without uri' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'serviceClasses[0]')).toBe(true);
-    });
-
-    it('fails when ontologyTerms entry has empty uri', () => {
-      const service = {
-        ...validService(),
-        ontologyTerms: [{ uri: '', names: { fi: 'Term with empty uri' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms[0]')).toBe(true);
-    });
-
-    it('fails when ontologyTerms entry has whitespace-only uri', () => {
-      const service = {
-        ...validService(),
-        ontologyTerms: [{ uri: '   ', names: { fi: 'Term with whitespace uri' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms[0]')).toBe(true);
-    });
-
-    it('fails when targetGroups entry has no uri', () => {
-      const service = {
-        ...validService(),
-        targetGroups: [{ code: 'GROUP1', names: { fi: 'Group without uri' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'targetGroups[0]')).toBe(true);
-    });
-
-    it('fails when lifeEvents entry has no uri', () => {
-      const service = {
-        ...validService(),
-        lifeEvents: [{ code: 'EVENT1', names: { fi: 'Event without uri' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'lifeEvents[0]')).toBe(true);
+    it.each([
+      [
+        'serviceClasses entry has no uri',
+        'serviceClasses',
+        { code: 'CODE1', names: { fi: 'Class without uri' } },
+      ],
+      [
+        'ontologyTerms entry has empty uri',
+        'ontologyTerms',
+        { uri: '', names: { fi: 'Term with empty uri' } },
+      ],
+      [
+        'ontologyTerms entry has whitespace-only uri',
+        'ontologyTerms',
+        { uri: '   ', names: { fi: 'Term with whitespace uri' } },
+      ],
+      [
+        'targetGroups entry has no uri',
+        'targetGroups',
+        { code: 'GROUP1', names: { fi: 'Group without uri' } },
+      ],
+      [
+        'lifeEvents entry has no uri',
+        'lifeEvents',
+        { code: 'EVENT1', names: { fi: 'Event without uri' } },
+      ],
+    ])('fails when %s', (_case, field, entry) => {
+      expectError(withFields({ [field]: [entry] }), `${field}[0]`);
     });
 
     it('correctly identifies array index in error field for multiple violations', () => {
-      const service = {
-        ...validService(),
+      const service = withFields({
         ontologyTerms: [
           { uri: 'http://valid.com', names: { fi: 'Valid' } },
           { uri: '', names: { fi: 'Invalid at index 1' } },
           { uri: 'http://valid.com', names: { fi: 'Valid' } },
           { names: { fi: 'Invalid at index 3' } },
         ],
-      };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms[1]')).toBe(true);
-      expect(result.errors.some((e) => e.field === 'ontologyTerms[3]')).toBe(true);
+      });
+      expect(hasError(service, 'ontologyTerms[1]')).toBe(true);
+      expect(hasError(service, 'ontologyTerms[3]')).toBe(true);
     });
   });
 
   describe('industrialClasses code validation (Rule 8)', () => {
-    it('fails when industrialClasses entry has neither code nor uri', () => {
-      const service = {
-        ...validService(),
-        industrialClasses: [{ names: { fi: 'Industrial without code' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'industrialClasses[0]')).toBe(true);
-    });
-
-    it('fails when industrialClasses entry has empty code', () => {
-      const service = {
-        ...validService(),
-        industrialClasses: [{ code: '', names: { fi: 'Industrial with empty code' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'industrialClasses[0]')).toBe(true);
-    });
-
-    it('fails when industrialClasses entry has whitespace-only code', () => {
-      const service = {
-        ...validService(),
-        industrialClasses: [{ code: '   ', names: { fi: 'Industrial with whitespace code' } }],
-      };
-      const result = validator.validate(service);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some((e) => e.field === 'industrialClasses[0]')).toBe(true);
+    it.each([
+      ['neither code nor uri', { names: { fi: 'Industrial without code' } }],
+      ['empty code', { code: '', names: { fi: 'Industrial with empty code' } }],
+      ['whitespace-only code', { code: '   ', names: { fi: 'Industrial with whitespace code' } }],
+    ])('fails when industrialClasses entry has %s', (_case, entry) => {
+      expectError(withFields({ industrialClasses: [entry] }), 'industrialClasses[0]');
     });
 
     it('correctly identifies array index for multiple violations', () => {
-      const service = {
-        ...validService(),
+      const service = withFields({
         industrialClasses: [
           { code: 'VALID1', names: { fi: 'Valid' } },
           { code: '', names: { fi: 'Invalid at index 1' } },
           { names: { fi: 'Invalid at index 2' } },
         ],
-      };
-      const result = validator.validate(service);
-      expect(result.errors.some((e) => e.field === 'industrialClasses[1]')).toBe(true);
-      expect(result.errors.some((e) => e.field === 'industrialClasses[2]')).toBe(true);
+      });
+      expect(hasError(service, 'industrialClasses[1]')).toBe(true);
+      expect(hasError(service, 'industrialClasses[2]')).toBe(true);
     });
   });
 
@@ -387,11 +275,7 @@ describe('V11ChangeValidator', () => {
         names: {}, // violates Rule 1
         organizationId: '', // violates Rule 2
         languages: [], // violates Rule 4
-        ontologyTerms: Array.from({ length: 11 }, (_, i) => ({
-          // violates Rule 5
-          uri: `http://www.yso.fi/onto/koko/p${i}`,
-          names: { fi: `Term ${i}` },
-        })),
+        ontologyTerms: ontologyTerms(11), // violates Rule 5
         serviceClasses: [
           // violates Rule 6
           { uri: 'http://example.com/class1', names: { fi: 'Class 1' } },

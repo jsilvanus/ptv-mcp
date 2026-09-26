@@ -1,34 +1,23 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { tenants } from '../db/schema/index.js';
 import {
   TenantEnvironmentNotFoundError,
   TenantEnvironmentService,
 } from './tenantEnvironmentService.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('TenantEnvironmentService', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
   const masterKey = randomBytes(32).toString('base64');
   const service = new TenantEnvironmentService(db, masterKey);
-  const createdTenantIds: string[] = [];
+  const fixtures = new IntegrationFixtures(db, config);
 
-  afterEach(async () => {
-    for (const id of createdTenantIds) {
-      await db.delete(tenants).where(eq(tenants.id, id));
-    }
-    createdTenantIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
-  async function createTenant(): Promise<string> {
-    const id = randomUUID();
-    await db.insert(tenants).values({ id, name: 'Test Tenant', slug: `tenv-${id}` });
-    createdTenantIds.push(id);
-    return id;
-  }
+  const createTenant = () => fixtures.tenant({ slugPrefix: 'tenv' });
 
   it('stores and decrypts a credentials object', async () => {
     const tenantId = await createTenant();

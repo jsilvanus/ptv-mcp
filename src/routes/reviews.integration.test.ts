@@ -1,25 +1,16 @@
-import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import {
-  auditEntries,
-  memberships,
-  proposals,
-  reviewCampaigns,
-  tenants,
-  users,
-} from '../db/schema/index.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { auditEntries } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
-import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
-import { OAuthService } from '../mcp/oauthService.js';
+import { inMemoryV11Factory } from '../ptv/testing/fixtures.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
+import { injectToolCall, type InjectedToolResult } from '../testing/mcpClient.js';
 import type { Organization, Service, ServiceChannel } from '../ptv/domain.js';
 
 const ROOT_ORG = 'b0a1c2d3-0000-4000-8000-000000000001';
@@ -74,49 +65,27 @@ function channel(id: string): ServiceChannel {
   };
 }
 
-interface McpToolResult {
-  isError?: boolean;
-  content: { type: string; text: string }[];
-}
-
 describe('review campaign routes and tools', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
-  const configService = new PtvAdapterConfigService(db);
   const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
-  // Same issuer/resource as src/app.ts, see proposals.integration.test.ts.
-  const oauthService = new OAuthService(
-    db,
-    config.jwtSecret,
-    config.mcpPublicUrl,
-    config.mcpPublicUrl,
-  );
+  const fixtures = new IntegrationFixtures(db, config);
+  const configService = fixtures.adapterConfigs;
   let app: FastifyInstance;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
     app = await buildApp({
       config: { ...config, logLevel: 'silent' },
       db,
       adapterFactories: {
-        v11: (options) =>
-          new InMemoryPtvAdapter({
-            organizations: ORGANISATIONS,
-            // The fake ignores organizationId filters, so each organisation
-            // "has" every service; the campaign de-duplicates them.
-            services: [{ ...GOOD_SERVICE }, { ...BAD_SERVICE }],
-            channels: [channel('review-channel-1'), channel('review-channel-2')],
-            connections: [{ serviceId: GOOD_SERVICE.id, channelId: 'review-channel-1' }],
-            capabilities: {
-              apiVersion: 'v11',
-              environment: options.environment,
-              credentialScope: 'user',
-              supportsRead: true,
-              supportsWrite: options.canWrite,
-              supportsDraftRead: false,
-            },
-          }),
+        v11: inMemoryV11Factory(() => ({
+          organizations: ORGANISATIONS,
+          // The fake ignores organizationId filters, so each organisation
+          // "has" every service; the campaign de-duplicates them.
+          services: [{ ...GOOD_SERVICE }, { ...BAD_SERVICE }],
+          channels: [channel('review-channel-1'), channel('review-channel-2')],
+          connections: [{ serviceId: GOOD_SERVICE.id, channelId: 'review-channel-1' }],
+        })),
       },
     });
   });
@@ -125,93 +94,30 @@ describe('review campaign routes and tools', () => {
     await app.close();
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(proposals).where(eq(proposals.tenantId, tenantId));
-        await tx.delete(reviewCampaigns).where(eq(reviewCampaigns.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
-  async function createTenant(): Promise<string> {
-    const tenantId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: tenantId, name: 'Review tenant', slug: `rv-${tenantId}` });
-    createdTenantIds.push(tenantId);
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: true,
-      supportsDraftRead: false,
-    });
-    return tenantId;
-  }
+  const createTenant = () =>
+    fixtures.tenant({ name: 'Review tenant', slugPrefix: 'rv', v11: { supportsWrite: true } });
 
+  /** A user with `role` in `tenantId`, with both a web-UI and an MCP token. */
   async function createMember(tenantId: string, role: MembershipRole, name: string) {
-    const userId = randomUUID();
-    const email = `${userId}@example.test`;
-    await db.insert(users).values({ id: userId, email, name, passwordHash: 'x' });
-    createdUserIds.push(userId);
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role });
-    });
-    const token = await signAccessToken({ sub: userId }, config.jwtSecret);
-    const mcpToken = await oauthService.issueAccessToken(
+    const userId = await fixtures.user(name);
+    await fixtures.addMembership(tenantId, userId, role);
+    return {
       userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      tenantId,
-      'test',
-      'v11',
-      'v11',
-    );
-    return { userId, email, token, mcpToken };
+      email: `${userId}@example.test`,
+      token: await fixtures.webToken(userId),
+      mcpToken: await fixtures.mcpToken(userId, tenantId),
+    };
   }
 
   async function callTool(
     mcpToken: string,
     name: string,
     args: Record<string, unknown>,
-  ): Promise<{ result: McpToolResult; data: unknown }> {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/mcp',
-      headers: {
-        authorization: `Bearer ${mcpToken}`,
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      payload: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
-    });
-    expect(res.statusCode).toBe(200);
-    const raw = res.body.trim().startsWith('{')
-      ? res.body
-      : res.body
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5))
-          .join('');
-    const result = (JSON.parse(raw) as { result: McpToolResult }).result;
-    const text = result.content[0]?.text ?? '';
-    let data: unknown = text;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      // plain-text error message
-    }
+  ): Promise<{ result: InjectedToolResult; data: unknown }> {
+    const { statusCode, result, data } = await injectToolCall(app, mcpToken, name, args);
+    expect(statusCode).toBe(200);
     return { result, data };
   }
 
