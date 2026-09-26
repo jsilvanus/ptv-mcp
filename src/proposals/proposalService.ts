@@ -10,11 +10,17 @@ import {
   reviewDecisionEnum,
   users,
 } from '../db/schema/index.js';
-import type { Service } from '../ptv/domain.js';
 import type { ServiceDiffEntry } from '../mcp/proposeChanges.js';
 
 export type ProposalStatus = (typeof proposalStatusEnum.enumValues)[number];
 export type ProposalKind = (typeof proposalKindEnum.enumValues)[number];
+
+/**
+ * A proposal's `changes` as stored (the jsonb column). Each kind's handler
+ * reads it as that kind's typed changes (PROPOSAL_KINDS in
+ * src/mcp/proposalKinds.ts); a connection keeps its channel id here.
+ */
+export type StoredChanges = Record<string, unknown>;
 
 export interface ProposalRecord {
   id: string;
@@ -25,7 +31,7 @@ export interface ProposalRecord {
   environment: 'test' | 'production';
   proposedByUserId: string;
   status: ProposalStatus;
-  changes: Partial<Service>;
+  changes: StoredChanges;
   queuedDiff: ServiceDiffEntry[];
   correlationId: string;
   resolvedByUserId: string | null;
@@ -88,7 +94,7 @@ export class ProposalService {
     serviceId: string;
     environment: 'test' | 'production';
     proposedByUserId: string;
-    changes: Partial<Service>;
+    changes: StoredChanges;
     queuedDiff: ServiceDiffEntry[];
     correlationId: string;
     reviewItemId?: string;

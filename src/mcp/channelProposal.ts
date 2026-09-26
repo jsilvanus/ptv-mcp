@@ -1,14 +1,12 @@
-import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
-import { assertLocalizedTextFields } from './localizedInput.js';
-import { checkChannel, type QualityReport } from '../quality/contentChecks.js';
+import { resolveReadAdapter } from './toolContext.js';
+import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult } from '../ptv/adapter.js';
-import type { PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
+import type { PtvContentId, ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
-import { validateChannel } from '../validation/changeValidator.js';
-import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import type { MembershipRoleResolver } from './authorization.js';
+import { auditedApply, queueKindProposal } from './proposalPipeline.js';
 import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
@@ -128,39 +126,21 @@ export async function queueChannelProposal(
   correlationId?: string,
   reviewItemId?: string,
 ): Promise<QueuedChannelProposalResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(changes);
-  const prepared = await prepareChannelProposal(registry, ctx, channelId, changes);
-  const validation = validateChannel(prepared.proposed);
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeChannelChange',
-    resourceType: 'ServiceChannel',
-    resourceId: channelId,
-    afterState: { diff: prepared.diff, validationErrors: validation.errors },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    kind: 'channel_update',
-    serviceId: channelId,
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes: changes as Partial<Service>,
-    queuedDiff: prepared.diff,
-    correlationId: auditEntry.correlationId,
-    ...(reviewItemId ? { reviewItemId } : {}),
-  });
-  return {
-    ...prepared,
-    validation,
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-    quality: checkChannel(prepared.proposed),
-  };
+  const { prepared, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService },
+    ctx,
+    {
+      kind: 'channel_update',
+      input: changes,
+      targetId: channelId,
+      resourceId: channelId,
+      prepare: () => prepareChannelProposal(registry, ctx, channelId, changes),
+      changes: () => changes,
+      correlationId,
+      reviewItemId,
+    },
+  );
+  return { ...prepared, ...queued };
 }
 
 /**
@@ -176,43 +156,13 @@ export async function applyChannelChanges(
   changes: Partial<ServiceChannel>,
   correlationId: string,
 ): Promise<ApplyChannelChangeResult> {
-  if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
-  const { current, proposed } = await prepareChannelProposal(registry, ctx, channelId, changes);
-  const validation = validateChannel(proposed);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateChannelChange',
-    resourceType: 'ServiceChannel',
-    resourceId: channelId,
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
-    correlationId,
-  });
-  if (!validation.valid) throw new ValidationFailedError(validation.errors);
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-  const audit = (result: 'Success' | 'Failed') =>
-    auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ApplyChannelChange',
-      resourceType: 'ServiceChannel',
-      resourceId: channelId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      beforeState: current,
-      ...(result === 'Success' ? { afterState: proposed } : {}),
-      result,
+  return auditedApply({ registry, auditService }, ctx, 'channel_update', async () => {
+    const { current, proposed } = await prepareChannelProposal(registry, ctx, channelId, changes);
+    return {
       correlationId,
-    });
-  try {
-    const result = await writeAdapter.applyChannelChange({ channelId, changes });
-    await audit('Success');
-    return result;
-  } catch (err) {
-    await audit('Failed');
-    throw err;
-  }
+      proposed,
+      target: { resourceId: channelId, before: current },
+      write: (adapter) => adapter.applyChannelChange({ channelId, changes }),
+    };
+  });
 }

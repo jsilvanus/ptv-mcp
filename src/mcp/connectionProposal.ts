@@ -1,14 +1,12 @@
-import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
-import { assertLocalizedTextFields } from './localizedInput.js';
-import { checkConnection, type QualityReport } from '../quality/contentChecks.js';
+import { resolveReadAdapter } from './toolContext.js';
+import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyConnectionChangeResult } from '../ptv/adapter.js';
-import type { Connection, ConnectionDetails, PtvContentId, Service } from '../ptv/domain.js';
+import type { Connection, ConnectionDetails, PtvContentId } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
-import { validateConnectionDetails } from '../validation/channelRules.js';
-import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import type { MembershipRoleResolver } from './authorization.js';
+import { auditedApply, queueKindProposal } from './proposalPipeline.js';
 import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
@@ -30,6 +28,17 @@ export const CONNECTION_DETAIL_FIELDS = [
  * change.
  */
 export type ConnectionChanges = Partial<ConnectionDetails> & { channelId: PtvContentId };
+
+/** A `connection_update` proposal's changes as its handler reads them. */
+export interface ConnectionChange {
+  channelId: PtvContentId;
+  details: Partial<ConnectionDetails>;
+}
+
+/** A connection's audit resource id. */
+function connectionResourceId(serviceId: PtvContentId, channelId: PtvContentId): string {
+  return `${serviceId}/${channelId}`;
+}
 
 export class ConnectionNotFoundError extends Error {
   constructor(serviceId: PtvContentId, channelId: PtvContentId) {
@@ -58,10 +67,7 @@ export interface PreparedConnectionProposal {
 }
 
 /** Splits stored `changes` into the channel id and the detail changes. */
-export function splitConnectionChanges(changes: ConnectionChanges): {
-  channelId: PtvContentId;
-  details: Partial<ConnectionDetails>;
-} {
+export function splitConnectionChanges(changes: ConnectionChanges): ConnectionChange {
   const { channelId, ...details } = changes;
   return { channelId, details };
 }
@@ -112,40 +118,21 @@ export async function queueConnectionProposal(
   correlationId?: string,
   reviewItemId?: string,
 ): Promise<QueuedConnectionProposalResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(changes);
-  const prepared = await prepareConnectionProposal(registry, ctx, serviceId, channelId, changes);
-  const validation = validateConnectionDetails(prepared.proposed);
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeConnectionChange',
-    resourceType: 'Connection',
-    resourceId: `${serviceId}/${channelId}`,
-    afterState: { diff: prepared.diff, validationErrors: validation.errors },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const stored: ConnectionChanges = { channelId, ...changes };
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    kind: 'connection_update',
-    serviceId,
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes: stored as unknown as Partial<Service>,
-    queuedDiff: prepared.diff,
-    correlationId: auditEntry.correlationId,
-    ...(reviewItemId ? { reviewItemId } : {}),
-  });
-  return {
-    ...prepared,
-    validation,
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-    quality: checkConnection(prepared.proposed),
-  };
+  const { prepared, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService },
+    ctx,
+    {
+      kind: 'connection_update',
+      input: changes,
+      targetId: serviceId,
+      resourceId: connectionResourceId(serviceId, channelId),
+      prepare: () => prepareConnectionProposal(registry, ctx, serviceId, channelId, changes),
+      changes: () => ({ channelId, details: changes }),
+      correlationId,
+      reviewItemId,
+    },
+  );
+  return { ...prepared, ...queued };
 }
 
 /**
@@ -162,50 +149,19 @@ export async function applyConnectionChanges(
   changes: Partial<ConnectionDetails>,
   correlationId: string,
 ): Promise<ApplyConnectionChangeResult> {
-  if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
-  const { current, proposed } = await prepareConnectionProposal(
-    registry,
-    ctx,
-    serviceId,
-    channelId,
-    changes,
-  );
-  const validation = validateConnectionDetails(proposed);
-  const resourceId = `${serviceId}/${channelId}`;
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateConnectionChange',
-    resourceType: 'Connection',
-    resourceId,
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
-    correlationId,
-  });
-  if (!validation.valid) throw new ValidationFailedError(validation.errors);
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-  const audit = (result: 'Success' | 'Failed') =>
-    auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ApplyConnectionChange',
-      resourceType: 'Connection',
-      resourceId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      beforeState: current,
-      ...(result === 'Success' ? { afterState: proposed } : {}),
-      result,
+  return auditedApply({ registry, auditService }, ctx, 'connection_update', async () => {
+    const { current, proposed } = await prepareConnectionProposal(
+      registry,
+      ctx,
+      serviceId,
+      channelId,
+      changes,
+    );
+    return {
       correlationId,
-    });
-  try {
-    const result = await writeAdapter.applyConnectionChange({ serviceId, channelId, changes });
-    await audit('Success');
-    return result;
-  } catch (err) {
-    await audit('Failed');
-    throw err;
-  }
+      proposed,
+      target: { resourceId: connectionResourceId(serviceId, channelId), before: current },
+      write: (adapter) => adapter.applyConnectionChange({ serviceId, channelId, changes }),
+    };
+  });
 }

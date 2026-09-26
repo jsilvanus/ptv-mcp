@@ -1873,3 +1873,36 @@ Left as separate tasks: a per-kind proposal handler registry with typed
 `changes`, a v12 organisation cache and bulk connection reads, splitting
 `AuthService.login` so MCP login doesn't create web sessions, and the
 larger web page splits.
+
+## 2026-09-26 — Proposal kinds described in one place
+
+The per-kind proposal handler registry left over from the simplify pass.
+
+- **`PROPOSAL_KINDS`** (`src/mcp/proposalKinds.ts`): one handler per
+  proposal kind, typed as a mapped type over `ProposalKind`, so a missing
+  kind is a compile error. Each handler says whether the kind creates an
+  item, its audit action names, how its stored changes are parsed and
+  stored, its live re-diff, validation, quality checks, approve-for-export
+  and apply steps, how a created item is read back for
+  `ptv_confirm_manual_publish`, its not-found error, its manual-publishing
+  sheet target, subject and steps, and which review items it can answer.
+  `proposalQueue.ts`, `manualPublish.ts` and `reviewCampaigns.ts` dispatch
+  through it instead of branching on `kind`; `isCreateKind` is gone.
+- **Typed changes without a migration:** `ProposalRecord.changes` and
+  `createPending`'s `changes` are `StoredChanges` (`Record<string,
+  unknown>`, the jsonb column). Each handler's `parse`/`store` is the typed
+  accessor; the `as unknown as` casts at the persistence boundary are gone.
+  A connection still stores its `channelId` inside `changes`, so existing
+  rows read as before.
+- **Shared pipelines** (`src/mcp/proposalPipeline.ts`): `queueKindProposal`
+  (contributor check → localized-text check → prepare → validate → audit
+  Propose* → `createPending` → quality) and `auditedApply` (write API check
+  → validate → audit Validate* → resolve write adapter → write → audit
+  Apply*/Create* Success or Failed). Every queue and apply function,
+  including `ptv_apply_changes`, uses them. `ValidationFailedError` moved
+  there and is re-exported from `applyOrExport.ts`.
+
+Behaviour is unchanged: tool names, descriptions and schemas, REST
+responses (including result key order), audit entries, error classes and
+messages, and the manual-publishing sheets are the same. No test needed
+changes.

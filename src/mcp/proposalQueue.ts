@@ -1,15 +1,5 @@
 import { resolveReadAdapter } from './toolContext.js';
-import { assertLocalizedTextFields } from './localizedInput.js';
-import { asChannel, createNewChannel, normalizeNewChannel } from './newChannelProposal.js';
-import type { NewChannel, NewOrganization } from '../ptv/adapter.js';
-import {
-  checkChannel,
-  checkConnection,
-  checkOrganization,
-  checkService,
-  type QualityReport,
-  type ServiceCheckContext,
-} from '../quality/contentChecks.js';
+import type { QualityReport, ServiceCheckContext } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
@@ -30,28 +20,8 @@ import {
   type ProposalReviewer,
   type ProposalRecord,
   type ProposalStatus,
+  type StoredChanges,
 } from '../proposals/proposalService.js';
-import type { NewService } from '../ptv/adapter.js';
-import { createNewService, normalizeNewService } from './newServiceProposal.js';
-import { serviceCheckContext } from '../quality/serviceCheckContext.js';
-import {
-  applyOrganizationChanges,
-  createNewOrganization,
-  OrganizationNotFoundError,
-  prepareOrganizationProposal,
-} from './organizationProposal.js';
-import {
-  applyConnectionChanges,
-  ConnectionNotFoundError,
-  prepareConnectionProposal,
-  splitConnectionChanges,
-  type ConnectionChanges,
-} from './connectionProposal.js';
-import {
-  applyChannelChanges,
-  ChannelNotFoundError,
-  prepareChannelProposal,
-} from './channelProposal.js';
 import {
   FourEyesError,
   NotAuthorizedError,
@@ -60,14 +30,15 @@ import {
   type MembershipRoleResolver,
 } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
-import { applyChanges, exportForManualPublish } from './applyOrExport.js';
 import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
-import { isCreateKind } from './proposalKinds.js';
+import { queueKindProposal } from './proposalPipeline.js';
 import {
-  prepareProposal,
-  ServiceNotFoundError,
-  type ProposeChangesResult,
-} from './proposeChanges.js';
+  kindHandler,
+  proposedServiceContext,
+  type AppliedOutcome,
+  type ProposedEntity,
+} from './proposalKinds.js';
+import { prepareProposal, type ProposeChangesResult } from './proposeChanges.js';
 
 export type ResolveProposalAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 
@@ -79,33 +50,15 @@ export interface QueuedProposeChangesResult extends ProposeChangesResult {
 }
 
 /**
- * Automated content checks on a proposal's `proposed` entity. A channel
- * update doesn't know the channel's connections, so its Q-STRUCT-5 is left
- * to the review item and ptv_check_quality; a new channel is connected to
- * exactly its `serviceIds`.
+ * Automated content checks on a proposal's `proposed` entity, by its kind's
+ * handler (PROPOSAL_KINDS).
  */
 export function proposedQuality(
   kind: ProposalKind,
-  proposed: Service | NewService | ServiceChannel | Connection | Organization | null,
+  proposed: ProposedEntity | null,
   serviceContext: ServiceCheckContext = {},
 ): QualityReport | null {
-  if (!proposed) return null;
-  if (kind === 'organisation_update' || kind === 'organisation_create') {
-    return checkOrganization(proposed as Organization);
-  }
-  if (kind === 'connection_update') return checkConnection(proposed as Connection);
-  if (kind === 'channel_create') {
-    const serviceIds = (proposed as { serviceIds?: string[] }).serviceIds;
-    return checkChannel(proposed as ServiceChannel, {
-      connectedServiceCount: serviceIds?.length ?? 0,
-      creating: true,
-    });
-  }
-  if (kind === 'channel_update') return checkChannel(proposed as ServiceChannel);
-  return checkService(proposed as Service | NewService, {
-    ...serviceContext,
-    creating: kind === 'service_create',
-  });
+  return proposed ? kindHandler(kind).quality(proposed, serviceContext) : null;
 }
 
 export interface ProposalSummary {
@@ -125,7 +78,7 @@ export interface ProposalSummary {
 }
 
 export interface ProposalDetails extends ProposalSummary {
-  changes: Partial<Service>;
+  changes: StoredChanges;
   queuedDiff: ProposeChangesResult['diff'];
   diff: ProposeChangesResult['diff'];
   /**
@@ -135,7 +88,7 @@ export interface ProposalDetails extends ProposalSummary {
    */
   current: Service | ServiceChannel | Connection | Organization | null;
   /** `null` when the service or channel can no longer be read (see `current`). */
-  proposed: Service | NewService | ServiceChannel | Connection | Organization | null;
+  proposed: ProposedEntity | null;
   /** Oldest first. */
   comments: ProposalComment[];
   /** Required reviewers; approving waits until all have `approved`. */
@@ -193,10 +146,8 @@ async function proposalDetails(
     proposalService.listComments(ctx.tenantId, proposal.id),
     proposalService.listReviewers(ctx.tenantId, proposal.id),
   ]);
-  const serviceContext =
-    proposal.kind === 'service_update' || proposal.kind === 'service_create'
-      ? await proposedServiceContext(registry, ctx, details.proposed as Service | null)
-      : undefined;
+  const handler = kindHandler(proposal.kind);
+  const serviceContext = await handler.qualityContext?.(registry, ctx, details.proposed);
   return {
     ...details,
     comments,
@@ -206,51 +157,19 @@ async function proposalDetails(
   };
 }
 
-/** The organisation and general description a proposed service is checked against. */
-async function proposedServiceContext(
-  registry: PtvAdapterRegistry,
-  ctx: ToolContext,
-  service: Service | null,
-): Promise<ServiceCheckContext> {
-  if (!service) return {};
-  const adapter = await resolveReadAdapter(registry, ctx).catch(() => null);
-  return adapter ? serviceCheckContext(adapter, service) : {};
-}
-
 function manualPublishState(
   proposal: ProposalRecord,
   details: DiffDetails,
 ): Pick<ProposalDetails, 'manualPublish' | 'publishedInPtv'> {
   if (proposal.status !== 'approved') return { manualPublish: null, publishedInPtv: null };
-  if (proposal.kind === 'connection_update') {
-    const { channelId } = splitConnectionChanges(proposal.changes as unknown as ConnectionChanges);
-    return {
-      manualPublish: buildManualPublishSheet({
-        kind: proposal.kind,
-        diff: details.diff,
-        ptvId: proposal.serviceId,
-        names: {},
-        languages: [],
-        channelId,
-      }),
-      publishedInPtv: details.current ? details.diff.length === 0 : null,
-    };
-  }
-  const entity = (details.proposed ?? details.current) as
-    (Partial<ServiceChannel> & { names?: Service['names']; parentOrganizationId?: string }) | null;
-  const creating = isCreateKind(proposal.kind);
-  // A new sub-organisation is added under its parent.
-  const organizationId =
-    proposal.kind === 'organisation_create' ? entity?.parentOrganizationId : entity?.organizationId;
+  const handler = kindHandler(proposal.kind);
+  const creating = handler.creates;
   return {
     manualPublish: buildManualPublishSheet({
       kind: proposal.kind,
       diff: creating ? proposal.queuedDiff : details.diff,
       ptvId: creating ? null : proposal.serviceId,
-      names: ((details.current ?? entity) as { names?: Service['names'] } | null)?.names ?? {},
-      languages: Object.keys(entity?.names ?? {}),
-      ...(entity?.channelType ? { channelType: entity.channelType } : {}),
-      ...(organizationId ? { organizationId } : {}),
+      ...handler.sheet.subject(handler.parse(proposal.changes), details),
     }),
     publishedInPtv: publishedInPtv(proposal, details, creating),
   };
@@ -267,8 +186,7 @@ function publishedInPtv(
 ): boolean | null {
   if (creating) return null;
   if (details.current) return details.diff.length === 0;
-  const archived =
-    (proposal.changes as { publishingStatus?: string }).publishingStatus === 'Archived';
+  const archived = proposal.changes.publishingStatus === 'Archived';
   return archived ? true : null;
 }
 
@@ -276,8 +194,6 @@ type DiffDetails = Omit<
   ProposalDetails,
   'comments' | 'reviewers' | 'quality' | 'manualPublish' | 'publishedInPtv'
 >;
-
-type LiveDiff = Pick<DiffDetails, 'diff' | 'current' | 'proposed'>;
 
 /** The proposal re-diffed against PTV now, read in the proposal's own environment. */
 async function proposalDiffDetails(
@@ -290,70 +206,23 @@ async function proposalDiffDetails(
     changes: proposal.changes,
     queuedDiff: proposal.queuedDiff,
   };
+  const handler = kindHandler(proposal.kind);
   try {
-    const { diff, current, proposed } = await liveDiff(registry, proposal, {
-      ...ctx,
-      environment: proposal.environment,
-    });
+    const { diff, current, proposed } = await handler.liveDiff(
+      registry,
+      { ...ctx, environment: proposal.environment },
+      {
+        targetId: proposal.serviceId,
+        changes: handler.parse(proposal.changes),
+        queuedDiff: proposal.queuedDiff,
+      },
+    );
     return { ...base, diff, current, proposed };
   } catch (err) {
-    if (!(
-      err instanceof ServiceNotFoundError ||
-      err instanceof ChannelNotFoundError ||
-      err instanceof ConnectionNotFoundError ||
-      err instanceof OrganizationNotFoundError
-    )) {
-      throw err;
-    }
+    if (!handler.isNotFound(err)) throw err;
     // The target is gone (archived services and channels 404), but the
     // proposal record itself is still reviewable.
     return { ...base, diff: [], current: null, proposed: null };
-  }
-}
-
-/**
- * New items diff against nothing (the queue-time diff stands); updates
- * re-read the target and re-diff.
- */
-async function liveDiff(
-  registry: PtvAdapterRegistry,
-  proposal: ProposalRecord,
-  ctx: ToolContext,
-): Promise<LiveDiff> {
-  const created = (proposed: DiffDetails['proposed']): LiveDiff => ({
-    diff: proposal.queuedDiff,
-    current: null,
-    proposed,
-  });
-  const changes = proposal.changes as unknown;
-  switch (proposal.kind) {
-    case 'channel_create':
-      return created(asChannel(normalizeNewChannel(changes as Partial<NewChannel>)));
-    case 'service_create':
-      return created(normalizeNewService(proposal.changes));
-    case 'organisation_create':
-      // Stored normalized at queue time (the parent's defaults filled in).
-      return created({ ...(changes as NewOrganization), id: '' });
-    case 'organisation_update':
-      return prepareOrganizationProposal(
-        registry,
-        ctx,
-        proposal.serviceId,
-        changes as Partial<Organization>,
-      );
-    case 'connection_update': {
-      const { channelId, details } = splitConnectionChanges(changes as ConnectionChanges);
-      return prepareConnectionProposal(registry, ctx, proposal.serviceId, channelId, details);
-    }
-    case 'channel_update':
-      return prepareChannelProposal(
-        registry,
-        ctx,
-        proposal.serviceId,
-        changes as Partial<ServiceChannel>,
-      );
-    case 'service_update':
-      return prepareProposal(registry, ctx, proposal.serviceId, proposal.changes);
   }
 }
 
@@ -368,40 +237,29 @@ export async function queueProposal(
   correlationId?: string,
   reviewItemId?: string,
 ): Promise<QueuedProposeChangesResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(changes);
-  const prepared = await prepareProposal(registry, ctx, serviceId, changes);
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeServiceChange',
-    resourceType: 'Service',
-    resourceId: serviceId,
-    afterState: { diff: prepared.diff },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    serviceId,
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes,
-    queuedDiff: prepared.diff,
-    correlationId: auditEntry.correlationId,
-    ...(reviewItemId ? { reviewItemId } : {}),
-  });
-
+  const { prepared, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService },
+    ctx,
+    {
+      kind: 'service_update',
+      input: changes,
+      targetId: serviceId,
+      resourceId: serviceId,
+      prepare: () => prepareProposal(registry, ctx, serviceId, changes),
+      changes: () => changes,
+      // Validated when it is applied or exported (ptv_validate_changes).
+      validate: false,
+      qualityContext: (proposed) => proposedServiceContext(registry, ctx, proposed),
+      correlationId,
+      reviewItemId,
+    },
+  );
   return {
     ...prepared,
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-    quality: proposedQuality(
-      'service_update',
-      prepared.proposed,
-      await proposedServiceContext(registry, ctx, prepared.proposed),
-    ) as QualityReport,
+    correlationId: queued.correlationId,
+    proposalId: queued.proposalId,
+    status: queued.status,
+    quality: queued.quality,
   };
 }
 
@@ -721,30 +579,24 @@ export async function resolveProposal(
     return proposalDetails(registry, proposalService, rejected, proposalCtx);
   }
 
+  const handler = kindHandler(proposal.kind);
+  const stored = () => ({
+    targetId: proposal.serviceId,
+    changes: handler.parse(proposal.changes),
+    queuedDiff: proposal.queuedDiff,
+    correlationId: proposal.correlationId,
+  });
+  const deps = { resolveRole, registry, auditService, validator };
+
   if (action === 'approve_and_export') {
-    // A service change is re-validated before export; the other kinds were
-    // validated when queued and are re-diffed on every read.
-    if (proposal.kind === 'service_update') {
-      await exportForManualPublish(
-        resolveRole,
-        registry,
-        auditService,
-        proposalCtx,
-        proposal.serviceId,
-        proposal.changes,
-        proposal.correlationId,
-      );
-    }
+    const afterState = await handler.approveForExport(deps, proposalCtx, stored());
     const approved = await proposalService.markResolved(
       ctx.tenantId,
       proposalId,
       'approved',
       ctx.actingUserId,
     );
-    await record(
-      'ApprovedForManualPublish',
-      proposal.kind === 'service_create' ? normalizeNewService(proposal.changes) : undefined,
-    );
+    await record('ApprovedForManualPublish', afterState);
     return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
@@ -752,11 +604,7 @@ export async function resolveProposal(
 
   let outcome: AppliedOutcome;
   try {
-    outcome = await applyApproved(
-      { resolveRole, registry, auditService, validator },
-      proposalCtx,
-      proposal,
-    );
+    outcome = await handler.apply(deps, proposalCtx, stored());
   } catch (err) {
     // Not being allowed to write leaves the proposal pending for a Publisher.
     if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
@@ -775,110 +623,6 @@ export async function resolveProposal(
   );
   await record('Applied', outcome.afterState);
   return proposalDetails(registry, proposalService, applied, proposalCtx);
-}
-
-interface AppliedOutcome {
-  /** PTV's id for a created item, recorded on the proposal. */
-  createdId?: string;
-  afterState?: object;
-}
-
-/**
- * Writes an approved proposal through a write-capable adapter (Publisher,
- * enforced by the registry): updates re-diff against PTV first, new items
- * are created and their id returned.
- */
-async function applyApproved(
-  deps: {
-    resolveRole: MembershipRoleResolver;
-    registry: PtvAdapterRegistry;
-    auditService: AuditService;
-    validator: ChangeValidator;
-  },
-  ctx: ToolContext,
-  proposal: ProposalRecord,
-): Promise<AppliedOutcome> {
-  const { registry, auditService } = deps;
-  const { serviceId: targetId, correlationId } = proposal;
-  const changes = proposal.changes as unknown;
-  switch (proposal.kind) {
-    case 'service_update':
-      await applyChanges(
-        deps.resolveRole,
-        registry,
-        auditService,
-        deps.validator,
-        ctx,
-        targetId,
-        proposal.changes,
-        correlationId,
-      );
-      return {};
-    case 'service_create': {
-      const { serviceId } = await createNewService(
-        registry,
-        auditService,
-        deps.validator,
-        ctx,
-        normalizeNewService(proposal.changes),
-        correlationId,
-      );
-      return { createdId: serviceId, afterState: { serviceId } };
-    }
-    case 'channel_update':
-      await applyChannelChanges(
-        registry,
-        auditService,
-        ctx,
-        targetId,
-        changes as Partial<ServiceChannel>,
-        correlationId,
-      );
-      return {};
-    case 'channel_create': {
-      const { channelId } = await createNewChannel(
-        registry,
-        auditService,
-        ctx,
-        normalizeNewChannel(changes as Partial<NewChannel>),
-        correlationId,
-      );
-      return { createdId: channelId, afterState: { channelId } };
-    }
-    case 'connection_update': {
-      const { channelId, details } = splitConnectionChanges(changes as ConnectionChanges);
-      await applyConnectionChanges(
-        registry,
-        auditService,
-        ctx,
-        targetId,
-        channelId,
-        details,
-        correlationId,
-      );
-      return {};
-    }
-    case 'organisation_update':
-      await applyOrganizationChanges(
-        registry,
-        auditService,
-        ctx,
-        targetId,
-        changes as Partial<Organization>,
-        correlationId,
-      );
-      return {};
-    case 'organisation_create': {
-      const { organizationId } = await createNewOrganization(
-        registry,
-        auditService,
-        ctx,
-        changes as NewOrganization,
-        correlationId,
-      );
-      return { createdId: organizationId, afterState: { organizationId } };
-    }
-  }
 }
 
 export class ManualPublishCheckError extends Error {
@@ -914,7 +658,7 @@ export async function confirmManualPublish(
   }
   const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
   let createdId: string | undefined;
-  if (isCreateKind(proposal.kind)) {
+  if (kindHandler(proposal.kind).creates) {
     if (!ptvId?.trim()) {
       throw new ManualPublishCheckError(
         'Give ptvId: the id PTV gave the new item (shown in its address in PTV).',
@@ -954,47 +698,28 @@ async function checkCreatedItem(
   proposal: ProposalRecord,
   ptvId: string,
 ): Promise<void> {
+  const handler = kindHandler(proposal.kind);
+  const target = handler.created;
+  if (!target) throw new Error(`A ${proposal.kind} proposal does not create an item`);
   const adapter = await resolveReadAdapter(registry, ctx);
-  const changes = proposal.changes as Partial<Service> & { parentOrganizationId?: string };
   // What to read back, and the organisation it must belong to: a service's
   // or channel's own organisation, a sub-organisation's parent.
-  const target = {
-    service_create: {
-      what: 'service',
-      expectedOrg: changes.organizationId,
-      read: () => adapter.getService(ptvId),
-    },
-    channel_create: {
-      what: 'channel',
-      expectedOrg: changes.organizationId,
-      read: () => adapter.getChannel(ptvId),
-    },
-    organisation_create: {
-      what: 'organisation',
-      expectedOrg: changes.parentOrganizationId,
-      read: async () => {
-        const org = await adapter.getOrganisation(ptvId);
-        return org && { organizationId: org.parentOrganizationId ?? '', names: org.names };
-      },
-    },
-  }[proposal.kind as 'service_create' | 'channel_create' | 'organisation_create'];
-  const found: { organizationId: string; names: Service['names'] } | null = await target
-    .read()
-    .catch(() => null);
+  const expected = target.expected(handler.parse(proposal.changes));
+  const found = await target.read(adapter, ptvId).catch(() => null);
   if (!found) {
     throw new ManualPublishCheckError(
       `No ${target.what} ${ptvId} in PTV (${ctx.environment}). Check the id; a draft may not be readable until it is published.`,
     );
   }
   const problems: string[] = [];
-  if (target.expectedOrg && found.organizationId !== target.expectedOrg) {
+  if (expected.organizationId && found.organizationId !== expected.organizationId) {
     problems.push(
       target.what === 'organisation'
-        ? `its parent is ${found.organizationId || 'none'}, not ${target.expectedOrg}`
-        : `it belongs to organisation ${found.organizationId}, not ${target.expectedOrg}`,
+        ? `its parent is ${found.organizationId || 'none'}, not ${expected.organizationId}`
+        : `it belongs to organisation ${found.organizationId}, not ${expected.organizationId}`,
     );
   }
-  for (const [language, name] of Object.entries(changes.names ?? {})) {
+  for (const [language, name] of Object.entries(expected.names)) {
     if (name && found.names[language] !== name) {
       problems.push(`its ${language} name is "${found.names[language] ?? ''}", not "${name}"`);
     }
