@@ -1,15 +1,13 @@
 import { OrganizationNotFoundError } from '../ptv/organisationContent.js';
-import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
-import { assertLocalizedTextFields } from './localizedInput.js';
-import { checkOrganization, type QualityReport } from '../quality/contentChecks.js';
+import { resolveReadAdapter } from './toolContext.js';
+import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyOrganizationChangeResult, NewOrganization } from '../ptv/adapter.js';
-import type { Organization, PtvContentId, Service } from '../ptv/domain.js';
+import type { Organization, PtvContentId } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
-import { validateOrganization } from '../validation/organizationRules.js';
-import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import type { MembershipRoleResolver } from './authorization.js';
+import { auditedApply, queueKindProposal } from './proposalPipeline.js';
 import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
@@ -104,38 +102,20 @@ export async function queueOrganizationProposal(
   changes: Partial<Organization>,
   correlationId?: string,
 ): Promise<QueuedOrganizationProposalResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(changes);
-  const prepared = await prepareOrganizationProposal(registry, ctx, organizationId, changes);
-  const validation = validateOrganization(prepared.proposed);
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeOrganizationChange',
-    resourceType: 'Organization',
-    resourceId: organizationId,
-    afterState: { diff: prepared.diff, validationErrors: validation.errors },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    kind: 'organisation_update',
-    serviceId: organizationId,
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes: changes as unknown as Partial<Service>,
-    queuedDiff: prepared.diff,
-    correlationId: auditEntry.correlationId,
-  });
-  return {
-    ...prepared,
-    validation,
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-    quality: checkOrganization(prepared.proposed),
-  };
+  const { prepared, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService },
+    ctx,
+    {
+      kind: 'organisation_update',
+      input: changes,
+      targetId: organizationId,
+      resourceId: organizationId,
+      prepare: () => prepareOrganizationProposal(registry, ctx, organizationId, changes),
+      changes: () => changes,
+      correlationId,
+    },
+  );
+  return { ...prepared, ...queued };
 }
 
 /**
@@ -151,50 +131,20 @@ export async function applyOrganizationChanges(
   changes: Partial<Organization>,
   correlationId: string,
 ): Promise<ApplyOrganizationChangeResult> {
-  if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
-  const { current, proposed } = await prepareOrganizationProposal(
-    registry,
-    ctx,
-    organizationId,
-    changes,
-  );
-  const validation = validateOrganization(proposed);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateOrganizationChange',
-    resourceType: 'Organization',
-    resourceId: organizationId,
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
-    correlationId,
-  });
-  if (!validation.valid) throw new ValidationFailedError(validation.errors);
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-  const audit = (result: 'Success' | 'Failed') =>
-    auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ApplyOrganizationChange',
-      resourceType: 'Organization',
-      resourceId: organizationId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      beforeState: current,
-      ...(result === 'Success' ? { afterState: proposed } : {}),
-      result,
+  return auditedApply({ registry, auditService }, ctx, 'organisation_update', async () => {
+    const { current, proposed } = await prepareOrganizationProposal(
+      registry,
+      ctx,
+      organizationId,
+      changes,
+    );
+    return {
       correlationId,
-    });
-  try {
-    const result = await writeAdapter.applyOrganizationChange({ organizationId, changes });
-    await audit('Success');
-    return result;
-  } catch (err) {
-    await audit('Failed');
-    throw err;
-  }
+      proposed,
+      target: { resourceId: organizationId, before: current },
+      write: (adapter) => adapter.applyOrganizationChange({ organizationId, changes }),
+    };
+  });
 }
 
 /**
@@ -261,8 +211,31 @@ export async function queueNewOrganizationProposal(
   input: Partial<NewOrganization>,
   correlationId?: string,
 ): Promise<QueuedNewOrganizationResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(input);
+  const { prepared, validation, quality, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService },
+    ctx,
+    {
+      kind: 'organisation_create',
+      input,
+      targetId: '',
+      prepare: () => prepareNewOrganization(registry, ctx, input),
+      changes: ({ proposed }) => proposed,
+      correlationId,
+    },
+  );
+  return { ...prepared, validation, quality, ...queued };
+}
+
+/**
+ * Checks the parent (it must exist and leave room for one more level),
+ * fills in what the new sub-organisation copies from it, and diffs it
+ * against an empty one.
+ */
+async function prepareNewOrganization(
+  registry: PtvAdapterRegistry,
+  ctx: ToolContext,
+  input: Partial<NewOrganization>,
+): Promise<{ proposed: NewOrganization; diff: ServiceDiffEntry[] }> {
   if (!input.parentOrganizationId) {
     throw new InvalidNewOrganizationError(
       'Give parentOrganizationId: the organisation the new sub-organisation goes under.',
@@ -285,35 +258,7 @@ export async function queueNewOrganizationProposal(
       Object.entries(proposed).filter(([, value]) => value !== undefined && value !== ''),
     ) as Partial<Organization>,
   );
-  const validation = validateOrganization(proposed, true);
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeNewOrganization',
-    resourceType: 'Organization',
-    afterState: { proposed, validationErrors: validation.errors },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    kind: 'organisation_create',
-    serviceId: '',
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes: proposed as unknown as Partial<Service>,
-    queuedDiff: diff,
-    correlationId: auditEntry.correlationId,
-  });
-  return {
-    proposed,
-    diff,
-    validation,
-    quality: checkOrganization(proposed),
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-  };
+  return { proposed, diff };
 }
 
 /**
@@ -328,40 +273,12 @@ export async function createNewOrganization(
   organization: NewOrganization,
   correlationId: string,
 ): Promise<ApplyOrganizationChangeResult> {
-  if (!ctx.writeApiVersion) throw new WriteApiNotSelectedError();
-  const validation = validateOrganization(organization, true);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateNewOrganization',
-    resourceType: 'Organization',
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
+  return auditedApply({ registry, auditService }, ctx, 'organisation_create', async () => ({
     correlationId,
-  });
-  if (!validation.valid) throw new ValidationFailedError(validation.errors);
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-  const audit = (result: 'Success' | 'Failed', organizationId?: string) =>
-    auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'CreateOrganization',
-      resourceType: 'Organization',
-      ...(organizationId ? { resourceId: organizationId } : {}),
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      afterState: organization,
-      result,
-      correlationId,
-    });
-  try {
-    const result = await writeAdapter.createOrganization(organization);
-    await audit('Success', result.organizationId);
-    return result;
-  } catch (err) {
-    await audit('Failed');
-    throw err;
-  }
+    proposed: organization,
+    target: {
+      createdId: (result: ApplyOrganizationChangeResult) => result.organizationId,
+    },
+    write: (adapter) => adapter.createOrganization(organization),
+  }));
 }

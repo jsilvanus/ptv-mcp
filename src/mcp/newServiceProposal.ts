@@ -1,14 +1,12 @@
-import { resolveWriteAdapter } from './toolContext.js';
-import { assertLocalizedTextFields } from './localizedInput.js';
-import { checkService, type QualityReport } from '../quality/contentChecks.js';
+import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyServiceChangeResult, NewService } from '../ptv/adapter.js';
 import type { Service } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
-import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
-import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
+import type { MembershipRoleResolver } from './authorization.js';
+import { auditedApply, queueKindProposal } from './proposalPipeline.js';
 import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
@@ -42,7 +40,7 @@ export function normalizeNewService(input: Partial<Service>): NewService {
 }
 
 /** A NewService as a Service with no id, for the validator and diff. */
-function asService(service: NewService): Service {
+export function asService(service: NewService): Service {
   return { ...service, id: '' };
 }
 
@@ -73,40 +71,23 @@ export async function queueNewServiceProposal(
   correlationId?: string,
   reviewItemId?: string,
 ): Promise<QueuedNewServiceResult> {
-  await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  assertLocalizedTextFields(input);
-  const proposed = normalizeNewService(input);
-  const diff = diffFields(EMPTY_SERVICE, proposed);
-  const validation = validator.validate(asService(proposed));
-  const auditEntry = await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ProposeNewService',
-    resourceType: 'Service',
-    afterState: { proposed, validationErrors: validation.errors },
-    result: 'Proposed',
-    ...(correlationId ? { correlationId } : {}),
-  });
-  const proposal = await proposalService.createPending({
-    tenantId: ctx.tenantId,
-    kind: 'service_create',
-    serviceId: '',
-    environment: ctx.environment,
-    proposedByUserId: ctx.actingUserId,
-    changes: proposed,
-    queuedDiff: diff,
-    correlationId: auditEntry.correlationId,
-    ...(reviewItemId ? { reviewItemId } : {}),
-  });
-  return {
-    proposed,
-    diff,
-    validation,
-    correlationId: auditEntry.correlationId,
-    proposalId: proposal.id,
-    status: proposal.status,
-    quality: checkService(proposed, { creating: true }),
-  };
+  const { prepared, ...queued } = await queueKindProposal(
+    { resolveRole, auditService, proposalService, validator },
+    ctx,
+    {
+      kind: 'service_create',
+      input,
+      targetId: '',
+      prepare: async () => {
+        const proposed = normalizeNewService(input);
+        return { proposed, diff: diffFields(EMPTY_SERVICE, proposed) };
+      },
+      changes: ({ proposed }) => proposed,
+      correlationId,
+      reviewItemId,
+    },
+  );
+  return { ...prepared, ...queued };
 }
 
 /**
@@ -122,53 +103,10 @@ export async function createNewService(
   service: NewService,
   correlationId: string,
 ): Promise<ApplyServiceChangeResult> {
-  if (!ctx.writeApiVersion) {
-    throw new WriteApiNotSelectedError();
-  }
-  const validation = validator.validate(asService(service));
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateNewService',
-    resourceType: 'Service',
-    apiVersion: validator.apiVersion,
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
+  return auditedApply({ registry, auditService, validator }, ctx, 'service_create', async () => ({
     correlationId,
-  });
-  if (!validation.valid) {
-    throw new ValidationFailedError(validation.errors);
-  }
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-  try {
-    const result = await writeAdapter.createService(service);
-    await auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'CreateService',
-      resourceType: 'Service',
-      resourceId: result.serviceId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      afterState: service,
-      result: 'Success',
-      correlationId,
-    });
-    return result;
-  } catch (err) {
-    await auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'CreateService',
-      resourceType: 'Service',
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      afterState: service,
-      result: 'Failed',
-      correlationId,
-    });
-    throw err;
-  }
+    proposed: service,
+    target: { createdId: (result: ApplyServiceChangeResult) => result.serviceId },
+    write: (adapter) => adapter.createService(service),
+  }));
 }

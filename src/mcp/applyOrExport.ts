@@ -1,4 +1,4 @@
-import { resolveWriteAdapter, WriteApiNotSelectedError } from './toolContext.js';
+import { WriteApiNotSelectedError } from './toolContext.js';
 import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
 import type { ApplyServiceChangeResult } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
@@ -6,22 +6,11 @@ import type { LanguageCode, PtvContentId, Service } from '../ptv/domain.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import type { MembershipRoleResolver } from './authorization.js';
+import { auditedApply, ValidationFailedError } from './proposalPipeline.js';
 import { proposeChanges } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
-export { WriteApiNotSelectedError };
-
-export class ValidationFailedError extends Error {
-  constructor(public readonly errors: { field: string; message: string }[]) {
-    super(
-      [
-        'Proposed changes failed validation:',
-        ...errors.map((e) => `- ${e.field}: ${e.message}`),
-      ].join('\n'),
-    );
-    this.name = 'ValidationFailedError';
-  }
-}
+export { ValidationFailedError, WriteApiNotSelectedError };
 
 /** One language's rendered preview, for a human to paste into PTV's own admin UI. */
 export interface ManualPublishLanguageEntry {
@@ -127,72 +116,28 @@ export async function applyChanges(
   changes: Partial<Service>,
   correlationId?: string,
 ): Promise<ApplyChangesResult> {
-  if (!ctx.writeApiVersion) {
-    throw new WriteApiNotSelectedError();
-  }
-
-  const {
-    current,
-    proposed,
-    correlationId: chainId,
-  } = await proposeChanges(
-    resolveRole,
-    registry,
-    auditService,
-    ctx,
-    serviceId,
-    changes,
-    correlationId,
-  );
-
-  const validation = validator.validate(proposed);
-  await auditService.record({
-    tenantId: ctx.tenantId,
-    userId: ctx.actingUserId,
-    action: 'ValidateServiceChange',
-    resourceType: 'Service',
-    resourceId: serviceId,
-    apiVersion: validator.apiVersion,
-    afterState: { errors: validation.errors },
-    result: validation.valid ? 'Valid' : 'Invalid',
-    correlationId: chainId,
+  return auditedApply({ registry, auditService, validator }, ctx, 'service_update', async () => {
+    const {
+      current,
+      proposed,
+      correlationId: chainId,
+    } = await proposeChanges(
+      resolveRole,
+      registry,
+      auditService,
+      ctx,
+      serviceId,
+      changes,
+      correlationId,
+    );
+    return {
+      correlationId: chainId,
+      proposed,
+      target: { resourceId: serviceId, before: current },
+      write: async (adapter) => ({
+        ...(await adapter.applyServiceChange({ serviceId, changes })),
+        correlationId: chainId,
+      }),
+    };
   });
-  if (!validation.valid) {
-    throw new ValidationFailedError(validation.errors);
-  }
-
-  const writeAdapter = await resolveWriteAdapter(registry, ctx);
-  const capabilities = writeAdapter.getCapabilities();
-
-  try {
-    const result = await writeAdapter.applyServiceChange({ serviceId, changes });
-    await auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ApplyServiceChange',
-      resourceType: 'Service',
-      resourceId: serviceId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      beforeState: current,
-      afterState: proposed,
-      result: 'Success',
-      correlationId: chainId,
-    });
-    return { ...result, correlationId: chainId };
-  } catch (err) {
-    await auditService.record({
-      tenantId: ctx.tenantId,
-      userId: ctx.actingUserId,
-      action: 'ApplyServiceChange',
-      resourceType: 'Service',
-      resourceId: serviceId,
-      apiVersion: capabilities.apiVersion,
-      environment: capabilities.environment,
-      beforeState: current,
-      result: 'Failed',
-      correlationId: chainId,
-    });
-    throw err;
-  }
 }

@@ -1,7 +1,7 @@
 import type { LocalizedText } from '../ptv/domain.js';
 import type { ProposalKind } from '../proposals/proposalService.js';
-import { CHANNEL_TYPE_LABELS, EMPTY, formatValue, languageRank } from '../format/ptvFormat.js';
-import { isCreateKind } from './proposalKinds.js';
+import { formatValue, languageRank } from '../format/ptvFormat.js';
+import { PROPOSAL_KINDS } from './proposalKinds.js';
 import type { ServiceDiffEntry } from './proposeChanges.js';
 
 export { formatValue };
@@ -83,17 +83,6 @@ const LABELS = new Map(FIELD_LABELS);
 /** Stated in the steps instead of as fields. */
 const STEP_FIELDS = new Set(['channelType', 'organizationId', 'parentOrganizationId', 'id']);
 
-/** What a sheet is about, by proposal kind; channels add their type. */
-const TARGET_LABELS: Record<ProposalKind, string> = {
-  service_update: 'Palvelu',
-  service_create: 'Palvelu',
-  channel_update: 'Asiointikanava',
-  channel_create: 'Asiointikanava',
-  connection_update: 'Liitoksen lisätiedot',
-  organisation_update: 'Organisaatio',
-  organisation_create: 'Alaorganisaatio',
-};
-
 export function buildManualPublishSheet(input: {
   kind: ProposalKind;
   diff: ServiceDiffEntry[];
@@ -105,15 +94,11 @@ export function buildManualPublishSheet(input: {
   /** connection_update: the connected channel (ptvId is the service). */
   channelId?: string;
 }): ManualPublishSheet {
-  const creating = isCreateKind(input.kind);
-  const isChannel = input.kind === 'channel_update' || input.kind === 'channel_create';
-  const isConnection = input.kind === 'connection_update';
-  const target = isChannel
-    ? `Asiointikanava: ${CHANNEL_TYPE_LABELS[input.channelType ?? ''] ?? input.channelType ?? ''}`
-    : TARGET_LABELS[input.kind];
+  const { creates, sheet } = PROPOSAL_KINDS[input.kind];
+  const target = sheet.target(input.channelType);
   const name = input.names.fi ?? Object.values(input.names).find(Boolean) ?? null;
   const fields = input.diff
-    .map((entry) => sheetField(entry, isChannel))
+    .map((entry) => sheetField(entry, sheet.channel))
     .filter((field): field is ManualPublishField => field !== null)
     .sort(
       (a, b) =>
@@ -121,38 +106,22 @@ export function buildManualPublishSheet(input: {
         languageRank(a.language) - languageRank(b.language),
     );
   const languages = [...input.languages].sort((a, b) => languageRank(a) - languageRank(b));
-  const languageList = languages.join(', ') || '(ei kieliversioita)';
-
-  const steps = isConnection
-    ? [
-        `In PTV (palvelutietovaranto.suomi.fi), open the service "${name ?? input.ptvId}" (id ${input.ptvId}) and its Liitokset (connections) tab.`,
-        `Open the connection to channel ${input.channelId ?? ''} and edit its additional information (lisätiedot).`,
-        `Change the fields below. Copy each new value as it is; ${EMPTY} means clear the field. Save the connection.`,
-        'When the change shows in PTV, confirm it here (ptv_confirm_manual_publish, or Mark as published in the Proposal queue). The MCP compares PTV with the proposal and closes it.',
-      ]
-    : creating
-      ? [
-          input.kind === 'organisation_create'
-            ? `In PTV (palvelutietovaranto.suomi.fi), choose Lisää → Organisaatio and add the sub-organisation under organisation ${input.organizationId ?? ''} (only a PTV main user, pääkäyttäjä, can do this).`
-            : `In PTV (palvelutietovaranto.suomi.fi), add a new ${target.toLowerCase()}${input.organizationId ? ` for organisation ${input.organizationId}` : ''}.`,
-          'Fill in the fields below, in every language version listed. Copy each value as it is.',
-          `Save it and publish the language versions ${languageList}, or leave it a draft if the Julkaisutila row says Luonnos.`,
-          "Copy the new item's id from PTV and confirm here (ptv_confirm_manual_publish with ptvId, or Mark as published in the Proposal queue). The MCP checks the item in PTV and closes the proposal.",
-        ]
-      : [
-          `In PTV (palvelutietovaranto.suomi.fi), open the ${target.toLowerCase()} "${name ?? input.ptvId}" (id ${input.ptvId}) and choose Muokkaa.`,
-          `Change the fields below. Copy each new value as it is; ${EMPTY} means clear the field.`,
-          `Publish every language version: ${languageList}. Publishing only some sends the others back to draft.`,
-          'When the change shows in PTV, confirm it here (ptv_confirm_manual_publish, or Mark as published in the Proposal queue). The MCP compares PTV with the proposal and closes it.',
-        ];
 
   return {
-    action: creating ? 'create' : 'update',
+    action: creates ? 'create' : 'update',
     target,
     ptvId: input.ptvId,
     name,
     languages,
-    steps,
+    // What and where to enter in PTV's UI, by kind (PROPOSAL_KINDS).
+    steps: sheet.steps({
+      target,
+      name,
+      ptvId: input.ptvId,
+      organizationId: input.organizationId,
+      channelId: input.channelId,
+      languageList: languages.join(', ') || '(ei kieliversioita)',
+    }),
     fields,
   };
 }

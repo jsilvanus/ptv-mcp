@@ -22,6 +22,7 @@ import {
 } from '../mcp/proposalQueue.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import type { PtvAdapter } from '../ptv/adapter.js';
+import { PROPOSAL_KINDS } from '../mcp/proposalKinds.js';
 import type { LocalizedText, Organization, Service, ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
@@ -475,40 +476,13 @@ export async function requireLinkableReviewItem(
       `Review item "${item.targetName}" is already ${item.status}; ask a Publisher to reopen it.`,
     );
   }
-  // A service change that edits connections may answer a channel's item
-  // ("this channel should be linked to service X").
-  if (
-    proposal.kind === 'service_update' &&
-    item.targetKind === 'channel' &&
-    proposal.changes &&
-    'serviceChannelIds' in proposal.changes
-  ) {
-    return item;
-  }
-  // A connection's extra info answers the item of its service or its channel.
-  if (proposal.kind === 'connection_update') {
-    const channelId = proposal.changes?.channelId;
-    if (
-      (item.targetKind === 'service' && item.targetId === proposal.targetId) ||
-      (item.targetKind === 'channel' && item.targetId === channelId)
-    ) {
-      return item;
-    }
-    throw new ReviewCampaignError(
-      `Review item "${item.targetName}" is the ${item.targetKind} ${item.targetId}; this connection is between service ${proposal.targetId} and channel ${String(channelId)}.`,
-    );
-  }
-  const expectedKind =
-    proposal.kind === 'service_update'
-      ? 'service'
-      : proposal.kind === 'channel_update'
-        ? 'channel'
-        : null;
-  if (expectedKind && (item.targetKind !== expectedKind || item.targetId !== proposal.targetId)) {
-    throw new ReviewCampaignError(
-      `Review item "${item.targetName}" is the ${item.targetKind} ${item.targetId}; this proposal targets another ${expectedKind}.`,
-    );
-  }
+  // Which items a proposal can answer depends on its kind (PROPOSAL_KINDS).
+  const mismatch = PROPOSAL_KINDS[proposal.kind].reviewItemMismatch(
+    item,
+    proposal.targetId,
+    proposal.changes,
+  );
+  if (mismatch) throw new ReviewCampaignError(mismatch);
   return item;
 }
 
@@ -606,7 +580,7 @@ export async function attachProposalToReviewItem(
     {
       kind: proposal.kind,
       targetId: proposal.serviceId,
-      changes: proposal.changes as Record<string, unknown>,
+      changes: proposal.changes,
     },
   );
   await deps.proposalService.setReviewItem(ctx.tenantId, proposal.id, item.id);
