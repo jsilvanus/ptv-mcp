@@ -1,18 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
 import { TenantService } from '../tenants/tenantService.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
 import { UserPtvConnectionService } from '../credentials/userPtvConnectionService.js';
 import { DbPtvAdapterRegistry } from '../ptv/dbAdapterRegistry.js';
 import { AuditService } from '../audit/auditService.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 /**
  * Phase 3's stated sync point (docs/phase-plan.md): "integration test —
@@ -35,7 +32,8 @@ describe('Phase 3 sync point', () => {
   });
   const auditService = new AuditService(db);
   const tenantService = new TenantService(db, auditService);
-  const configService = new PtvAdapterConfigService(db);
+  const fixtures = new IntegrationFixtures(db, config);
+  const configService = fixtures.adapterConfigs;
   const tenantEnvironmentService = new TenantEnvironmentService(db, masterKey);
   const userConnectionService = new UserPtvConnectionService(db, masterKey);
   const registry = new DbPtvAdapterRegistry(
@@ -45,34 +43,15 @@ describe('Phase 3 sync point', () => {
     userConnectionService,
   );
 
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
-
-  afterAll(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-  });
+  afterAll(() => fixtures.cleanup());
 
   it('logs in, resolves tenant+role, resolves PtvV11Adapter with decrypted credentials, makes a real PTV call, and records an audit entry naming the adapter', async () => {
     // 1. Register and log in — a real user, a real password, a real JWT session.
-    const email = `sync-point-${randomUUID()}@example.test`;
-    const { userId } = await authService.register(
-      email,
+    const { userId, session } = await fixtures.registeredUser(
+      authService,
+      'sync-point',
       'Sync Point Publisher',
-      'correct-password',
     );
-    createdUserIds.push(userId);
-    const session = await authService.login(email, 'correct-password');
     expect(session.accessToken).toBeTruthy();
 
     // 2. Create a tenant and confirm the user's role resolves correctly for it.
@@ -81,7 +60,7 @@ describe('Phase 3 sync point', () => {
       `sync-point-${randomUUID()}`,
       userId,
     );
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
     const myTenants = await tenantService.listTenantsForUser(userId);
     expect(myTenants).toContainEqual(expect.objectContaining({ tenantId, role: 'tenant_admin' }));
 
@@ -93,13 +72,7 @@ describe('Phase 3 sync point', () => {
 
     // 3. Wire up PtvV11Adapter as the tenant's configured adapter for the
     // test environment.
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: true,
-      supportsDraftRead: false,
-    });
+    await fixtures.configureV11(tenantId, true);
 
     // 4. Resolve via the registry for a read, with no connection stored yet
     // — tenant + role authorization, then PtvV11Adapter is picked. v11's

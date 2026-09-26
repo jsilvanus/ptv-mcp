@@ -1,23 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { auditEntries } from '../db/schema/index.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('tenant routes', () => {
   const config = loadConfig();
+  const db: Database = createDatabase(config.databaseUrl);
+  const fixtures = new IntegrationFixtures(db, config);
   let app: FastifyInstance;
-  let db: Database;
-  const createdUserIds: string[] = [];
-  const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
-    db = createDatabase(config.databaseUrl);
     app = await buildApp({ config: { ...config, logLevel: 'silent' }, db });
   });
 
@@ -25,30 +23,11 @@ describe('tenant routes', () => {
     await app.close();
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
   async function createUserWithToken(): Promise<{ id: string; email: string; token: string }> {
-    const id = randomUUID();
-    const email = `${id}@example.test`;
-    await db.insert(users).values({ id, email, name: 'Route Test', passwordHash: 'x' });
-    createdUserIds.push(id);
-    const token = await signAccessToken({ sub: id }, config.jwtSecret);
-    return { id, email, token };
+    const id = await fixtures.user('Route Test');
+    return { id, email: `${id}@example.test`, token: await fixtures.webToken(id) };
   }
 
   it('creates a tenant via HTTP and lists it back for the creator', async () => {
@@ -63,7 +42,7 @@ describe('tenant routes', () => {
     });
     expect(createRes.statusCode).toBe(201);
     const { tenantId } = createRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     const listRes = await app.inject({
       method: 'GET',
@@ -86,7 +65,7 @@ describe('tenant routes', () => {
       payload: { name: 'Role Tenant', slug: `role-${randomUUID()}` },
     });
     const { tenantId } = createRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     const res = await app.inject({
       method: 'POST',
@@ -120,7 +99,7 @@ describe('tenant routes', () => {
       payload: { name: 'Route Tenant', slug },
     });
     const { tenantId } = createRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     await app.inject({
       method: 'POST',
@@ -163,7 +142,7 @@ describe('tenant routes', () => {
       payload: { name: 'Settings Tenant', slug: `tenant-${randomUUID()}` },
     });
     const { tenantId } = createRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
     await app.inject({
       method: 'POST',
       url: `/tenants/${tenantId}/members`,
@@ -222,7 +201,7 @@ describe('tenant routes', () => {
       payload: { name: 'Route Tenant', slug },
     });
     const { tenantId } = createRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     await app.inject({
       method: 'POST',

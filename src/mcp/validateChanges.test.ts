@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { validService } from '../ptv/testing/fixtures.js';
 import type { Service } from '../ptv/domain.js';
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
@@ -8,28 +9,12 @@ import type { ToolContext } from './toolContext.js';
 
 const ctx: ToolContext = { tenantId: 'tenant-1', environment: 'test', actingUserId: 'user-1' };
 
-const validService: Service = {
-  id: 'svc-1',
-  organizationId: 'org-1',
-  serviceType: 'Service',
-  publishingStatus: 'Published',
-  names: { fi: 'Palvelu' },
-  summaries: {},
-  descriptions: {},
-  serviceClasses: [{ code: 'P11.6', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v1111', names: {} }],
-  ontologyTerms: [{ uri: 'http://www.yso.fi/onto/koko/p34462', names: {} }],
-  targetGroups: [{ code: 'KR1', uri: 'http://urn.fi/URN:NBN:fi:au:ptvl:v2001', names: {} }],
-  lifeEvents: [],
-  industrialClasses: [],
-  languages: ['fi'],
-  serviceChannelIds: [],
-  modifiedAt: '2026-01-01T00:00:00Z',
-};
+const service = validService();
 
 describe('validateChanges', () => {
   it('returns valid:true and records a Valid audit entry for a valid proposal', async () => {
     const audit = fakeAuditService();
-    const result = await validateChanges(audit, new V11ChangeValidator(), ctx, validService);
+    const result = await validateChanges(audit, new V11ChangeValidator(), ctx, service);
 
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
@@ -45,7 +30,7 @@ describe('validateChanges', () => {
 
   it('returns valid:false with errors and records an Invalid audit entry', async () => {
     const audit = fakeAuditService();
-    const invalid: Service = { ...validService, languages: [] };
+    const invalid: Service = { ...service, languages: [] };
     const result = await validateChanges(audit, new V11ChangeValidator(), ctx, invalid);
 
     expect(result.valid).toBe(false);
@@ -60,7 +45,7 @@ describe('validateChanges', () => {
       audit,
       new V11ChangeValidator(),
       ctx,
-      validService,
+      service,
       correlationId,
     );
     expect(result.correlationId).toBe(correlationId);

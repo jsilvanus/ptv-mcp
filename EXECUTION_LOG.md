@@ -2099,3 +2099,54 @@ No intentional behaviour changes. Left out: the code-name completion
 works on the adapter's cache and client; v11's own batching loops were
 not moved to `chunk()`; the proposal/review modules the tools call are
 unchanged (another pass is simplifying them).
+
+## 2026-09-26 — Simplify pass: shared test fixtures
+
+Test code only; no production code changed. Test counts are unchanged:
+445 unit and 154 integration before and after (the `it.each` tables in
+`changeValidator.test.ts` keep one test per former case, 56 → 56).
+Integration tests were run twice in a row to check isolation.
+
+- **`src/testing/integrationFixtures.ts`** — `IntegrationFixtures(db,
+  config)` tracks every tenant and user a suite creates and deletes them
+  (with their audit entries, proposals, campaigns and memberships) in
+  `cleanup()`. `tenant({ name, slugPrefix, requireFourEyes, v11 })`,
+  `user(name)`, `registeredUser(authService, …)`, `addMembership`,
+  `configureV11`, `webToken` (the login-session JWT, REST only) and
+  `mcpToken` (an MCP OAuth token from an `OAuthService` built with the
+  same `(jwtSecret, issuer, resource)` as `src/app.ts`) replace the copies
+  in 17 integration files; `listenLocally(app)` replaces four copies of the
+  listen-and-read-port block. `ptvConnections.integration.test.ts` used to
+  delete only its last user; it now cleans up all of them.
+- **`src/testing/mcpClient.ts`** — `connectMcpClient`, `toolJson`,
+  `toolText` (the SDK-client tests: phase 4/6/8 and `httpTransport`) and
+  `injectToolCall` (a JSON-RPC `tools/call` through `app.inject`, used by
+  the review and proposal route tests).
+- **`src/ptv/testing/fixtures.ts`** — `v11Capabilities(overrides)`,
+  `validService(overrides)` (the published service with P11.6/KOKO/KR1
+  classifications that seven files spelled out) and
+  `inMemoryV11Factory(seed)` (the `adapterFactories.v11` for `buildApp`).
+- **Phase sync points**: phase 6 and 8 use a `member(tenant, role, name)`
+  helper (register, join, mint a token) in place of three parallel
+  register/join/mint blocks; the files keep their names and remain matched
+  by `npm run test:integration`.
+- **Unit tests**: `changeValidator.test.ts` uses `withFields`/
+  `expectError`/`hasError` helpers and `it.each` tables for the
+  per-value cases (same assertions, 485 → 369 lines);
+  `v12/adapter.test.ts` has one `json()` response helper and one
+  `v12Adapter(fetchImpl)` in place of 27 inline responses, 30
+  dynamic imports and 24 constructor calls; `proposalQueue`, `applyOrExport`,
+  `validateChanges`, `searchTools` and `proposeChanges` use the shared
+  service/capability fixtures.
+- **CLAUDE.md**: the MCP layer section notes where tool registrations
+  (`src/mcp/tools/`) and resources (`src/mcp/resources.ts`) live, and that
+  `IntegrationFixtures.mcpToken` mints `/mcp` tokens for tests.
+
+Left out: `rbac.integration.test.ts`, `rls.integration.test.ts`,
+`context.integration.test.ts` and the auth/cache service tests keep their
+own set-up (fixed IDs inserted once, raw SQL for RLS, or email-keyed
+cleanup, which the shared tracker would not simplify);
+`contentChecks.test.ts` and `v11/adapter.test.ts` already had local
+builders and little repetition; the review tests' `service()` builder
+(different content, used for quality findings) was not folded into
+`validService`.

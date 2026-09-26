@@ -1,24 +1,22 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries, memberships, tenants, users } from '../db/schema/index.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { auditEntries } from '../db/schema/index.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('ptv v11 API user routes', () => {
   const config = loadConfig();
+  const db: Database = createDatabase(config.databaseUrl);
+  const fixtures = new IntegrationFixtures(db, config);
   let app: FastifyInstance;
-  let db: Database;
-  const createdUserIds: string[] = [];
-  const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
-    db = createDatabase(config.databaseUrl);
     app = await buildApp({ config: { ...config, logLevel: 'silent' }, db });
   });
 
@@ -32,29 +30,11 @@ describe('ptv v11 API user routes', () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
+    await fixtures.cleanup();
   });
 
   async function adminWithTenant(): Promise<{ token: string; tenantId: string }> {
-    const id = randomUUID();
-    await db
-      .insert(users)
-      .values({ id, email: `${id}@example.test`, name: 'Admin', passwordHash: 'x' });
-    createdUserIds.push(id);
-    const token = await signAccessToken({ sub: id }, config.jwtSecret);
+    const token = await fixtures.webToken(await fixtures.user('Admin'));
     const res = await app.inject({
       method: 'POST',
       url: '/tenants',
@@ -62,7 +42,7 @@ describe('ptv v11 API user routes', () => {
       payload: { name: 'API User Tenant', slug: `api-user-${randomUUID()}` },
     });
     const { tenantId } = res.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
     return { token, tenantId };
   }
 

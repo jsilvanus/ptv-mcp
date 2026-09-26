@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
+import { v11Capabilities } from '../ptv/testing/fixtures.js';
 import type { Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import { NotAuthorizedError } from './authorization.js';
@@ -38,14 +39,7 @@ function fakeRegistry(adapter: InMemoryPtvAdapter): PtvAdapterRegistry {
 function buildAdapter(services: Service[] = [baseService]): InMemoryPtvAdapter {
   return new InMemoryPtvAdapter({
     services,
-    capabilities: {
-      apiVersion: 'v11',
-      environment: 'test',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    },
+    capabilities: v11Capabilities(),
   });
 }
 

@@ -1,34 +1,22 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { randomBytes } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { users } from '../db/schema/index.js';
 import { ConnectionNotFoundError, UserPtvConnectionService } from './userPtvConnectionService.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('UserPtvConnectionService', () => {
   const config = loadConfig();
   const db: Database = createDatabase(config.databaseUrl);
   const masterKey = randomBytes(32).toString('base64');
   const service = new UserPtvConnectionService(db, masterKey);
-  const createdUserIds: string[] = [];
+  const fixtures = new IntegrationFixtures(db, config);
 
-  afterEach(async () => {
-    for (const id of createdUserIds) {
-      await db.delete(users).where(eq(users.id, id));
-    }
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
-  async function createUser(): Promise<string> {
-    const id = randomUUID();
-    await db
-      .insert(users)
-      .values({ id, email: `${id}@example.test`, name: 'Test', passwordHash: 'x' });
-    createdUserIds.push(id);
-    return id;
-  }
+  const createUser = () => fixtures.user();
 
   it('stores and decrypts an access token', async () => {
     const userId = await createUser();

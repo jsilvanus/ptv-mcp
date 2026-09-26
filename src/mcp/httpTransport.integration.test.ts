@@ -1,19 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { memberships, refreshTokens, tenants, users } from '../db/schema/index.js';
+import { refreshTokens } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
-import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
-import { OAuthService } from './oauthService.js';
+import { IntegrationFixtures, listenLocally } from '../testing/integrationFixtures.js';
+import { connectMcpClient, toolJson, toolText } from '../testing/mcpClient.js';
 
 /**
  * Proves the real MCP protocol wire-up — a genuine `@modelcontextprotocol/sdk`
@@ -30,93 +26,47 @@ describe('MCP HTTP transport', () => {
     jwtSecret: config.jwtSecret,
     mailer: new LoggingMailer(() => {}),
   });
-  const configService = new PtvAdapterConfigService(db);
-  // Must match src/app.ts's own OAuthService construction exactly (same
-  // issuer/resource) — this mints real MCP OAuth access tokens the same
-  // way the running server's httpTransport.ts verifies them, rather than
-  // reusing AuthService's web-session JWT (a different token type: no
-  // iss/aud claims, and none of the tenant/environment/api-version claims
-  // toolContext() requires).
-  const oauthService = new OAuthService(
-    db,
-    config.jwtSecret,
-    config.mcpPublicUrl,
-    config.mcpPublicUrl,
-  );
+  // Mints real MCP OAuth access tokens the same way the running server's
+  // httpTransport.ts verifies them (see IntegrationFixtures.oauth).
+  const fixtures = new IntegrationFixtures(db, config);
+  const oauthService = fixtures.oauth;
 
   let app: FastifyInstance;
   let baseUrl: string;
-  const createdTenantIds: string[] = [];
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
     app = await buildApp({ config: { ...config, logLevel: 'silent' }, db });
-    await app.listen({ host: '127.0.0.1', port: 0 });
-    const address = app.server.address();
-    if (address === null || typeof address === 'string') {
-      throw new Error('Expected a network address for the listening server');
-    }
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    baseUrl = await listenLocally(app);
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  afterEach(async () => {
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(inArray(users.id, createdUserIds));
-    }
-    createdTenantIds.length = 0;
-    createdUserIds.length = 0;
-  });
+  afterEach(() => fixtures.cleanup());
 
-  async function registeredUserWithTenant(): Promise<{ token: string; tenantId: string }> {
-    const email = `mcp-${randomUUID()}@example.test`;
-    const { userId } = await authService.register(email, 'MCP Test User', 'correct-password');
-    createdUserIds.push(userId);
-    await authService.login(email, 'correct-password');
+  const registerUser = async (name = 'MCP Test User', emailPrefix = 'mcp') =>
+    fixtures.registeredUser(authService, emailPrefix, name);
 
-    const tenantId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: tenantId, name: 'MCP Test Tenant', slug: `mcp-${tenantId}` });
-    createdTenantIds.push(tenantId);
-    await withContext(db, { tenantId }, async (tx) => {
-      await tx.insert(memberships).values({ tenantId, userId, role: 'contributor' });
+  /** A contributor in a fresh tenant, optionally with v11 (read-only) configured. */
+  async function registeredUserWithTenant(
+    options: { v11?: boolean } = {},
+  ): Promise<{ token: string; tenantId: string }> {
+    const { userId } = await registerUser();
+    const tenantId = await fixtures.tenant({
+      name: 'MCP Test Tenant',
+      slugPrefix: 'mcp',
+      ...(options.v11 ? { v11: { supportsWrite: false } } : {}),
     });
-
-    const token = await oauthService.issueAccessToken(
-      userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      tenantId,
-      'test',
-      'v11',
-      'v11',
-    );
-    return { token, tenantId };
+    await fixtures.addMembership(tenantId, userId, 'contributor');
+    return { token: await fixtures.mcpToken(userId, tenantId), tenantId };
   }
 
-  async function connectedClient(token: string): Promise<Client> {
-    const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseUrl), {
-      requestInit: { headers: { Authorization: `Bearer ${token}` } },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    // See src/mcp/httpTransport.ts's identical cast note: the SDK's own
-    // optional-property declarations don't satisfy exactOptionalPropertyTypes
-    // here, though the class does implement Transport structurally.
-    await client.connect(transport as unknown as Transport);
-    return client;
-  }
+  /** A tenant (v11 read-only) that the test user is not a member of. */
+  const someoneElsesTenant = () =>
+    fixtures.tenant({ name: 'Someone Else', slugPrefix: 'other', v11: { supportsWrite: false } });
+
+  const connectedClient = (token: string) => connectMcpClient(baseUrl, token);
 
   it('lists every registered tool', async () => {
     const { token } = await registeredUserWithTenant();
@@ -192,15 +142,9 @@ describe('MCP HTTP transport', () => {
     expect(body.result?._meta).toHaveProperty('mcp/www_authenticate');
   });
 
+  // Calls PTV's real test environment, whose response time is outside our control.
   it('calls ptv_search_services against PTV live test environment and gets real results back', async () => {
-    const { token, tenantId } = await registeredUserWithTenant();
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    });
+    const { token, tenantId } = await registeredUserWithTenant({ v11: true });
 
     const client = await connectedClient(token);
     const result = await client.callTool({
@@ -209,11 +153,10 @@ describe('MCP HTTP transport', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    const content = result.content as Array<{ type: string; text: string }>;
-    const payload = JSON.parse(content[0]!.text) as { items: unknown[] };
+    const payload = toolJson<{ items: unknown[] }>(result);
     expect(Array.isArray(payload.items)).toBe(true);
     await client.close();
-  });
+  }, 30_000);
 
   it('surfaces a not_authorized tool error for a tenant the user does not belong to', async () => {
     // Which tenant a call operates against comes from the OAuth token's own
@@ -222,33 +165,9 @@ describe('MCP HTTP transport', () => {
     // override it. So exercising "a tenant the user isn't a member of" means
     // minting a token bound to a tenant the user was never added to, not
     // passing one in the tool call.
-    const { userId } = await (async () => {
-      const email = `mcp-${randomUUID()}@example.test`;
-      const registered = await authService.register(email, 'MCP Test User', 'correct-password');
-      createdUserIds.push(registered.userId);
-      return registered;
-    })();
-    const otherTenantId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: otherTenantId, name: 'Someone Else', slug: `other-${otherTenantId}` });
-    createdTenantIds.push(otherTenantId);
-    await configService.upsert(otherTenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    });
-    const token = await oauthService.issueAccessToken(
-      userId,
-      'urn:ptv-mcp:test-client',
-      'mcp',
-      otherTenantId,
-      'test',
-      'v11',
-      'v11',
-    );
+    const { userId } = await registerUser();
+    const otherTenantId = await someoneElsesTenant();
+    const token = await fixtures.mcpToken(userId, otherTenantId);
 
     const client = await connectedClient(token);
     const result = await client.callTool({
@@ -257,15 +176,12 @@ describe('MCP HTTP transport', () => {
     });
 
     expect(result.isError).toBe(true);
-    const content = result.content as Array<{ type: string; text: string }>;
-    expect(content[0]?.text).toContain('not_authorized');
+    expect(toolText(result)).toContain('not_authorized');
     await client.close();
   });
 
   it('lets a user without an organisation read public PTV data but not propose', async () => {
-    const email = `mcp-${randomUUID()}@example.test`;
-    const { userId } = await authService.register(email, 'Public Reader', 'correct-password');
-    createdUserIds.push(userId);
+    const { userId } = await registerUser('Public Reader');
     const token = await oauthService.issueAccessToken(
       userId,
       'urn:ptv-mcp:test-client',
@@ -288,16 +204,15 @@ describe('MCP HTTP transport', () => {
       arguments: { serviceId: randomUUID(), changes: { names: { fi: 'X' } } },
     });
     expect(propose.isError).toBe(true);
-    expect((propose.content as Array<{ text: string }>)[0]?.text).toContain(
-      'no organisation (public PTV data only)',
-    );
+    expect(toolText(propose)).toContain('no organisation (public PTV data only)');
     await client.close();
   });
 
   it('signs in on the OAuth consent form without creating a web-UI refresh token', async () => {
     const email = `mcp-consent-${randomUUID()}@example.test`;
+    // Registered but never logged in, so no refresh token exists beforehand.
     const { userId } = await authService.register(email, 'MCP Test User', 'correct-password');
-    createdUserIds.push(userId);
+    fixtures.trackUser(userId);
     const oauth = Buffer.from(
       new URLSearchParams({
         client_id: 'urn:ptv-mcp:test-client',
@@ -345,14 +260,7 @@ describe('MCP HTTP transport', () => {
   });
 
   it('lists get-by-id resource templates and reads one service resource', async () => {
-    const { token, tenantId } = await registeredUserWithTenant();
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    });
+    const { token, tenantId } = await registeredUserWithTenant({ v11: true });
 
     const client = await connectedClient(token);
     const templates = await client.listResourceTemplates();
@@ -390,18 +298,7 @@ describe('MCP HTTP transport', () => {
 
   it('surfaces an unauthorized resource read as a protocol-level error', async () => {
     const { token } = await registeredUserWithTenant();
-    const otherTenantId = randomUUID();
-    await db
-      .insert(tenants)
-      .values({ id: otherTenantId, name: 'Someone Else', slug: `other-${otherTenantId}` });
-    createdTenantIds.push(otherTenantId);
-    await configService.upsert(otherTenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    });
+    const otherTenantId = await someoneElsesTenant();
 
     // Resource handlers (unlike tools) don't catch PtvAdapterResolutionError,
     // so it propagates out of the SDK's ReadResourceRequestSchema handler and
@@ -425,14 +322,7 @@ describe('MCP HTTP transport', () => {
   });
 
   it('returns null content for a not-found resource read', async () => {
-    const { token, tenantId } = await registeredUserWithTenant();
-    await configService.upsert(tenantId, 'test', 'v11', {
-      authMode: 'oauth2',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    });
+    const { token, tenantId } = await registeredUserWithTenant({ v11: true });
 
     const client = await connectedClient(token);
     const read = await client.readResource({

@@ -1,29 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import {
-  auditEntries,
-  memberships,
-  ptvAdapterConfigs,
-  tenants,
-  users,
-} from '../db/schema/index.js';
-import { signAccessToken } from '../auth/jwt.js';
+import { ptvAdapterConfigs } from '../db/schema/index.js';
+import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('ptv connection routes', () => {
   const config = loadConfig();
+  const db: Database = createDatabase(config.databaseUrl);
+  const fixtures = new IntegrationFixtures(db, config);
   let app: FastifyInstance;
-  let db: Database;
-  const createdUserIds: string[] = [];
-  const createdTenantIds: string[] = [];
 
   beforeAll(async () => {
-    db = createDatabase(config.databaseUrl);
     app = await buildApp({
       config: {
         ...config,
@@ -46,29 +38,12 @@ describe('ptv connection routes', () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    for (const tenantId of createdTenantIds) {
-      await withContext(db, { tenantId }, async (tx) => {
-        await tx.delete(auditEntries).where(eq(auditEntries.tenantId, tenantId));
-        await tx.delete(memberships).where(eq(memberships.tenantId, tenantId));
-      });
-    }
-    if (createdTenantIds.length > 0) {
-      await db.delete(tenants).where(inArray(tenants.id, createdTenantIds));
-    }
-    createdTenantIds.length = 0;
-    if (createdUserIds.length > 0) {
-      await db.delete(users).where(eq(users.id, createdUserIds[createdUserIds.length - 1]!));
-    }
+    await fixtures.cleanup();
   });
 
   async function createUserWithToken(): Promise<{ id: string; token: string }> {
-    const id = randomUUID();
-    await db
-      .insert(users)
-      .values({ id, email: `${id}@example.test`, name: 'Test', passwordHash: 'x' });
-    createdUserIds.push(id);
-    const token = await signAccessToken({ sub: id }, config.jwtSecret);
-    return { id, token };
+    const id = await fixtures.user();
+    return { id, token: await fixtures.webToken(id) };
   }
 
   it('returns an authorization url containing the configured client id and redirect uri', async () => {
@@ -102,7 +77,7 @@ describe('ptv connection routes', () => {
       payload: { name: 'Connection Config Tenant', slug: `conn-config-${randomUUID()}` },
     });
     const { tenantId } = createTenantRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     await withContext(db, { tenantId }, async (tx) => {
       await tx.insert(ptvAdapterConfigs).values({
@@ -168,7 +143,7 @@ describe('ptv connection routes', () => {
       payload: { name: 'Connection Test Tenant', slug: `conn-${randomUUID()}` },
     });
     const { tenantId } = createTenantRes.json() as { tenantId: string };
-    createdTenantIds.push(tenantId);
+    fixtures.trackTenant(tenantId);
 
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ active: true, sub: 'ptv-user' }), { status: 200 }),

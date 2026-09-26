@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PtvAdapter } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry, PtvAdapterResolutionRequest } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
+import { v11Capabilities } from '../ptv/testing/fixtures.js';
 import type { Organization, Service } from '../ptv/domain.js';
 import * as searchTools from './searchTools.js';
 import type { ToolContext } from './toolContext.js';
@@ -54,14 +55,7 @@ function buildAdapter(): InMemoryPtvAdapter {
     organizations: [organization, rootOrganization],
     codeLists: { languages: [{ code: 'fi', names: { fi: 'suomi' } }] },
     connections: [{ serviceId: 'svc-1', channelId: 'chan-1', modifiedAt: '2026-01-01T00:00:00Z' }],
-    capabilities: {
-      apiVersion: 'v11',
-      environment: 'test',
-      credentialScope: 'user',
-      supportsRead: true,
-      supportsWrite: false,
-      supportsDraftRead: false,
-    },
+    capabilities: v11Capabilities(),
   });
 }
 
