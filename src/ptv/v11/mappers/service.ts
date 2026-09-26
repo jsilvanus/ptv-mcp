@@ -1,18 +1,6 @@
 import type { Service } from '../../domain.js';
 import type { V11ServiceWire } from '../wireModel.js';
-import { toCodeListEntries, toLocalizedText, toPublishingStatus } from './common.js';
-
-const SERVICE_TYPE_MAP: Record<string, Service['serviceType']> = {
-  Service: 'Service',
-  ProfessionalQualification: 'ProfessionalQualification',
-  PermitOrObligation: 'PermitOrObligation',
-};
-
-function toServiceType(wireType: string): Service['serviceType'] {
-  const mapped = SERVICE_TYPE_MAP[wireType];
-  if (!mapped) throw new Error(`Unknown v11 service type: ${wireType}`);
-  return mapped;
-}
+import { toCodeListEntries, toLocalizedText, toPublishingStatus, toServiceType } from './common.js';
 
 /**
  * v11 models a service's organizations as a list of {organization, roleType}

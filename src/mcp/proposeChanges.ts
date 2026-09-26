@@ -1,3 +1,4 @@
+import { resolveReadAdapter } from './toolContext.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   CodeListEntry,
@@ -130,11 +131,21 @@ function diffLocalizedField(
   return entries;
 }
 
-/** Computes a field-by-field diff for every field the proposal actually touches — not the full merged object. */
-export function diffService(current: Service, changes: Partial<Service>): ServiceDiffEntry[] {
+/**
+ * Computes a field-by-field diff for every field the proposal actually
+ * touches — not the full merged object. Works for any entity (services,
+ * channels, connections, organisations): localized texts diff per
+ * language, classifications and channel ids as sets, the rest by value.
+ */
+export function diffFields<T extends object>(
+  currentEntity: T,
+  changeSet: Partial<T>,
+): ServiceDiffEntry[] {
+  const current = currentEntity as Record<string, unknown>;
+  const changes = changeSet as Record<string, unknown>;
   const entries: ServiceDiffEntry[] = [];
 
-  for (const field of Object.keys(changes) as (keyof Service)[]) {
+  for (const field of Object.keys(changes)) {
     if (LOCALIZED_FIELDS.includes(field as (typeof LOCALIZED_FIELDS)[number])) {
       entries.push(
         ...diffLocalizedField(
@@ -195,13 +206,7 @@ export async function prepareProposal(
   serviceId: PtvContentId,
   changes: Partial<Service>,
 ): Promise<PreparedProposal> {
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
 
   const current = await adapter.getService(serviceId);
   if (!current) {
@@ -209,7 +214,7 @@ export async function prepareProposal(
   }
 
   const proposed = mergeService(current, changes);
-  const diff = diffService(current, changes);
+  const diff = diffFields(current, changes);
   return { serviceId, current, proposed, diff };
 }
 

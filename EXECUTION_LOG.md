@@ -1799,3 +1799,77 @@ JSON. It only formatted text and classification lists.
 - Weekday entries are grouped into ranges ("ma–pe 09:00–20:00").
 - Exceptional hours show their type and title.
 - Language-keyed values show one line per language.
+
+## 2026-09-25 — Features DVV tests before IN-API production credentials
+
+DVV's IN-integration pages list what it tests before issuing production
+credentials. `docs/dvv-in-integration-approval.md` has the checklist,
+with what doesn't apply to ptv-mcp (a daily push from a source system).
+The gaps are now built, unit- and integration-tested, and not yet
+verified live:
+
+- **Connection extra info** (`connection_update`,
+  `ptv_propose_connection_changes`): charge type, descriptions, service
+  hours and contact details of one service–channel connection. v11
+  resends every connection (the PUT replaces them), the changed one in
+  the In shape; GET and In differ in fax numbers and addresses
+  (`docs/ptv-v11-notes.md`). `ptv_search_connections` now returns the
+  extra info.
+- **Organisations** (`organisation_update`, `organisation_create`,
+  `ptv_propose_organisation_changes`, `ptv_propose_new_organisation`). The
+  domain Organization gained type, alternative names, texts, area and
+  contact details. A new sub-organisation copies its parent's type and
+  area but never the business ID, and is at most five levels deep.
+  Migration 0024 adds the three proposal kinds.
+- **Q-GD-1** is partly automatic: a summary or description sentence of
+  eight or more words found in the linked general description is an
+  error. `PtvAdapter.getGeneralDescription` is new (v12 returns null).
+- **Content report**: `GET /tenants/:tenantId/ptv/content-export` (and a
+  web UI panel) returns an .xlsx of the organisation's content and check
+  findings, written by a dependency-free writer (`src/export/xlsx.ts`,
+  checked with openpyxl).
+
+Deviation: sub-organisation archiving is `publishingStatus: Archived` on
+`organisation_update`; whether v11 accepts `Deleted` for organisations is
+one of the live tests.
+
+
+## 2026-09-25 — Codebase-wide simplify pass
+
+A reuse / simplification / efficiency / altitude review of the DVV branch,
+then of four subsets of the whole codebase (PTV adapters, MCP layer,
+platform services, web UI), with the fixes applied. Behaviour is the same
+except where noted; all unit (433) and integration (146) tests pass.
+
+- **Proposals:** one resolve path for every kind (`applyApproved`), one
+  re-diff switch (`liveDiff`); every kind is now read in the proposal's
+  own environment (channel, connection and organisation updates used the
+  caller's). Generic `diffFields`, shared `resolveReadAdapter` /
+  `resolveWriteAdapter`, `isCreateKind`, validators returning
+  `{valid, errors}`, shared reviewer lookup, `requireTenantRole` returns the
+  role.
+- **Quality and export:** `serviceCheckContext` (organisation names and
+  general description, in parallel) for every service check, so proposals
+  also check against the organisation's names; `src/ptv/organisationContent.ts`
+  reads an organisation's content for review campaigns and the report with
+  bounded concurrency and one connection count; PTV UI formatting moved to
+  `src/format/ptvFormat.ts`; limits in `src/ptv/limits.ts`.
+- **PTV adapters:** shared paging, HTTP retry and hierarchy helpers
+  (`src/ptv/{paging,http,hierarchy}.ts`), page walks and list-by-id reads
+  batched and bounded, per-request memo of organisation-scoped lists,
+  v12 hydration without re-enrichment, dead code removed.
+- **MCP server and OAuth:** a `tool()` wrapper for the 42 tools, a
+  per-request memo of role and adapter lookups, duplicated OAuth code
+  merged, dead code (`oauthFormBody.ts`) removed.
+- **Platform:** one REST error table (`src/routes/errorHandler.ts`), shared
+  route context, role read from the guard, single-statement proposal status
+  changes (two concurrent resolves can no longer both succeed),
+  `withContext` in one statement. `TenantNotFoundError` is now a 404.
+- **Web UI:** shared error, fetch and environment-select helpers; the audit
+  log fetches on submit; fewer refetches on the review page; reviewer and
+  comment panels reset when another proposal is selected.
+
+Left as separate tasks: a per-kind proposal handler registry with typed
+`changes`, a v12 organisation cache and bulk connection reads, splitting
+`AuthService.login` so MCP login doesn't create web sessions, and the
+larger web page splits.

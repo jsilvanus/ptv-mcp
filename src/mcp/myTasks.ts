@@ -59,20 +59,23 @@ async function changesToHandle(
       ? proposalService.listForTenant(ctx.tenantId, { status: 'approved' })
       : Promise.resolve([]),
   ]);
-  const result: ChangeToHandle[] = [];
-  for (const proposal of pending.filter((p) => p.environment === ctx.environment)) {
-    const reviewers = await proposalService.listReviewers(ctx.tenantId, proposal.id);
+  const pendingHere = pending.filter((p) => p.environment === ctx.environment);
+  const reviewersOf = await Promise.all(
+    pendingHere.map((proposal) => proposalService.listReviewers(ctx.tenantId, proposal.id)),
+  );
+  const result: ChangeToHandle[] = pendingHere.map((proposal, i) => {
+    const reviewers = reviewersOf[i] ?? [];
     const readiness: ChangeReadiness = reviewers.some((r) => r.decision !== 'approved')
       ? 'waiting_for_reviewers'
       : fourEyes && proposal.proposedByUserId === ctx.actingUserId
         ? 'needs_another_resolver'
         : 'ready_to_resolve';
-    result.push({
+    return {
       ...toSummary(proposal),
       readiness,
       reviewers: reviewers.map((r) => ({ userName: r.userName, decision: r.decision })),
-    });
-  }
+    };
+  });
   for (const proposal of approved.filter((p) => p.environment === ctx.environment)) {
     result.push({
       ...toSummary(proposal),
@@ -95,9 +98,13 @@ export async function listMyTasks(
   requireFourEyes: FourEyesResolver,
   ctx: ToolContext,
 ): Promise<MyTasks> {
-  await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
-  const role = await deps.resolveRole(ctx.tenantId, ctx.actingUserId);
-  const rank = role ? ROLE_RANK[role] : -1;
+  const role = await requireTenantRole(
+    deps.resolveRole,
+    ctx.tenantId,
+    ctx.actingUserId,
+    'contributor',
+  );
+  const rank = ROLE_RANK[role];
   const isApprover = rank >= ROLE_RANK.approver;
   const isPublisher = rank >= ROLE_RANK.publisher;
   const [reviewItems, awaiting, changes, campaigns] = await Promise.all([

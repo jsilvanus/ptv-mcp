@@ -23,11 +23,16 @@ export async function withContext<T>(
   fn: (tx: TransactionalDb) => Promise<T>,
 ): Promise<T> {
   return db.transaction(async (tx) => {
-    if (context.tenantId !== undefined) {
-      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${context.tenantId}, true)`);
-    }
-    if (context.userId !== undefined) {
-      await tx.execute(sql`SELECT set_config('app.current_user_id', ${context.userId}, true)`);
+    const settings = [
+      context.tenantId !== undefined
+        ? sql`set_config('app.current_tenant_id', ${context.tenantId}, true)`
+        : undefined,
+      context.userId !== undefined
+        ? sql`set_config('app.current_user_id', ${context.userId}, true)`
+        : undefined,
+    ].filter((setting) => setting !== undefined);
+    if (settings.length > 0) {
+      await tx.execute(sql`SELECT ${sql.join(settings, sql`, `)}`);
     }
     return fn(tx);
   });

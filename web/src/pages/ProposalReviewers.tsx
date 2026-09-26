@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ApiError, apiFetch, currentUserId } from '../api/client';
+import { apiFetch, currentUserId, errorMessage } from '../api/client';
 import type { ProposalDetails, ReviewCandidate, ReviewDecision } from '../api/types';
 
 const DECISION_LABELS: Record<ReviewDecision, string> = {
@@ -56,7 +56,7 @@ export function ProposalReviewers({
       await action();
       await onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : fallback);
+      setError(errorMessage(err, fallback));
     } finally {
       setBusy(false);
     }

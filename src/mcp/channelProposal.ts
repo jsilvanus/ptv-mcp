@@ -1,3 +1,4 @@
+import { resolveReadAdapter, resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkChannel, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -8,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import { validateChannel } from '../validation/changeValidator.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const COMMON_CHANNEL_FIELDS = [
@@ -93,13 +94,7 @@ export async function prepareChannelProposal(
   );
   if (unsupported.length > 0) throw new UnsupportedChannelFieldError(unsupported);
 
-  const adapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
   const current = await adapter.getChannel(channelId);
   if (!current) throw new ChannelNotFoundError(channelId);
   const wrongType = Object.keys(changes).filter(
@@ -108,7 +103,7 @@ export async function prepareChannelProposal(
   if (wrongType.length > 0) throw new UnsupportedChannelFieldError(wrongType, current.channelType);
   const proposed: ServiceChannel = { ...current, ...changes };
   // Same field semantics as a service's names/descriptions/languages.
-  const diff = diffService(current as unknown as Service, changes as unknown as Partial<Service>);
+  const diff = diffFields(current, changes);
   return { channelId, current, proposed, diff };
 }
 
@@ -196,13 +191,7 @@ export async function applyChannelChanges(
   });
   if (!validation.valid) throw new ValidationFailedError(validation.errors);
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   const audit = (result: 'Success' | 'Failed') =>
     auditService.record({

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ApiError, apiFetch } from '../api/client';
+import { apiFetch, errorMessage } from '../api/client';
 import type { ProposalComment } from '../api/types';
 
 /**
@@ -34,7 +34,7 @@ export function ProposalComments({
       setDraft('');
       await onAdded();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add comment.');
+      setError(errorMessage(err, 'Could not add comment.'));
     } finally {
       setSending(false);
     }

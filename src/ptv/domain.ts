@@ -228,13 +228,59 @@ export interface ServiceChannel {
   modifiedAt?: string;
 }
 
+/**
+ * PTV organisation types. Public: State, Region (maakunta),
+ * RegionalOrganization (e.g. a wellbeing services county), Municipality;
+ * private: Organization (järjestöt ja yhteisöt; parishes are described as
+ * this or as their parent's type), Company. SotePublic/SotePrivate are
+ * read-only legacy types.
+ */
+export type OrganizationType =
+  | 'State'
+  | 'Region'
+  | 'RegionalOrganization'
+  | 'Municipality'
+  | 'Organization'
+  | 'Company'
+  | 'SotePublic'
+  | 'SotePrivate';
+
+/** Where an organisation mainly offers its services. */
+export interface OrganizationArea {
+  areaType: 'Nationwide' | 'NationwideExceptAlandIslands' | 'LimitedType';
+  /** LimitedType: e.g. { type: 'Municipality', code: '694' }. */
+  areas?: { type: string; code: string }[];
+}
+
+/**
+ * An organisation. The fields after `names` are optional because not every
+ * adapter reads them (v12 today reads names only).
+ */
 export interface Organization {
   id: PtvContentId;
   sourceId?: string;
   parentOrganizationId?: PtvContentId;
+  /** Y-tunnus, 1234567-8. */
   businessCode?: string;
   publishingStatus: PublishingStatus;
   names: LocalizedText;
+  organizationType?: OrganizationType;
+  /** An unofficial name customers use (vaihtoehtoinen nimi). */
+  alternativeNames?: LocalizedText;
+  /** Languages that show the alternative name instead of the official one. */
+  alternativeNameShownIn?: LanguageCode[];
+  /** Max 150 characters; not a copy of the name. */
+  summaries?: LocalizedText;
+  /** Max 2500 characters (DVV); no contact details. */
+  descriptions?: LocalizedText;
+  area?: OrganizationArea;
+  /** Municipality code, for a Municipality organisation. */
+  municipality?: string;
+  emails?: LanguageValue[];
+  phoneNumbers?: PhoneNumber[];
+  webPages?: WebLink[];
+  /** A visiting address (the main office) and postal addresses. */
+  addresses?: ChannelAddress[];
   modifiedAt?: string;
 }
 
@@ -244,6 +290,12 @@ export interface GeneralDescription {
   publishingStatus: PublishingStatus;
   names: LocalizedText;
   descriptions: LocalizedText;
+  /**
+   * Every free text of the general description (summary, description,
+   * background, instructions, ...) by language, for the copy check
+   * (Q-GD-1). Present when the adapter reads it.
+   */
+  texts?: Partial<Record<LanguageCode, string[]>>;
   serviceClasses: CodeListEntry[];
   ontologyTerms: CodeListEntry[];
   targetGroups: CodeListEntry[];
@@ -268,11 +320,31 @@ export interface ServiceCollection {
  * is responsible for producing this same shape either way (see
  * docs/ptv-v11-notes.md, "No read-back for connections").
  */
-export interface Connection {
+export interface Connection extends ConnectionDetails {
   serviceId: PtvContentId;
   channelId: PtvContentId;
-  descriptions?: LocalizedText;
   modifiedAt?: string;
+}
+
+/**
+ * A connection's extra info (liitoksen lisätiedot): what is specific to
+ * this service in this channel, e.g. the service's own hours or phone
+ * number at a shared service location. Every field is optional.
+ */
+export interface ConnectionDetails {
+  /** Chargeable = the service costs something here, FreeOfCharge, Other. */
+  chargeType?: 'Chargeable' | 'FreeOfCharge' | 'Other';
+  /** Max 500 characters. */
+  descriptions?: LocalizedText;
+  /** More about the charge (ChargeTypeAdditionalInfo), max 500 characters. */
+  chargeDescriptions?: LocalizedText;
+  serviceHours?: ServiceHour[];
+  emails?: LanguageValue[];
+  /** Phone numbers; type Fax for fax numbers. */
+  phoneNumbers?: PhoneNumber[];
+  webPages?: WebLink[];
+  /** Postal addresses only: Street, PostOfficeBox or Foreign. */
+  addresses?: ChannelAddress[];
 }
 
 export interface PaginatedResult<T> {

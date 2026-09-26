@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ApplyChannelChangeResult,
+  ApplyConnectionChangeResult,
+  ApplyOrganizationChangeResult,
+  NewOrganization,
+  OrganizationChangeProposal,
+  ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
   NewChannel,
@@ -21,6 +26,8 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../domain.js';
+import { walkOrganisationHierarchy } from '../hierarchy.js';
+import { paginate } from '../paging.js';
 
 /**
  * A fake PtvAdapter backed by plain in-memory arrays, used to validate
@@ -87,17 +94,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
-    const root = await this.getOrganisation(id);
-    if (!root) return [];
-    const hierarchy = [root];
-    let current = root;
-    while (current.parentOrganizationId) {
-      const parent = await this.getOrganisation(current.parentOrganizationId);
-      if (!parent) break;
-      hierarchy.push(parent);
-      current = parent;
-    }
-    return hierarchy;
+    return walkOrganisationHierarchy((orgId) => this.getOrganisation(orgId), id);
   }
 
   async searchServiceCollections(
@@ -110,6 +107,10 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     params: SearchParams,
   ): Promise<PaginatedResult<GeneralDescription>> {
     return paginate(this.generalDescriptions, params);
+  }
+
+  async getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null> {
+    return this.generalDescriptions.find((gd) => gd.id === id) ?? null;
   }
 
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
@@ -125,23 +126,11 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     const terms = (this.codeLists.ontologyTerms ?? []).filter((term) =>
       Object.values(term.names).some((name) => name?.toLocaleLowerCase('fi-FI').includes(needle)),
     );
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 100;
-    const start = (page - 1) * pageSize;
-    return {
-      items: terms.slice(start, start + pageSize),
-      page,
-      pageSize,
-      totalCount: terms.length,
-    };
+    return paginate(terms, params);
   }
 
   async applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const index = this.services.findIndex((s) => s.id === proposal.serviceId);
     if (index === -1) {
       throw new Error(`Unknown service id: ${proposal.serviceId}`);
@@ -160,11 +149,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const index = this.channels.findIndex((c) => c.id === proposal.channelId);
     const existing = this.channels[index];
     if (!existing) throw new Error(`Unknown channel id: ${proposal.channelId}`);
@@ -178,11 +163,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async createService(service: NewService): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const created: Service = { ...service, id: randomUUID() };
     this.services.push(created);
     return {
@@ -193,11 +174,7 @@ export class InMemoryPtvAdapter implements PtvAdapter {
   }
 
   async createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error(
-        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
-      );
-    }
+    this.requireWrite();
     const { serviceIds, ...fields } = channel;
     const created: ServiceChannel = { ...fields, id: randomUUID() };
     this.channels.push(created);
@@ -212,16 +189,58 @@ export class InMemoryPtvAdapter implements PtvAdapter {
       appliedAt: new Date().toISOString(),
     };
   }
-}
 
-function paginate<T>(items: T[], params: SearchParams): PaginatedResult<T> {
-  const page = params.page ?? 1;
-  const pageSize = params.pageSize ?? 100;
-  const start = (page - 1) * pageSize;
-  return {
-    items: items.slice(start, start + pageSize),
-    page,
-    pageSize,
-    totalCount: items.length,
-  };
+  async applyConnectionChange(
+    proposal: ConnectionChangeProposal,
+  ): Promise<ApplyConnectionChangeResult> {
+    this.requireWrite();
+    const index = this.connections.findIndex(
+      (c) => c.serviceId === proposal.serviceId && c.channelId === proposal.channelId,
+    );
+    const existing = this.connections[index];
+    if (!existing) {
+      throw new Error(`Service ${proposal.serviceId} is not connected to ${proposal.channelId}`);
+    }
+    this.connections[index] = { ...existing, ...proposal.changes };
+    return {
+      serviceId: proposal.serviceId,
+      channelId: proposal.channelId,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const index = this.organizations.findIndex((o) => o.id === proposal.organizationId);
+    const existing = this.organizations[index];
+    if (!existing) throw new Error(`Unknown organisation id: ${proposal.organizationId}`);
+    const updated: Organization = { ...existing, ...proposal.changes };
+    this.organizations[index] = updated;
+    return {
+      organizationId: updated.id,
+      publishingStatus: updated.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const created: Organization = { ...organization, id: randomUUID() };
+    this.organizations.push(created);
+    return {
+      organizationId: created.id,
+      publishingStatus: created.publishingStatus,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  private requireWrite(): void {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error(
+        `${this.capabilities.apiVersion} adapter does not support write in ${this.capabilities.environment}`,
+      );
+    }
+  }
 }

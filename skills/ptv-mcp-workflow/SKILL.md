@@ -51,6 +51,22 @@ Before drafting, load the `content-quality` guide
   `serviceIds` to connect it to its services in the same step.
 - **Connect or disconnect a channel**: `ptv_propose_changes` on the
   service, with its full `serviceChannelIds` list.
+- **Change a connection's extra info** (liitoksen lisätiedot):
+  `ptv_propose_connection_changes` with the service and channel ids. Use
+  it only for what is specific to this service in this channel, e.g. the
+  service's own hours or phone number at a shared service location, or
+  its charge there. Read the current extra info first with
+  `ptv_search_connections`.
+- **Change an organisation**: `ptv_propose_organisation_changes` (names,
+  alternative name, summary, description, business ID, contact details,
+  or Archived for a sub-organisation that no longer exists). The type,
+  area and parent are changed in PTV's UI.
+- **Create a sub-organisation**: `ptv_propose_new_organisation`, only when
+  customers benefit from seeing it as the responsible organisation or
+  reporting needs it. Give it a name, summary and description in every
+  language its services will use; at most five levels below the main
+  organisation. Its services and channels can be proposed once it is
+  published.
 - **Create a service and a channel together**: one at a time, because a
   new item's id only exists once it is created in PTV.
   1. First check the organisation's and other organisations' shared

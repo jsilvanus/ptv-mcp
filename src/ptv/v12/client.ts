@@ -1,4 +1,5 @@
 import type { PtvEnvironment } from '../adapter.js';
+import { isRetryable, retryDelayMs, sleep } from '../http.js';
 
 export const V12_BASE_URLS: Record<PtvEnvironment, string> = {
   production: 'https://api-gw.palvelutietovaranto.suomi.fi',
@@ -96,20 +97,4 @@ export class PtvV12Client {
     }
     throw new Error('PTV v12 request failed');
   }
-}
-
-function isRetryable(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
-function retryDelayMs(attempt: number, retryAfter: string | null): number {
-  if (retryAfter) {
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds)) return seconds * 1000;
-  }
-  return 250 * 2 ** attempt;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

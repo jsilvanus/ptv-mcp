@@ -3,7 +3,6 @@ import type { FastifyInstance } from 'fastify';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { InvalidAccessTokenError } from '../auth/jwt.js';
 import { createMcpServer, type McpServerDeps } from './mcpServer.js';
 import type { OAuthService } from './oauthService.js';
 
@@ -61,12 +60,8 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions):
           },
         };
       } catch (err) {
-        if (!(err instanceof Error && err.message === 'invalid_token')) {
-          if (err instanceof InvalidAccessTokenError) {
-            return reply.unauthorized(err.message);
-          }
-          throw err;
-        }
+        // verifyAccessToken() turns every Error into Error('invalid_token').
+        if (!(err instanceof Error && err.message === 'invalid_token')) throw err;
         // Invalid bearer tokens are treated like missing credentials below;
         // the tool handler will return the OAuth challenge.
       }

@@ -1,3 +1,4 @@
+import { resolveWriteAdapter } from './toolContext.js';
 import { assertLocalizedTextFields } from './localizedInput.js';
 import { checkService, type QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -8,7 +9,7 @@ import type { ProposalService, ProposalStatus } from '../proposals/proposalServi
 import type { ChangeValidator } from '../validation/changeValidator.js';
 import { ValidationFailedError, WriteApiNotSelectedError } from './applyOrExport.js';
 import { requireTenantRole, type MembershipRoleResolver } from './authorization.js';
-import { diffService, type ServiceDiffEntry } from './proposeChanges.js';
+import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 /** Everything empty: what a new service is diffed against. */
@@ -75,7 +76,7 @@ export async function queueNewServiceProposal(
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   assertLocalizedTextFields(input);
   const proposed = normalizeNewService(input);
-  const diff = diffService(EMPTY_SERVICE, proposed);
+  const diff = diffFields(EMPTY_SERVICE, proposed);
   const validation = validator.validate(asService(proposed));
   const auditEntry = await auditService.record({
     tenantId: ctx.tenantId,
@@ -139,13 +140,7 @@ export async function createNewService(
     throw new ValidationFailedError(validation.errors);
   }
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion,
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
   try {
     const result = await writeAdapter.createService(service);

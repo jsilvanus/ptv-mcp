@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
-import { apiFetch, ApiError } from '../api/client';
+import { apiFetch, ApiError, errorMessage } from '../api/client';
 import type { Member, MembershipRole } from '../api/types';
 import { ROLE_LABELS, ROLES } from '../auth/roles';
 import { TenantSettingsPanel } from './TenantSettingsPanel';
@@ -32,7 +32,7 @@ export function MembersPage() {
       if (err instanceof ApiError && err.status === 403) {
         setForbidden(true);
       } else {
-        setLoadError(err instanceof ApiError ? err.message : 'Could not load members.');
+        setLoadError(errorMessage(err, 'Could not load members.'));
       }
     } finally {
       setLoading(false);
@@ -60,7 +60,7 @@ export function MembersPage() {
       if (err instanceof ApiError && err.status === 404) {
         setAddError('No user is registered with that email.');
       } else {
-        setAddError(err instanceof ApiError ? err.message : 'Could not add member.');
+        setAddError(errorMessage(err, 'Could not add member.'));
       }
     } finally {
       setAdding(false);
@@ -85,7 +85,7 @@ export function MembersPage() {
       });
       await loadMembers();
     } catch (err) {
-      setRowError(err instanceof ApiError ? err.message : 'Could not change role.');
+      setRowError(errorMessage(err, 'Could not change role.'));
     } finally {
       setPendingUserId(null);
     }
@@ -104,7 +104,7 @@ export function MembersPage() {
       });
       await loadMembers();
     } catch (err) {
-      setRowError(err instanceof ApiError ? err.message : 'Could not remove member.');
+      setRowError(errorMessage(err, 'Could not remove member.'));
     } finally {
       setPendingUserId(null);
     }

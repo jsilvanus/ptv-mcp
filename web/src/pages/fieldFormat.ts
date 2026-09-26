@@ -26,7 +26,8 @@ const WEEKDAYS: Record<string, string> = {
   Sunday: 'su',
 };
 
-const CHARGES: Record<string, string> = {
+/** A phone number's charge type, as the phrase shown after the number. */
+const PHONE_CHARGE_LABELS: Record<string, string> = {
   Chargeable: 'normaali puhelumaksu',
   FreeOfCharge: 'maksuton',
   Other: 'lisämaksullinen',
@@ -64,7 +65,7 @@ export function formatPhone(p: PreviewPhone): string {
   const type =
     p.type && p.type !== 'Phone' ? ` (${p.type === 'Sms' ? 'tekstiviesti' : 'faksi'})` : '';
   const info = p.additionalInformation ? ` – ${p.additionalInformation}` : '';
-  const charge = p.chargeType ? `, ${CHARGES[p.chargeType] ?? p.chargeType}` : '';
+  const charge = p.chargeType ? `, ${PHONE_CHARGE_LABELS[p.chargeType] ?? p.chargeType}` : '';
   const chargeText = p.chargeDescription ? ` (${p.chargeDescription})` : '';
   return `${number}${type}${info}${charge}${chargeText}`;
 }
@@ -156,6 +157,22 @@ export function formatServiceHour(h: PreviewServiceHour, language: string): stri
 
 const lines = (values: string[]) => values.join('\n');
 
+const ORGANIZATION_TYPE: Record<string, string> = {
+  State: 'Valtio',
+  Region: 'Maakunta',
+  RegionalOrganization: 'Alueellinen yhteistoimintaorganisaatio',
+  Municipality: 'Kunta',
+  Organization: 'Järjestöt ja yhteisöt',
+  Company: 'Yritykset',
+};
+
+/** A service's charge type (the service field `chargeType`), as PTV's UI labels it. */
+const SERVICE_CHARGE_LABELS: Record<string, string> = {
+  Chargeable: 'Maksullinen',
+  FreeOfCharge: 'Maksuton',
+  Other: 'Muu',
+};
+
 /**
  * A field's value as text, by the field's name (`phoneNumbers`, or a
  * localized `names.fi`). Lists get one line per entry, with the language
@@ -198,6 +215,16 @@ export function formatFieldValue(field: string, value: unknown): string {
         return ACCESSIBILITY[value as string] ?? String(value);
       case 'publishingStatus':
         return PUBLISHING_STATUS[value as string] ?? String(value);
+      case 'chargeType':
+        return SERVICE_CHARGE_LABELS[value as string] ?? String(value);
+      case 'organizationType':
+        return ORGANIZATION_TYPE[value as string] ?? String(value);
+      case 'area': {
+        const area = value as { areaType: string; areas?: { type: string; code: string }[] };
+        if (area.areaType === 'Nationwide') return 'Koko maa';
+        if (area.areaType === 'NationwideExceptAlandIslands') return 'Koko maa paitsi Ahvenanmaa';
+        return `Rajattu alue: ${(area.areas ?? []).map((a) => `${a.type} ${a.code}`).join(', ')}`;
+      }
     }
   } catch {
     // Unexpected shape: fall back to the generic text below.

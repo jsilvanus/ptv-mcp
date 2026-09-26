@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
 import { memberships } from '../db/schema/index.js';
+import type { MembershipRoleResolver } from '../mcp/authorization.js';
 import { InvalidAccessTokenError, verifyAccessToken } from './jwt.js';
 
 declare module 'fastify' {
@@ -97,4 +98,18 @@ export function createRequireRole(db: Database, minRole: MembershipRole) {
     request.tenantId = tenantId;
     request.role = role;
   };
+}
+
+/**
+ * A `MembershipRoleResolver` for the domain functions a route calls after
+ * `requireRole`: it answers the acting user's role for the guarded tenant
+ * from `request.role` instead of looking it up again, and falls back to
+ * `resolveMembershipRole` for any other (tenant, user) pair — e.g. the
+ * role of a reviewer being assigned.
+ */
+export function requestRoleResolver(db: Database, request: FastifyRequest): MembershipRoleResolver {
+  return async (tenantId, userId) =>
+    request.role !== undefined && tenantId === request.tenantId && userId === request.userId
+      ? request.role
+      : resolveMembershipRole(db, tenantId, userId);
 }

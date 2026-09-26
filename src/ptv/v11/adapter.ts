@@ -1,6 +1,11 @@
 import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
 import type {
   ApplyChannelChangeResult,
+  ApplyConnectionChangeResult,
+  ApplyOrganizationChangeResult,
+  NewOrganization,
+  OrganizationChangeProposal,
+  ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
   NewChannel,
@@ -23,6 +28,9 @@ import type {
   ServiceChannel,
   ServiceCollection,
 } from '../domain.js';
+import { walkOrganisationHierarchy } from '../hierarchy.js';
+import { isNotFound } from '../http.js';
+import { paginate } from '../paging.js';
 import { PtvV11Client } from './client.js';
 import {
   fetchAllIdNamePairs,
@@ -51,7 +59,8 @@ import {
   newChannelToV11Body,
   V11_CHANNEL_WRITE_TYPES,
 } from './channelWriteMapping.js';
-import { planServiceConnections } from './connectionWrite.js';
+import { planConnectionDetails, planServiceConnections } from './connectionWrite.js';
+import { newOrganizationToV11Body, organizationChangesToV11Body } from './organizationWrite.js';
 import {
   sharedV11ApiTokenCache,
   type V11ApiTokenCache,
@@ -59,7 +68,6 @@ import {
 } from './auth/apiLogin.js';
 import type {
   V11GeneralDescriptionWire,
-  V11IdNamePair,
   V11OrganizationWire,
   V11ReferenceCodeItem,
   V11ServiceChannelWire,
@@ -96,6 +104,13 @@ export class PtvV11Adapter implements PtvAdapter {
   private readonly capabilities: PtvAdapterCapabilities;
   private readonly organizationCache?: PtvOrganizationCacheService | undefined;
   private readonly tenantId?: string | undefined;
+  /**
+   * Organisation-scoped lists, keyed by list + organisation id. Each MCP
+   * page of an organisation search needs the organisation's whole list;
+   * adapters are created per request, so this reuses one download across
+   * the pages read within a request and never goes stale beyond it.
+   */
+  private readonly organizationLists = new Map<string, Promise<unknown[]>>();
 
   constructor(options: PtvV11AdapterOptions) {
     this.organizationCache = options.organizationCache;
@@ -137,20 +152,14 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationServiceWindow(
-        this.client,
-        params.organizationId,
+      const organizationId = params.organizationId;
+      const organizationWires = await this.organizationList('services', organizationId, () =>
+        fetchOrganizationServiceWindow(this.client, organizationId),
       );
       const services = organizationWires
         .map(serviceWireToDomain)
-        .filter((service) => service.organizationId === params.organizationId);
-
-      return {
-        items: services.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: services.length,
-      };
+        .filter((service) => service.organizationId === organizationId);
+      return paginate(services, params);
     }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
@@ -159,12 +168,7 @@ export class PtvV11Adapter implements PtvAdapter {
       start,
       pageSize,
     );
-    const wires =
-      ids.length > 0
-        ? await this.client.get<V11ServiceWire[]>('/api/v11/Service/list', {
-            guids: ids.join(','),
-          })
-        : [];
+    const wires = await fetchListByIds<V11ServiceWire>(this.client, '/api/v11/Service/list', ids);
 
     return {
       items: wires.map(serviceWireToDomain),
@@ -185,20 +189,14 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationServiceChannelWindow(
-        this.client,
-        params.organizationId,
+      const organizationId = params.organizationId;
+      const organizationWires = await this.organizationList('channels', organizationId, () =>
+        fetchOrganizationServiceChannelWindow(this.client, organizationId),
       );
       const channels = organizationWires
         .map(serviceChannelWireToDomain)
-        .filter((channel) => channel.organizationId === params.organizationId);
-
-      return {
-        items: channels.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: channels.length,
-      };
+        .filter((channel) => channel.organizationId === organizationId);
+      return paginate(channels, params);
     }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
@@ -207,12 +205,11 @@ export class PtvV11Adapter implements PtvAdapter {
       start,
       pageSize,
     );
-    const wires =
-      ids.length > 0
-        ? await this.client.get<V11ServiceChannelWire[]>('/api/v11/ServiceChannel/list', {
-            guids: ids.join(','),
-          })
-        : [];
+    const wires = await fetchListByIds<V11ServiceChannelWire>(
+      this.client,
+      '/api/v11/ServiceChannel/list',
+      ids,
+    );
 
     return {
       items: wires.map(serviceChannelWireToDomain),
@@ -245,13 +242,7 @@ export class PtvV11Adapter implements PtvAdapter {
       }
 
       const wires = await this.organizationCache.search(cacheKey, query);
-      const items = wires.map(organizationWireToDomain);
-      return {
-        items: items.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: items.length,
-      };
+      return paginate(wires.map(organizationWireToDomain), params);
     }
 
     if (query) {
@@ -268,13 +259,7 @@ export class PtvV11Adapter implements PtvAdapter {
         '/api/v11/Organization/list',
         matchingIds,
       );
-      const items = wires.map(organizationWireToDomain);
-      return {
-        items: items.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: items.length,
-      };
+      return paginate(wires.map(organizationWireToDomain), params);
     }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
@@ -302,17 +287,13 @@ export class PtvV11Adapter implements PtvAdapter {
     apiVersion: string;
   }): Promise<void> {
     const catalog = await fetchAllIdNamePairs(this.client, '/api/v11/Organization');
+    // fetchListByIds keeps the catalogue's order.
     const wires = await fetchListByIds<V11OrganizationWire>(
       this.client,
       '/api/v11/Organization/list',
       catalog.map((item) => item.id),
     );
-    const byId = new Map(wires.map((wire) => [wire.id, wire]));
-    const ordered = catalog
-      .map((item) => byId.get(item.id))
-      .filter((wire): wire is V11OrganizationWire => wire !== undefined);
-
-    await this.organizationCache!.replaceCatalogue(key, ordered);
+    await this.organizationCache!.replaceCatalogue(key, wires);
   }
 
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
@@ -321,18 +302,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
-    const root = await this.getOrganisation(id);
-    if (!root) return [];
-
-    const hierarchy: Organization[] = [root];
-    let current = root;
-    while (current.parentOrganizationId) {
-      const parent = await this.getOrganisation(current.parentOrganizationId);
-      if (!parent) break;
-      hierarchy.push(parent);
-      current = parent;
-    }
-    return hierarchy;
+    return walkOrganisationHierarchy((orgId) => this.getOrganisation(orgId), id);
   }
 
   async searchServiceCollections(
@@ -343,17 +313,11 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationServiceCollectionWindow(
-        this.client,
-        params.organizationId,
+      const organizationId = params.organizationId;
+      const organizationWires = await this.organizationList('collections', organizationId, () =>
+        fetchOrganizationServiceCollectionWindow(this.client, organizationId),
       );
-      const items = organizationWires.map(serviceCollectionWireToDomain);
-      return {
-        items: items.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: items.length,
-      };
+      return paginate(organizationWires.map(serviceCollectionWireToDomain), params);
     }
 
     // v11 has no bulk /ServiceCollection/list?guids= endpoint (unlike
@@ -387,17 +351,13 @@ export class PtvV11Adapter implements PtvAdapter {
     const start = (page - 1) * pageSize;
 
     if (params.organizationId) {
-      const { items: organizationWires } = await fetchOrganizationGeneralDescriptionWindow(
-        this.client,
-        params.organizationId,
+      const organizationId = params.organizationId;
+      const organizationWires = await this.organizationList(
+        'generalDescriptions',
+        organizationId,
+        () => fetchOrganizationGeneralDescriptionWindow(this.client, organizationId),
       );
-      const items = organizationWires.map(generalDescriptionWireToDomain);
-      return {
-        items: items.slice(start, start + pageSize),
-        page,
-        pageSize,
-        totalCount: items.length,
-      };
+      return paginate(organizationWires.map(generalDescriptionWireToDomain), params);
     }
 
     const { ids, totalCountEstimate } = await fetchIdWindow(
@@ -406,12 +366,11 @@ export class PtvV11Adapter implements PtvAdapter {
       start,
       pageSize,
     );
-    const wires =
-      ids.length > 0
-        ? await this.client.get<V11GeneralDescriptionWire[]>('/api/v11/GeneralDescription/list', {
-            guids: ids.join(','),
-          })
-        : [];
+    const wires = await fetchListByIds<V11GeneralDescriptionWire>(
+      this.client,
+      '/api/v11/GeneralDescription/list',
+      ids,
+    );
 
     return {
       items: wires.map(generalDescriptionWireToDomain),
@@ -419,6 +378,13 @@ export class PtvV11Adapter implements PtvAdapter {
       pageSize,
       totalCount: totalCountEstimate,
     };
+  }
+
+  async getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null> {
+    const wire = await this.getOrNull<V11GeneralDescriptionWire>(
+      `/api/v11/GeneralDescription/${id}`,
+    );
+    return wire ? generalDescriptionWireToDomain(wire) : null;
   }
 
   async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
@@ -452,9 +418,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async applyServiceChange(proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error('PtvV11Adapter: write is not enabled for this instance');
-    }
+    this.requireWrite();
     // The PUT has to resend required fields the change doesn't touch (see
     // writeMapping.ts), so it's built on top of PTV's current record.
     // Built on the latest version, so a PUT never reverts a newer draft.
@@ -483,9 +447,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async createService(service: NewService): Promise<ApplyServiceChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error('PtvV11Adapter: write is not enabled for this instance');
-    }
+    this.requireWrite();
     const organization = await this.getOrNull<V11OrganizationWire>(
       `/api/v11/Organization/${service.organizationId}`,
     );
@@ -501,9 +463,7 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async applyChannelChange(proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error('PtvV11Adapter: write is not enabled for this instance');
-    }
+    this.requireWrite();
     const current = await this.getLatestOrNull<V11ServiceChannelWire>(
       'ServiceChannel',
       proposal.channelId,
@@ -512,10 +472,7 @@ export class PtvV11Adapter implements PtvAdapter {
     if (current.publishingStatus === 'Modified') {
       throw new V11ModifiedVersionLockedError(proposal.channelId);
     }
-    const type = V11_CHANNEL_WRITE_TYPES.find((t) => t === current.serviceChannelType);
-    if (!type) {
-      throw new Error(`Unknown v11 service channel type: ${current.serviceChannelType}`);
-    }
+    const type = channelWriteType(current.serviceChannelType);
     const updated = await this.client.put<V11ServiceChannelWire>(
       `/api/v11/ServiceChannel/${type}/${proposal.channelId}`,
       channelChangesToV11Body(proposal.changes, current),
@@ -528,17 +485,66 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 
   async createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult> {
-    if (!this.capabilities.supportsWrite) {
-      throw new Error('PtvV11Adapter: write is not enabled for this instance');
-    }
-    const type = V11_CHANNEL_WRITE_TYPES.find((t) => t === channel.channelType);
-    if (!type) throw new Error(`Unknown service channel type: ${channel.channelType}`);
+    this.requireWrite();
+    const type = channelWriteType(channel.channelType);
     const created = await this.client.post<V11ServiceChannelWire>(
       `/api/v11/ServiceChannel/${type}`,
       newChannelToV11Body(channel),
     );
     return {
       channelId: created.id,
+      publishingStatus: toPublishingStatus(created.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyConnectionChange(
+    proposal: ConnectionChangeProposal,
+  ): Promise<ApplyConnectionChangeResult> {
+    this.requireWrite();
+    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
+    if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
+    await this.client.put(
+      `/api/v11/Connection/serviceId/${proposal.serviceId}`,
+      planConnectionDetails(current, proposal.channelId, proposal.changes),
+    );
+    return {
+      serviceId: proposal.serviceId,
+      channelId: proposal.channelId,
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const current = await this.getOrNull<V11OrganizationWire>(
+      `/api/v11/Organization/${proposal.organizationId}`,
+    );
+    if (!current) throw new Error(`PTV organisation ${proposal.organizationId} not found`);
+    if (current.publishingStatus === 'Modified') {
+      throw new V11ModifiedVersionLockedError(proposal.organizationId);
+    }
+    const updated = await this.client.put<V11OrganizationWire>(
+      `/api/v11/Organization/${proposal.organizationId}`,
+      organizationChangesToV11Body(proposal.changes, current),
+    );
+    return {
+      organizationId: updated.id,
+      publishingStatus: toPublishingStatus(updated.publishingStatus),
+      appliedAt: new Date().toISOString(),
+    };
+  }
+
+  async createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
+    this.requireWrite();
+    const created = await this.client.post<V11OrganizationWire>(
+      '/api/v11/Organization',
+      newOrganizationToV11Body(organization),
+    );
+    return {
+      organizationId: created.id,
       publishingStatus: toPublishingStatus(created.publishingStatus),
       appliedAt: new Date().toISOString(),
     };
@@ -558,8 +564,32 @@ export class PtvV11Adapter implements PtvAdapter {
       wire?.industrialClasses,
     ];
     return new Set(
-      lists.flatMap((items) => (items ?? []).map((item) => item.uri).filter((uri) => !!uri)),
-    ) as Set<string>;
+      lists.flatMap((items) =>
+        (items ?? []).map((item) => item.uri).filter((uri): uri is string => !!uri),
+      ),
+    );
+  }
+
+  private requireWrite(): void {
+    if (!this.capabilities.supportsWrite) {
+      throw new Error('PtvV11Adapter: write is not enabled for this instance');
+    }
+  }
+
+  /** One download per (list, organisation) for this adapter instance; a failed one is retried. */
+  private organizationList<T>(
+    list: string,
+    organizationId: string,
+    load: () => Promise<T[]>,
+  ): Promise<T[]> {
+    const key = `${list}:${organizationId}`;
+    let pending = this.organizationLists.get(key) as Promise<T[]> | undefined;
+    if (!pending) {
+      pending = load();
+      this.organizationLists.set(key, pending);
+      pending.catch(() => this.organizationLists.delete(key));
+    }
+    return pending;
   }
 
   /** Connections are written through their own endpoint, after the service PUT. */
@@ -603,10 +633,9 @@ export class PtvV11Adapter implements PtvAdapter {
   }
 }
 
-function isNotFound(err: unknown): boolean {
-  return err instanceof Error && 'status' in err && (err as { status: unknown }).status === 404;
+/** v11 writes a channel through its type's own path (`ServiceChannel/{type}/...`). */
+function channelWriteType(type: string): (typeof V11_CHANNEL_WRITE_TYPES)[number] {
+  const writeType = V11_CHANNEL_WRITE_TYPES.find((t) => t === type);
+  if (!writeType) throw new Error(`Unknown v11 service channel type: ${type}`);
+  return writeType;
 }
-
-// Re-exported for callers that need to enumerate id/name pairs directly
-// (e.g. future UI autocomplete) without going through a full domain fetch.
-export type { V11IdNamePair };

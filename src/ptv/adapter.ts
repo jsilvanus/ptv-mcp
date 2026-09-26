@@ -1,7 +1,9 @@
 import type {
   Connection,
+  ConnectionDetails,
   GeneralDescription,
   Organization,
+  OrganizationType,
   PaginatedResult,
   PtvContentId,
   SearchParams,
@@ -62,6 +64,45 @@ export interface ChannelChangeProposal {
   changes: Partial<ServiceChannel>;
 }
 
+/** A proposed change to one service–channel connection's extra info. */
+export interface ConnectionChangeProposal {
+  serviceId: PtvContentId;
+  channelId: PtvContentId;
+  /** Only the fields that change; a present field replaces the current value. */
+  changes: Partial<ConnectionDetails>;
+}
+
+export interface ApplyConnectionChangeResult {
+  serviceId: PtvContentId;
+  channelId: PtvContentId;
+  appliedAt: string;
+}
+
+/** A proposed change to an existing organisation. */
+export interface OrganizationChangeProposal {
+  organizationId: PtvContentId;
+  /** Only the fields that change; a present field replaces the current value. */
+  changes: Partial<Organization>;
+}
+
+/**
+ * A sub-organisation to create under `parentOrganizationId`. PTV assigns
+ * `id` and `modifiedAt`; `publishingStatus` is Draft or Published.
+ */
+export type NewOrganization = Omit<
+  Organization,
+  'id' | 'modifiedAt' | 'parentOrganizationId' | 'organizationType'
+> & {
+  parentOrganizationId: PtvContentId;
+  organizationType: OrganizationType;
+};
+
+export interface ApplyOrganizationChangeResult {
+  organizationId: PtvContentId;
+  publishingStatus: Organization['publishingStatus'];
+  appliedAt: string;
+}
+
 export interface ApplyChannelChangeResult {
   channelId: PtvContentId;
   publishingStatus: ServiceChannel['publishingStatus'];
@@ -106,6 +147,8 @@ export interface PtvAdapter {
 
   searchServiceCollections(params: SearchParams): Promise<PaginatedResult<ServiceCollection>>;
   searchGeneralDescriptions(params: SearchParams): Promise<PaginatedResult<GeneralDescription>>;
+  /** One general description, or null when unknown (or the adapter can't read them). */
+  getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null>;
 
   getConnectionsFor(entityId: PtvContentId): Promise<Connection[]>;
 
@@ -135,4 +178,18 @@ export interface PtvAdapter {
 
   /** Creates a new service channel; same write-capability rules as applyServiceChange. */
   createChannel(channel: NewChannel): Promise<ApplyChannelChangeResult>;
+
+  /**
+   * Writes an approved change to an existing connection's extra info; same
+   * write-capability rules as applyServiceChange.
+   */
+  applyConnectionChange(proposal: ConnectionChangeProposal): Promise<ApplyConnectionChangeResult>;
+
+  /** Writes an approved change to an existing organisation; same rules as applyServiceChange. */
+  applyOrganizationChange(
+    proposal: OrganizationChangeProposal,
+  ): Promise<ApplyOrganizationChangeResult>;
+
+  /** Creates a sub-organisation; same write-capability rules as applyServiceChange. */
+  createOrganization(organization: NewOrganization): Promise<ApplyOrganizationChangeResult>;
 }

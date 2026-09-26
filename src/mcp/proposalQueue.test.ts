@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PtvAdapterResolutionError, type PtvAdapterRegistry } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
-import type { Service } from '../ptv/domain.js';
+import type { Organization, Service } from '../ptv/domain.js';
 import { fakeAuditService } from './testing/fakeAuditService.js';
 import {
   commentOnProposal,
@@ -25,6 +25,9 @@ import {
 import { V11ChangeValidator } from '../validation/changeValidator.js';
 import { queueNewServiceProposal } from './newServiceProposal.js';
 import { queueChannelProposal } from './channelProposal.js';
+import { queueConnectionProposal } from './connectionProposal.js';
+import { queueNewOrganizationProposal, queueOrganizationProposal } from './organizationProposal.js';
+import { confirmManualPublish } from './proposalQueue.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -177,6 +180,13 @@ function fakeProposalService() {
           ),
       ),
     ),
+    markPublished: vi.fn(async (_tenantId: string, proposalId: string, serviceId?: string) => {
+      const row = rows.find((entry) => entry.id === proposalId);
+      if (!row) throw new Error('not found');
+      row.status = 'applied';
+      if (serviceId) row.serviceId = serviceId;
+      return row;
+    }),
     getById: vi.fn(async (_tenantId: string, proposalId: string) => {
       const row = rows.find((entry) => entry.id === proposalId);
       if (!row) {
@@ -630,6 +640,337 @@ describe('proposalQueue', () => {
           channelType: 'WebPage',
         }),
       ).rejects.toThrow(/can't be changed/);
+    });
+  });
+
+  describe('connection_update proposals', () => {
+    function setup() {
+      const adapter = new InMemoryPtvAdapter({
+        services: [{ ...service, serviceChannelIds: ['ch-1'] }],
+        connections: [{ serviceId: 'svc-1', channelId: 'ch-1', chargeType: 'FreeOfCharge' }],
+        capabilities: {
+          apiVersion: 'v11',
+          environment: 'test',
+          credentialScope: 'tenant',
+          supportsRead: true,
+          supportsWrite: true,
+          supportsDraftRead: true,
+        },
+      });
+      const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+      return { adapter, registry };
+    }
+    const hours = [
+      {
+        type: 'DaysOfTheWeek' as const,
+        validForNow: true,
+        openingTimes: [{ dayFrom: 'Monday' as const, from: '09:00', to: '12:00' }],
+      },
+    ];
+
+    it('queues extra-info changes, re-diffs them and applies them on approve_and_apply', async () => {
+      const { adapter, registry } = setup();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueConnectionProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        ctx,
+        'svc-1',
+        'ch-1',
+        { descriptions: { fi: 'Diakoniatyön vastaanotto' }, serviceHours: hours },
+      );
+      expect(queued.validation.valid).toBe(true);
+      expect(queued.diff).toEqual([
+        { field: 'descriptions.fi', before: undefined, after: 'Diakoniatyön vastaanotto' },
+        { field: 'serviceHours', before: undefined, after: hours },
+      ]);
+      expect(rows[0]).toMatchObject({
+        kind: 'connection_update',
+        serviceId: 'svc-1',
+        changes: { channelId: 'ch-1' },
+      });
+
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+        noFourEyes,
+      );
+      expect(resolved.status).toBe('applied');
+      expect(resolved.diff).toEqual([]);
+      expect((await adapter.getConnectionsFor('svc-1'))[0]).toMatchObject({
+        chargeType: 'FreeOfCharge',
+        descriptions: { fi: 'Diakoniatyön vastaanotto' },
+      });
+    });
+
+    it('builds a manual-publishing sheet for the connection on approve_and_export', async () => {
+      const { registry } = setup();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueConnectionProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        ctx,
+        'svc-1',
+        'ch-1',
+        { chargeType: 'Other', chargeDescriptions: { fi: 'Materiaalimaksu 5 euroa' } },
+      );
+      expect(queued.quality.findings).toEqual([]);
+      const approved = await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+      );
+      expect(approved.manualPublish).toMatchObject({
+        target: 'Liitoksen lisätiedot',
+        ptvId: 'svc-1',
+        fields: [
+          { field: 'chargeType', label: 'Maksullisuus', after: 'Muu' },
+          { field: 'chargeDescriptions', after: 'fi: Materiaalimaksu 5 euroa' },
+        ],
+      });
+      expect(approved.manualPublish?.steps[1]).toContain('ch-1');
+      expect(approved.publishedInPtv).toBe(false);
+    });
+
+    it('refuses a connection that does not exist, unknown fields and a non-postal address', async () => {
+      const { registry } = setup();
+      const { api } = fakeProposalService();
+      const queue = (channelId: string, changes: Record<string, unknown>) =>
+        queueConnectionProposal(
+          readerResolver,
+          registry,
+          fakeAuditService(),
+          api,
+          ctx,
+          'svc-1',
+          channelId,
+          changes,
+        );
+      await expect(queue('ch-2', { chargeType: 'Chargeable' })).rejects.toThrow(
+        /not connected to channel ch-2/,
+      );
+      await expect(queue('ch-1', { names: { fi: 'x' } })).rejects.toThrow(/can't be changed/);
+      const queued = await queue('ch-1', {
+        addresses: [{ kind: 'Other', latitude: '1', longitude: '2' }],
+      });
+      expect(queued.validation.valid).toBe(false);
+    });
+  });
+
+  describe('organisation proposals', () => {
+    const root = {
+      id: 'root',
+      publishingStatus: 'Published' as const,
+      names: { fi: 'Testin seurakuntayhtymä' },
+      summaries: { fi: 'Seurakuntayhtymä' },
+      descriptions: { fi: 'Yhtymä hoitaa seurakuntien yhteiset asiat.' },
+      organizationType: 'Organization' as const,
+      area: {
+        areaType: 'LimitedType' as const,
+        areas: [{ type: 'Municipality', code: '694' }],
+      },
+    };
+    const parish = {
+      id: 'org-1',
+      parentOrganizationId: 'root',
+      publishingStatus: 'Published' as const,
+      names: { fi: 'Testin seurakunta' },
+      summaries: { fi: 'Evankelis-luterilainen seurakunta' },
+      descriptions: { fi: 'Seurakunta palvelee.' },
+      organizationType: 'Organization' as const,
+    };
+    function setup() {
+      const adapter = new InMemoryPtvAdapter({
+        organizations: [{ ...root }, { ...parish }],
+        capabilities: {
+          apiVersion: 'v11',
+          environment: 'test',
+          credentialScope: 'tenant',
+          supportsRead: true,
+          supportsWrite: true,
+          supportsDraftRead: true,
+        },
+      });
+      const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+      return { adapter, registry };
+    }
+
+    it('queues an organisation change and applies it on approve_and_apply', async () => {
+      const { adapter, registry } = setup();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueOrganizationProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        writeCtx,
+        'org-1',
+        { descriptions: { fi: 'Seurakunta palvelee kaikkia asukkaita.' } },
+      );
+      expect(queued.validation.valid).toBe(true);
+      expect(queued.diff).toEqual([
+        {
+          field: 'descriptions.fi',
+          before: 'Seurakunta palvelee.',
+          after: 'Seurakunta palvelee kaikkia asukkaita.',
+        },
+      ]);
+      expect(rows[0]).toMatchObject({ kind: 'organisation_update', serviceId: 'org-1' });
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+        noFourEyes,
+      );
+      expect(resolved.status).toBe('applied');
+      expect(resolved.diff).toEqual([]);
+      expect((await adapter.getOrganisation('org-1'))?.descriptions).toEqual({
+        fi: 'Seurakunta palvelee kaikkia asukkaita.',
+      });
+    });
+
+    it("refuses fields only PTV's UI changes", async () => {
+      const { registry } = setup();
+      const { api } = fakeProposalService();
+      await expect(
+        queueOrganizationProposal(readerResolver, registry, fakeAuditService(), api, ctx, 'org-1', {
+          organizationType: 'Company',
+        }),
+      ).rejects.toThrow(/can't be changed/);
+    });
+
+    it("creates a sub-organisation with the parent's type and area and records its id", async () => {
+      const { adapter, registry } = setup();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueNewOrganizationProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        writeCtx,
+        {
+          parentOrganizationId: 'root',
+          names: { fi: 'Diakoniakeskus' },
+          summaries: { fi: 'Seurakuntayhtymän diakoniatyö' },
+          descriptions: { fi: 'Diakoniakeskus auttaa, kun tarvitset tukea.' },
+        },
+      );
+      expect(queued.validation.valid).toBe(true);
+      expect(queued.proposed).toMatchObject({
+        parentOrganizationId: 'root',
+        organizationType: 'Organization',
+        publishingStatus: 'Draft',
+        area: root.area,
+      });
+      expect(rows[0]).toMatchObject({ kind: 'organisation_create', serviceId: '' });
+
+      const resolved = await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'approve_and_apply',
+        noFourEyes,
+      );
+      expect(resolved.status).toBe('applied');
+      const created = await adapter.getOrganisation(resolved.serviceId);
+      expect(created).toMatchObject({
+        parentOrganizationId: 'root',
+        names: { fi: 'Diakoniakeskus' },
+      });
+    });
+
+    it('confirms a sub-organisation entered by hand against its parent and name', async () => {
+      const { adapter, registry } = setup();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueNewOrganizationProposal(readerResolver, registry, audit, api, ctx, {
+        parentOrganizationId: 'root',
+        names: { fi: 'Diakoniakeskus' },
+        summaries: { fi: 'Seurakuntayhtymän diakoniatyö' },
+        descriptions: { fi: 'Diakoniakeskus auttaa.' },
+      });
+      const approved = await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+      );
+      expect(approved.manualPublish).toMatchObject({ action: 'create', target: 'Alaorganisaatio' });
+      expect(approved.manualPublish?.steps[0]).toContain('root');
+
+      await expect(
+        confirmManualPublish(editorResolver, registry, api, audit, ctx, queued.proposalId, 'org-1'),
+      ).rejects.toThrow(/does not match/);
+      const { organizationId } = await adapter.createOrganization({
+        parentOrganizationId: 'root',
+        organizationType: 'Organization',
+        publishingStatus: 'Published',
+        names: { fi: 'Diakoniakeskus' },
+      });
+      const confirmed = await confirmManualPublish(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        ctx,
+        queued.proposalId,
+        organizationId,
+      );
+      expect(confirmed.status).toBe('applied');
+    });
+
+    it('refuses a sixth level of sub-organisations', async () => {
+      const top: Organization = { ...parish };
+      delete top.parentOrganizationId;
+      const chain = ['l0', 'l1', 'l2', 'l3', 'l4', 'l5'].map((id, i, all) =>
+        i === 0 ? { ...top, id } : { ...top, id, parentOrganizationId: all[i - 1]! },
+      );
+      const adapter = new InMemoryPtvAdapter({
+        organizations: chain,
+        capabilities: setup().adapter.getCapabilities(),
+      });
+      const registry: PtvAdapterRegistry = { resolve: vi.fn(async () => adapter) };
+      const { api } = fakeProposalService();
+      await expect(
+        queueNewOrganizationProposal(readerResolver, registry, fakeAuditService(), api, ctx, {
+          parentOrganizationId: 'l5',
+          names: { fi: 'Liian syvä' },
+        }),
+      ).rejects.toThrow(/at most 5 levels/);
     });
   });
 

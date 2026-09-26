@@ -1,4 +1,21 @@
-import type { CodeListEntry, LocalizedText, Service, ServiceChannel } from '../ptv/domain.js';
+import type {
+  CodeListEntry,
+  ConnectionDetails,
+  GeneralDescription,
+  LocalizedText,
+  Organization,
+  PhoneNumber,
+  Service,
+  ServiceChannel,
+  ServiceHour,
+} from '../ptv/domain.js';
+import {
+  DESCRIPTION_MAX,
+  MAX_ONTOLOGY_TERMS,
+  MAX_SERVICE_CLASSES,
+  ORGANIZATION_DESCRIPTION_MAX,
+  SUMMARY_MAX,
+} from '../ptv/limits.js';
 import type { NewService } from '../ptv/adapter.js';
 
 /**
@@ -36,10 +53,13 @@ export interface QualityReport {
   warnings: number;
 }
 
-export const SUMMARY_MAX = 150;
-export const DESCRIPTION_MAX = 5000;
-export const MAX_SERVICE_CLASSES = 4;
-export const MAX_ONTOLOGY_TERMS = 10;
+export {
+  DESCRIPTION_MAX,
+  MAX_ONTOLOGY_TERMS,
+  MAX_SERVICE_CLASSES,
+  ORGANIZATION_DESCRIPTION_MAX,
+  SUMMARY_MAX,
+};
 /** Words per sentence before a long-sentence warning. */
 export const LONG_SENTENCE_WORDS = 25;
 /** DVV: one topic and at most four sentences per paragraph. */
@@ -47,9 +67,11 @@ export const PARAGRAPH_MAX_SENTENCES = 4;
 
 export interface ServiceCheckContext {
   /** The owning organisation's names, to flag service names that repeat them. */
-  organisationNames?: LocalizedText;
+  organisationNames?: LocalizedText | undefined;
   /** A new service still being proposed: no channels yet is a warning (Q-STRUCT-5). */
   creating?: boolean;
+  /** The linked general description, for the copy check (Q-GD-1). */
+  generalDescription?: GeneralDescription | undefined;
 }
 
 export interface ChannelCheckContext {
@@ -67,7 +89,8 @@ export interface ChannelCheckContext {
   today?: string;
 }
 
-function report(findings: QualityFinding[]): QualityReport {
+/** A report of `findings` with its error and warning counts. */
+export function report(findings: QualityFinding[]): QualityReport {
   return {
     findings,
     errors: findings.filter((f) => f.severity === 'error').length,
@@ -297,6 +320,7 @@ function textFieldFindings(
   names: LocalizedText,
   summaries: LocalizedText | undefined,
   descriptions: LocalizedText,
+  descriptionMax = DESCRIPTION_MAX,
 ): QualityFinding[] {
   const findings: QualityFinding[] = [];
   const error = (checkId: string, field: string, language: string, message: string) =>
@@ -339,12 +363,12 @@ function textFieldFindings(
     if (!description) {
       error('Q-DESC-1', 'descriptions', language, 'Language version has no description.');
     } else {
-      if (description.length > DESCRIPTION_MAX) {
+      if (description.length > descriptionMax) {
         error(
           'Q-DESC-1',
           'descriptions',
           language,
-          `Description is ${description.length} characters; the maximum is ${DESCRIPTION_MAX}.`,
+          `Description is ${description.length} characters; the maximum is ${descriptionMax}.`,
         );
       }
       findings.push(...freeTextFindings('descriptions', language, description));
@@ -449,7 +473,70 @@ export function checkService(
       error('Q-STRUCT-5', 'serviceChannelIds', 'No connected service channels.');
     }
   }
+  if (
+    context.generalDescription &&
+    service.generalDescriptionId === context.generalDescription.id
+  ) {
+    findings.push(...copiedFromGeneralDescription(service, context.generalDescription));
+  }
   return report(findings);
+}
+
+/** Words a sentence needs before a match with the general description counts as copying. */
+export const GD_COPY_MIN_WORDS = 8;
+
+/**
+ * Q-GD-1: the service's own summary and description add local details to
+ * the general description instead of repeating it. PTV shows both texts
+ * together, so a sentence copied from the general description appears
+ * twice. Sentences of at least GD_COPY_MIN_WORDS words that also appear in
+ * any text of the general description (same language, ignoring case and
+ * punctuation) are flagged, one finding per field and language.
+ */
+/** A general description's texts in one language, normalized once per description. */
+const normalizedGdTexts = new WeakMap<GeneralDescription, Map<string, string>>();
+
+function normalizedTexts(generalDescription: GeneralDescription, language: string): string {
+  let byLanguage = normalizedGdTexts.get(generalDescription);
+  if (!byLanguage) {
+    byLanguage = new Map();
+    normalizedGdTexts.set(generalDescription, byLanguage);
+  }
+  let text = byLanguage.get(language);
+  if (text === undefined) {
+    text = (generalDescription.texts?.[language] ?? []).map(normalized).join(' | ');
+    byLanguage.set(language, text);
+  }
+  return text;
+}
+
+function copiedFromGeneralDescription(
+  service: Service | NewService,
+  generalDescription: GeneralDescription,
+): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  for (const field of ['summaries', 'descriptions'] as const) {
+    for (const [language, value] of Object.entries(service[field] ?? {})) {
+      const text = textOf(value);
+      const source = normalizedTexts(generalDescription, language);
+      if (!text || !source) continue;
+      const copied = sentences(text).filter(
+        (sentence) =>
+          words(sentence).length >= GD_COPY_MIN_WORDS && source.includes(normalized(sentence)),
+      );
+      if (copied.length > 0) {
+        findings.push({
+          checkId: 'Q-GD-1',
+          severity: 'error',
+          field,
+          language,
+          message: `${copied.length === 1 ? 'A sentence repeats' : `${copied.length} sentences repeat`} the general description, which PTV already shows with the service; keep only local details.`,
+          excerpt: excerpt(copied[0]!),
+        });
+      }
+    }
+  }
+  return findings;
 }
 
 /**
@@ -458,9 +545,10 @@ export function checkService(
  * fields) are validation errors (src/validation/channelRules.ts); these are
  * the guideline checks on top.
  */
-function channelDetailFindings(channel: ServiceChannel, today: string): QualityFinding[] {
-  const findings: QualityFinding[] = [];
-  const warn = (checkId: string, field: string, message: string, language?: string) =>
+type Warn = (checkId: string, field: string, message: string, language?: string) => void;
+
+function warner(findings: QualityFinding[]): Warn {
+  return (checkId, field, message, language) =>
     findings.push({
       checkId,
       severity: 'warning',
@@ -468,57 +556,45 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
       message,
       ...(language ? { language } : {}),
     });
+}
 
-  for (const field of ['phoneNumbers', 'supportPhones'] as const) {
-    const phones = channel[field] ?? [];
-    for (const phone of phones) {
-      if (phone.chargeType === 'Other' && !phone.chargeDescription) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          `${phone.number}: an extra-charge number needs the price in chargeDescription.`,
-          phone.language,
-        );
-      }
-    }
-    for (const phone of phones) {
-      if (!phone.isFinnishServiceNumber && phone.number.replace(/\D/g, '').length < 5) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          `${phone.number}: too short to be a phone number; check it.`,
-          phone.language,
-        );
-      }
-    }
-    const byLanguage = new Map<string, number>();
-    for (const phone of phones)
-      byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
-    for (const [language, count] of byLanguage) {
-      if (count > 1 && phones.some((p) => p.language === language && !p.additionalInformation)) {
-        warn(
-          'Q-CONTACT-1',
-          field,
-          'Several numbers: give each one additional information (e.g. "Vaihde") so customers know which to call.',
-          language,
-        );
-      }
+function phoneFindings(field: string, phones: PhoneNumber[], warn: Warn): void {
+  for (const phone of phones) {
+    if (phone.chargeType === 'Other' && !phone.chargeDescription) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        `${phone.number}: an extra-charge number needs the price in chargeDescription.`,
+        phone.language,
+      );
     }
   }
-
-  if (
-    channel.channelType === 'ServiceLocation' &&
-    channel.addresses !== undefined &&
-    !channel.addresses.some((a) => a.kind === 'Street' && a.purpose !== 'Postal')
-  ) {
-    warn(
-      'Q-CONTACT-1',
-      'addresses',
-      'No street visiting address: Suomi.fi does not show service locations without one.',
-    );
+  for (const phone of phones) {
+    if (!phone.isFinnishServiceNumber && phone.number.replace(/\D/g, '').length < 5) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        `${phone.number}: too short to be a phone number; check it.`,
+        phone.language,
+      );
+    }
   }
+  const byLanguage = new Map<string, number>();
+  for (const phone of phones)
+    byLanguage.set(phone.language, (byLanguage.get(phone.language) ?? 0) + 1);
+  for (const [language, count] of byLanguage) {
+    if (count > 1 && phones.some((p) => p.language === language && !p.additionalInformation)) {
+      warn(
+        'Q-CONTACT-1',
+        field,
+        'Several numbers: give each one additional information (e.g. "Vaihde") so customers know which to call.',
+        language,
+      );
+    }
+  }
+}
 
-  const hours = channel.serviceHours ?? [];
+function serviceHourFindings(hours: ServiceHour[], today: string, warn: Warn): void {
   for (const hour of hours) {
     // A single-day exceptional hour has only validFrom: it ends that day.
     const ends = hour.validTo ?? (hour.type === 'Exceptional' ? hour.validFrom : undefined);
@@ -553,6 +629,28 @@ function channelDetailFindings(channel: ServiceChannel, today: string): QualityF
       'Several weekly schedules: give each a title (e.g. "Kesäaika") so customers can tell them apart.',
     );
   }
+}
+
+function channelDetailFindings(channel: ServiceChannel, today: string): QualityFinding[] {
+  const findings: QualityFinding[] = [];
+  const warn = warner(findings);
+  for (const field of ['phoneNumbers', 'supportPhones'] as const) {
+    phoneFindings(field, channel[field] ?? [], warn);
+  }
+
+  if (
+    channel.channelType === 'ServiceLocation' &&
+    channel.addresses !== undefined &&
+    !channel.addresses.some((a) => a.kind === 'Street' && a.purpose !== 'Postal')
+  ) {
+    warn(
+      'Q-CONTACT-1',
+      'addresses',
+      'No street visiting address: Suomi.fi does not show service locations without one.',
+    );
+  }
+
+  serviceHourFindings(channel.serviceHours ?? [], today, warn);
   if (channel.channelType === 'EChannel' && channel.accessibility === undefined) {
     warn(
       'Q-CONTACT-1',
@@ -599,5 +697,59 @@ export function checkChannel(
           },
     );
   }
+  return report(findings);
+}
+
+/**
+ * Checks a connection's extra info (liitoksen lisätiedot): its texts like
+ * any free text (contact details belong in the connection's own contact
+ * fields, Q-STRUCT-1), a charge that is Other needs its explanation, and
+ * phones and hours as on channels.
+ */
+export function checkConnection(
+  details: ConnectionDetails,
+  context: { today?: string } = {},
+): QualityReport {
+  const findings: QualityFinding[] = [];
+  for (const field of ['descriptions', 'chargeDescriptions'] as const) {
+    for (const [language, value] of Object.entries(details[field] ?? {})) {
+      const text = textOf(value);
+      if (text) findings.push(...freeTextFindings(field, language, text));
+    }
+  }
+  const warn = warner(findings);
+  if (
+    details.chargeType === 'Other' &&
+    !Object.values(details.chargeDescriptions ?? {}).some(Boolean)
+  ) {
+    warn(
+      'Q-CONTACT-1',
+      'chargeDescriptions',
+      'The charge type is Other: explain the charge in chargeDescriptions.',
+    );
+  }
+  phoneFindings('phoneNumbers', details.phoneNumbers ?? [], warn);
+  serviceHourFindings(
+    details.serviceHours ?? [],
+    context.today ?? new Date().toISOString().slice(0, 10),
+    warn,
+  );
+  return report(findings);
+}
+
+/**
+ * Checks an organisation (DVV's organisation guidelines): every language
+ * version has a name, a summary that doesn't repeat the name and a
+ * description of at most 2500 characters, without contact details; phones
+ * as on channels.
+ */
+export function checkOrganization(organization: Partial<Organization>): QualityReport {
+  const findings = textFieldFindings(
+    organization.names ?? {},
+    organization.summaries ?? {},
+    organization.descriptions ?? {},
+    ORGANIZATION_DESCRIPTION_MAX,
+  );
+  phoneFindings('phoneNumbers', organization.phoneNumbers ?? [], warner(findings));
   return report(findings);
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PtvV11Client } from './client.js';
 import {
   fetchAllIdNamePairs,
+  fetchAllPages,
   fetchListByIds,
   fetchOrganizationServiceChannelWindow,
   fetchOrganizationServiceCollectionWindow,
@@ -61,11 +62,11 @@ describe('PTV v11 organization service pagination', () => {
       };
     });
 
-    const result = await fetchOrganizationServiceWindow(client, ORGANIZATION_ID);
+    const items = await fetchOrganizationServiceWindow(client, ORGANIZATION_ID);
 
-    expect(result.items).toHaveLength(4);
+    expect(items).toHaveLength(4);
     expect(
-      result.items.filter((item) =>
+      items.filter((item) =>
         item.organizations.some(
           (org) => org.roleType === 'Responsible' && org.organization.id === ORGANIZATION_ID,
         ),
@@ -139,6 +140,38 @@ describe('PTV v11 organization catalogue pagination', () => {
 
     expect(calls.map((call) => String(call.query?.guids).split(',').length)).toEqual([100, 100, 1]);
   });
+
+  it('returns list records in the order of the requested ids', async () => {
+    const client = fakeClient(async () => [{ id: 'b' }, { id: 'c' }, { id: 'a' }]);
+
+    const wires = await fetchListByIds<{ id: string }>(client, '/api/v11/Organization/list', [
+      'a',
+      'b',
+      'missing',
+      'c',
+    ]);
+
+    expect(wires.map((wire) => wire.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('fetches pages after the first concurrently and keeps page order', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const client = fakeClient(async (_path, query) => {
+      const page = Number(query?.page);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      // Later pages answer first, to show the result still follows page order.
+      await new Promise((resolve) => setTimeout(resolve, page === 1 ? 0 : 20 - page));
+      inFlight -= 1;
+      return { pageNumber: page, pageSize: 1, pageCount: 5, itemList: [{ id: String(page) }] };
+    });
+
+    const catalog = await fetchAllPages<{ id: string }>(client, '/api/v11/Organization');
+
+    expect(catalog.map((item) => item.id)).toEqual(['1', '2', '3', '4', '5']);
+    expect(maxInFlight).toBe(4);
+  });
 });
 
 describe('PTV v11 organization service-channel pagination', () => {
@@ -193,13 +226,9 @@ describe('PTV v11 organization service-channel pagination', () => {
       };
     });
 
-    const result = await fetchOrganizationServiceChannelWindow(client, ORGANIZATION_ID);
+    const items = await fetchOrganizationServiceChannelWindow(client, ORGANIZATION_ID);
 
-    expect(result.items.map((item) => item.id)).toEqual([
-      'channel-1',
-      'channel-other-1',
-      'channel-2',
-    ]);
+    expect(items.map((item) => item.id)).toEqual(['channel-1', 'channel-other-1', 'channel-2']);
     expect(calls).toEqual([
       {
         path: '/api/v11/ServiceChannel/list/organization',
@@ -240,9 +269,9 @@ describe('PTV v11 organization service-collection pagination', () => {
       return full;
     });
 
-    const result = await fetchOrganizationServiceCollectionWindow(client, ORGANIZATION_ID);
+    const items = await fetchOrganizationServiceCollectionWindow(client, ORGANIZATION_ID);
 
-    expect(result.items.map((item) => item.id)).toEqual(['collection-1']);
+    expect(items.map((item) => item.id)).toEqual(['collection-1']);
     expect(calls).toEqual([
       {
         path: '/api/v11/ServiceCollection/organization',
@@ -273,6 +302,7 @@ describe('PTV v11 organization general-description pagination', () => {
           ],
         };
       }
+      expect(query).toEqual({ guids: 'gd-1' });
       const full: V11GeneralDescriptionWire = {
         id: 'gd-1',
         type: 'Service',
@@ -286,16 +316,15 @@ describe('PTV v11 organization general-description pagination', () => {
         industrialClasses: [],
         modified: '2026-01-01T00:00:00Z',
       };
-      return full;
+      return [full];
     });
 
-    const result = await fetchOrganizationGeneralDescriptionWindow(client, ORGANIZATION_ID);
+    const items = await fetchOrganizationGeneralDescriptionWindow(client, ORGANIZATION_ID);
 
-    expect(result.totalCount).toBe(1);
-    expect(result.items.map((item) => item.id)).toEqual(['gd-1']);
+    expect(items.map((item) => item.id)).toEqual(['gd-1']);
     expect(calls.map((call) => call.path)).toEqual([
       '/api/v11/Service/list/organization',
-      '/api/v11/GeneralDescription/gd-1',
+      '/api/v11/GeneralDescription/list',
     ]);
   });
 });
@@ -310,14 +339,10 @@ describe('PTV v11 empty pages', () => {
   }));
 
   it('reads a null itemList as an empty list', async () => {
-    await expect(fetchOrganizationServiceWindow(empty, ORGANIZATION_ID)).resolves.toEqual({
-      items: [],
-      totalCount: 0,
-    });
-    await expect(fetchOrganizationServiceChannelWindow(empty, ORGANIZATION_ID)).resolves.toEqual({
-      items: [],
-      totalCount: 0,
-    });
+    await expect(fetchOrganizationServiceWindow(empty, ORGANIZATION_ID)).resolves.toEqual([]);
+    await expect(fetchOrganizationServiceChannelWindow(empty, ORGANIZATION_ID)).resolves.toEqual(
+      [],
+    );
     await expect(fetchAllIdNamePairs(empty, '/api/v11/Organization')).resolves.toEqual([]);
   });
 });

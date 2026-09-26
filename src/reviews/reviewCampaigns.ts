@@ -1,3 +1,10 @@
+import { resolveReadAdapter } from '../mcp/toolContext.js';
+import { serviceCheckContext } from '../quality/serviceCheckContext.js';
+import {
+  collectOrganisationContent,
+  organisationsInScope,
+  OrganizationNotFoundError,
+} from '../ptv/organisationContent.js';
 import { randomUUID } from 'node:crypto';
 import { ROLE_RANK, type MembershipRole } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
@@ -6,17 +13,16 @@ import {
   requireTenantRole,
   type MembershipRoleResolver,
 } from '../mcp/authorization.js';
-import type { MemberLister, ReviewCandidate } from '../mcp/proposalQueue.js';
+import {
+  findReviewCandidate,
+  notAReviewCandidateMessage,
+  reviewCandidatesOf,
+  type MemberLister,
+  type ReviewCandidate,
+} from '../mcp/proposalQueue.js';
 import type { ToolContext } from '../mcp/toolContext.js';
 import type { PtvAdapter } from '../ptv/adapter.js';
-import type {
-  LocalizedText,
-  Organization,
-  PaginatedResult,
-  SearchParams,
-  Service,
-  ServiceChannel,
-} from '../ptv/domain.js';
+import type { LocalizedText, Organization, Service, ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   ProposalKind,
@@ -55,7 +61,6 @@ export class ReviewCampaignError extends Error {
 export const MAX_NOTE_LENGTH = 4000;
 /** Safety cap on items per campaign; PTV organisations rarely have more. */
 export const MAX_CAMPAIGN_ITEMS = 5000;
-const PAGE_SIZE = 200;
 
 export interface ReviewCampaignSummary extends ReviewCampaignRecord {
   createdByName: string | null;
@@ -91,113 +96,57 @@ function displayName(names: LocalizedText): string {
   return names.fi ?? names.sv ?? names.en ?? Object.values(names).find(Boolean) ?? '(nimetön)';
 }
 
-async function readAdapter(registry: PtvAdapterRegistry, ctx: ToolContext): Promise<PtvAdapter> {
-  return registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
-}
-
-async function fetchAll<T>(
-  search: (params: SearchParams) => Promise<PaginatedResult<T>>,
-  organizationId: string,
-): Promise<T[]> {
-  const items: T[] = [];
-  for (let page = 1; ; page += 1) {
-    const result = await search({ organizationId, page, pageSize: PAGE_SIZE });
-    items.push(...result.items);
-    if (
-      result.items.length < PAGE_SIZE ||
-      items.length >= result.totalCount ||
-      items.length >= MAX_CAMPAIGN_ITEMS
-    ) {
-      return items;
-    }
-  }
-}
-
-/** The organisation and, optionally, every organisation below it in the tenant's catalogue. */
+/** organisationsInScope, reporting an unknown organisation as a campaign error. */
 async function organisationsToReview(
   adapter: PtvAdapter,
   organizationId: string,
   includeSubOrganisations: boolean,
 ): Promise<Organization[]> {
-  const root = await adapter.getOrganisation(organizationId);
-  if (!root) throw new ReviewCampaignError(`PTV organisation not found: ${organizationId}`);
-  if (!includeSubOrganisations) return [root];
-  // The whole catalogue: searchOrganisations has no parent filter, and v11
-  // serves it from the tenant's cached copy.
-  const catalogue = await adapter
-    .searchOrganisations({ page: 1, pageSize: 100000 })
-    .then((result) => result.items)
-    .catch(() => [] as Organization[]);
-  const result = [root];
-  const seen = new Set([root.id]);
-  for (let i = 0; i < result.length; i += 1) {
-    const parentId = result[i]!.id;
-    for (const org of catalogue) {
-      if (org.parentOrganizationId === parentId && !seen.has(org.id)) {
-        seen.add(org.id);
-        result.push(org);
-      }
-    }
+  try {
+    return await organisationsInScope(adapter, organizationId, includeSubOrganisations);
+  } catch (err) {
+    if (err instanceof OrganizationNotFoundError) throw new ReviewCampaignError(err.message);
+    throw err;
   }
-  return result;
 }
 
 async function collectItems(
   adapter: PtvAdapter,
   organisations: Organization[],
 ): Promise<NewReviewItem[]> {
-  const items: NewReviewItem[] = [];
-  const services: Service[] = [];
-  const channels: ServiceChannel[] = [];
-  for (const org of organisations) {
-    items.push({
-      targetKind: 'organisation',
-      targetId: org.id,
-      targetName: displayName(org.names),
-      organizationId: org.id,
-      findings: [],
-    });
-    services.push(...(await fetchAll((p) => adapter.searchServices(p), org.id)));
-    channels.push(...(await fetchAll((p) => adapter.searchChannels(p), org.id)));
-  }
-
+  const content = await collectOrganisationContent(adapter, organisations);
   const orgNames = new Map(organisations.map((org) => [org.id, org.names]));
-  const connected = new Map<string, number>();
-  for (const service of services) {
-    for (const channelId of service.serviceChannelIds) {
-      connected.set(channelId, (connected.get(channelId) ?? 0) + 1);
-    }
-    const organisationNames = orgNames.get(service.organizationId);
+  const items: NewReviewItem[] = organisations.map((org) => ({
+    targetKind: 'organisation',
+    targetId: org.id,
+    targetName: displayName(org.names),
+    organizationId: org.id,
+    findings: [],
+  }));
+  for (const service of content.services) {
     items.push({
       targetKind: 'service',
       targetId: service.id,
       targetName: displayName(service.names),
       organizationId: service.organizationId,
-      findings: checkService(service, organisationNames ? { organisationNames } : {}).findings,
+      findings: checkService(service, {
+        organisationNames: orgNames.get(service.organizationId),
+        generalDescription: service.generalDescriptionId
+          ? content.generalDescriptions.get(service.generalDescriptionId)
+          : undefined,
+      }).findings,
     });
   }
-  for (const channel of channels) {
-    let count = connected.get(channel.id) ?? 0;
-    if (count === 0) {
-      // Connected only to other organisations' services? Ask PTV before flagging it.
-      count = await adapter
-        .getConnectionsFor(channel.id)
-        .then((connections) => connections.length)
-        .catch(() => 0);
-    }
+  for (const channel of content.channels) {
     items.push({
       targetKind: 'channel',
       targetId: channel.id,
       targetName: displayName(channel.names),
       channelType: channel.channelType,
       organizationId: channel.organizationId,
-      findings: checkChannel(channel, { connectedServiceCount: count }).findings,
+      findings: checkChannel(channel, {
+        connectedServiceCount: content.connectedServiceCount.get(channel.id) ?? 0,
+      }).findings,
     });
   }
   return items.slice(0, MAX_CAMPAIGN_ITEMS);
@@ -319,7 +268,7 @@ export async function startReviewCampaign(
       `Campaign "${existing.name}" (${existing.id}) is still open for this organisation; close it first.`,
     );
   }
-  const adapter = await readAdapter(deps.registry, ctx);
+  const adapter = await resolveReadAdapter(deps.registry, ctx);
   const organisations = await organisationsToReview(
     adapter,
     input.organizationId,
@@ -413,19 +362,10 @@ export async function assignReviewItems(
   await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'publisher');
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, input.campaignId);
   requireOpen(campaign);
-  const key = input.reviewer.trim().toLowerCase();
-  const candidates = (await deps.listMembers(ctx.tenantId)).filter(
-    (member) => ROLE_RANK[member.role] >= ROLE_RANK.contributor,
-  );
-  const reviewer = candidates.find(
-    (member) => member.userId === input.reviewer.trim() || member.email.toLowerCase() === key,
-  );
+  const candidates = reviewCandidatesOf(await deps.listMembers(ctx.tenantId));
+  const reviewer = findReviewCandidate(candidates, input.reviewer);
   if (!reviewer) {
-    throw new ReviewCampaignError(
-      `${input.reviewer} is not a Contributor (Ehdottaja) or above in this organisation. Possible reviewers: ${candidates
-        .map((member) => `${member.name} <${member.email}>`)
-        .join(', ')}`,
-    );
+    throw new ReviewCampaignError(notAReviewCandidateMessage(input.reviewer, candidates));
   }
   const itemIds = input.itemIds?.length ? input.itemIds : undefined;
   const assigned = await deps.reviewService.assignItems(
@@ -476,13 +416,15 @@ export async function getReviewItem(
   await requireTenantRole(deps.resolveRole, ctx.tenantId, ctx.actingUserId, 'contributor');
   const item = await deps.reviewService.getItem(ctx.tenantId, itemId);
   const campaign = await deps.reviewService.getCampaign(ctx.tenantId, item.campaignId);
-  const adapter = await readAdapter(deps.registry, { ...ctx, environment: campaign.environment });
+  const adapter = await resolveReadAdapter(deps.registry, {
+    ...ctx,
+    environment: campaign.environment,
+  });
   const current = await readTarget(adapter, item).catch(() => null);
   let quality: QualityReport | null = null;
   if (current && item.targetKind === 'service') {
     const service = current as Service;
-    const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
-    quality = checkService(service, org ? { organisationNames: org.names } : {});
+    quality = checkService(service, await serviceCheckContext(adapter, service));
   } else if (current && item.targetKind === 'channel') {
     const connections = await adapter.getConnectionsFor(item.targetId).catch(() => undefined);
     quality = checkChannel(
@@ -542,6 +484,19 @@ export async function requireLinkableReviewItem(
     'serviceChannelIds' in proposal.changes
   ) {
     return item;
+  }
+  // A connection's extra info answers the item of its service or its channel.
+  if (proposal.kind === 'connection_update') {
+    const channelId = proposal.changes?.channelId;
+    if (
+      (item.targetKind === 'service' && item.targetId === proposal.targetId) ||
+      (item.targetKind === 'channel' && item.targetId === channelId)
+    ) {
+      return item;
+    }
+    throw new ReviewCampaignError(
+      `Review item "${item.targetName}" is the ${item.targetKind} ${item.targetId}; this connection is between service ${proposal.targetId} and channel ${String(channelId)}.`,
+    );
   }
   const expectedKind =
     proposal.kind === 'service_update'

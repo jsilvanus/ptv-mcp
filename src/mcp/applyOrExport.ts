@@ -1,3 +1,4 @@
+import { resolveWriteAdapter, WriteApiNotSelectedError } from './toolContext.js';
 import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
 import type { ApplyServiceChangeResult } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
@@ -8,14 +9,7 @@ import type { MembershipRoleResolver } from './authorization.js';
 import { proposeChanges } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
-export class WriteApiNotSelectedError extends Error {
-  constructor() {
-    super(
-      'No write API version is selected for this MCP connection. This connection is read-only; reconnect and select a write API version to use PTV write tools.',
-    );
-    this.name = 'WriteApiNotSelectedError';
-  }
-}
+export { WriteApiNotSelectedError };
 
 export class ValidationFailedError extends Error {
   constructor(public readonly errors: { field: string; message: string }[]) {
@@ -167,13 +161,7 @@ export async function applyChanges(
     throw new ValidationFailedError(validation.errors);
   }
 
-  const writeAdapter = await registry.resolve({
-    tenantId: ctx.tenantId,
-    environment: ctx.environment,
-    apiVersion: ctx.writeApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'write',
-    actingUserId: ctx.actingUserId,
-  });
+  const writeAdapter = await resolveWriteAdapter(registry, ctx);
   const capabilities = writeAdapter.getCapabilities();
 
   try {

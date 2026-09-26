@@ -23,8 +23,10 @@ import { ptvConnectionRoutes } from './routes/ptvConnections.js';
 import { auditLogRoutes } from './routes/auditLog.js';
 import { proposalRoutes } from './routes/proposals.js';
 import { reviewRoutes } from './routes/reviews.js';
+import { contentExportRoutes } from './routes/contentExport.js';
 import { webUiRoutes } from './routes/webUi.js';
 import { registerSpaNavigation } from './routes/spaNavigation.js';
+import { routeErrorHandler } from './routes/errorHandler.js';
 import { ptvV12Routes } from './routes/ptvV12.js';
 import { ptvV11ApiUserRoutes } from './routes/ptvV11ApiUser.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
@@ -92,6 +94,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const proposalService = new ProposalService(db);
 
   await app.register(sensible);
+  // Before any route: a route captures the error handler it is registered under.
+  app.setErrorHandler(routeErrorHandler);
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string' },
@@ -146,6 +150,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     validator,
   });
   await app.register(reviewRoutes, { db, jwtSecret: config.jwtSecret, registry, auditService });
+  await app.register(contentExportRoutes, {
+    db,
+    jwtSecret: config.jwtSecret,
+    registry,
+    auditService,
+  });
   await app.register(ptvV12Routes, {
     tenantEnvironmentService,
     adapterConfigService,

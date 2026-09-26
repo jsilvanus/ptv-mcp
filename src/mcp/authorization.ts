@@ -32,11 +32,12 @@ export async function requireTenantRole(
   tenantId: string,
   userId: string,
   minRole: MembershipRole,
-): Promise<void> {
+): Promise<MembershipRole> {
   const role = await resolveRole(tenantId, userId);
   if (!role || ROLE_RANK[role] < ROLE_RANK[minRole]) {
     throw new NotAuthorizedError(tenantId, minRole);
   }
+  return role;
 }
 
 /** Whether a tenant enforces four-eyes (`tenants.require_four_eyes`). */

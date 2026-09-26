@@ -1,6 +1,15 @@
+import { resolveReadAdapter } from './toolContext.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type { Service, ServiceChannel } from '../ptv/domain.js';
-import { checkChannel, checkService, type QualityReport } from '../quality/contentChecks.js';
+import {
+  checkChannel,
+  checkConnection,
+  checkService,
+  report,
+  type QualityFinding,
+  type QualityReport,
+} from '../quality/contentChecks.js';
+import { serviceCheckContext } from '../quality/serviceCheckContext.js';
 import { ServiceNotFoundError } from './proposeChanges.js';
 import { ChannelNotFoundError } from './channelProposal.js';
 import type { ReadToolContext } from './toolContext.js';
@@ -15,8 +24,9 @@ export interface QualityCheckResult {
 /**
  * `ptv_check_quality`: reads a service or channel and runs the
  * deterministic content checks (src/quality/contentChecks.ts). A service
- * is checked against its organisation's names; a channel against its
- * connections.
+ * is checked against its organisation's names, with its connections'
+ * extra info (fields `connections.<channelId>.<field>`); a channel against
+ * its connections.
  */
 export async function checkQuality(
   registry: PtvAdapterRegistry,
@@ -24,22 +34,28 @@ export async function checkQuality(
   kind: 'service' | 'channel',
   id: string,
 ): Promise<QualityCheckResult> {
-  const adapter = await registry.resolve({
-    ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
-    environment: ctx.environment,
-    apiVersion: ctx.readApiVersion ?? ctx.apiVersion ?? 'v11',
-    operation: 'read',
-    actingUserId: ctx.actingUserId,
-  });
+  const adapter = await resolveReadAdapter(registry, ctx);
   if (kind === 'service') {
     const service: Service | null = await adapter.getService(id);
     if (!service) throw new ServiceNotFoundError(id);
-    const org = await adapter.getOrganisation(service.organizationId).catch(() => null);
+    const [context, connections] = await Promise.all([
+      serviceCheckContext(adapter, service),
+      adapter.getConnectionsFor(id).catch(() => []),
+    ]);
+    const findings: QualityFinding[] = [
+      ...checkService(service, context).findings,
+      ...connections.flatMap((connection) =>
+        checkConnection(connection).findings.map((finding) => ({
+          ...finding,
+          field: `connections.${connection.channelId}.${finding.field}`,
+        })),
+      ),
+    ];
     return {
       kind,
       id,
       name: service.names.fi ?? Object.values(service.names)[0] ?? null,
-      report: checkService(service, org ? { organisationNames: org.names } : {}),
+      report: report(findings),
     };
   }
   const channel: ServiceChannel | null = await adapter.getChannel(id);

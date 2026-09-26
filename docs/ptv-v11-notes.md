@@ -157,6 +157,33 @@ descriptions, service hours, contact details). Removing everything is
 `deleteAllChannelRelations: true` with an empty list. Adding and removing
 were both verified.
 
+Connection extra info (liitoksen lisätiedot) is edited through the same
+PUT (`connection_update` proposals, `src/ptv/v11/connectionDetails.ts`):
+every other connection is resent as read, the changed one in the In shape.
+GET and In differ: GET lists fax numbers among typed `phoneNumbers`, In
+takes them as `faxNumbers`; contact addresses are `type: 'Postal'` with sub
+type Street, PostOfficeBox or Abroad; descriptions are typed
+`Description` and `ChargeTypeAdditionalInfo` (max 500 each). An emptied
+field is cleared with its delete flag (`deleteServiceChargeType`,
+`deleteAllDescriptions`, `deleteAllServiceHours`, and
+`contactDetails.deleteAll*`). Not yet verified live.
+
+### Organisations (`PUT /api/v11/Organization/{id}`, `POST /api/v11/Organization`)
+
+Mapped from the schema (`src/ptv/v11/organizationWrite.ts`), not yet
+verified live. The PUT's only required field is `publishingStatus`;
+names go as the whole Name + AlternativeName list with a
+`displayNameType` per language, descriptions as the whole Summary +
+Description list. Addresses are `V9VmOpenApiAddressIn`: type `Visiting`
+or `Postal`, sub type Street, PostOfficeBox, `Foreign` (not `Abroad` as on
+service locations) or Other. The POST requires `organizationType`,
+`organizationNames`, `organizationDescriptions`, `displayNameType` and
+`publishingStatus`, and takes the area flat (`areaType`, one
+`subAreaType`, `areas` as codes), unlike a service POST. There is no
+`Organization/active/{id}` read, so a draft sub-organisation can't be read
+back until it is published. To verify live: whether the PUT needs
+`organizationType` or the area resent, and archiving (`Deleted`).
+
 ### Service POST (`POST /api/v11/Service`)
 
 - The service area can't be wider than the organisation's. With

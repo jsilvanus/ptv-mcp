@@ -20,6 +20,8 @@ export function AuditLogPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [resourceType, setResourceType] = useState('');
   const [correlationId, setCorrelationId] = useState('');
+  // The inputs above are drafts; the log is fetched for these, set on submit.
+  const [filters, setFilters] = useState({ resourceType: '', correlationId: '' });
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,8 +34,8 @@ export function AuditLogPage() {
     setForbidden(false);
     try {
       const params = new URLSearchParams();
-      if (resourceType) params.set('resourceType', resourceType);
-      if (correlationId) params.set('correlationId', correlationId);
+      if (filters.resourceType) params.set('resourceType', filters.resourceType);
+      if (filters.correlationId) params.set('correlationId', filters.correlationId);
       const query = params.toString();
       const list = await apiFetch<AuditEntry[]>(
         `/tenants/${tenantId}/audit-entries${query ? `?${query}` : ''}`,
@@ -48,7 +50,7 @@ export function AuditLogPage() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, resourceType, correlationId]);
+  }, [tenantId, filters]);
 
   useEffect(() => {
     void load();
@@ -65,7 +67,7 @@ export function AuditLogPage() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          void load();
+          setFilters({ resourceType, correlationId });
         }}
         style={{ display: 'flex', gap: 8, marginBottom: 16 }}
       >

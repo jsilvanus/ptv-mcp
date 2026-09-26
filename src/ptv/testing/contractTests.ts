@@ -96,6 +96,10 @@ export function runPtvAdapterContractTests(
       expect(Array.isArray(result.items)).toBe(true);
     });
 
+    it('getGeneralDescription returns null for an unknown id', async () => {
+      expect(await adapter.getGeneralDescription(fixtures.unknownId)).toBeNull();
+    });
+
     it('getConnectionsFor returns an array, even when there are none', async () => {
       const connections = await adapter.getConnectionsFor(fixtures.unknownId);
       expect(Array.isArray(connections)).toBe(true);

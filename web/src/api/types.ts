@@ -3,6 +3,9 @@ export type MembershipRole = 'viewer' | 'contributor' | 'approver' | 'publisher'
 
 export type PtvEnvironment = 'test' | 'production';
 
+/** The environments in the order the UI lists them. */
+export const ENVIRONMENTS: readonly PtvEnvironment[] = ['production', 'test'];
+
 export interface TenantMembership {
   tenantId: string;
   tenantName: string;
@@ -65,12 +68,21 @@ export type ProposalResolveAction = 'approve_and_export' | 'approve_and_apply' |
 
 /** Mirrors src/db/schema/enums.ts's proposalKindEnum. */
 export type ProposalKind =
-  'service_update' | 'service_create' | 'channel_update' | 'channel_create';
+  | 'service_update'
+  | 'service_create'
+  | 'channel_update'
+  | 'channel_create'
+  | 'connection_update'
+  | 'organisation_update'
+  | 'organisation_create';
 
 export interface ProposalSummary {
   id: string;
   kind: ProposalKind;
-  /** Target service or channel; empty for a service_create proposal until applied. */
+  /**
+   * Target service, channel or organisation (connection_update: the
+   * service); empty for a *_create proposal until applied.
+   */
   serviceId: string;
   environment: PtvEnvironment;
   proposedByUserId: string;

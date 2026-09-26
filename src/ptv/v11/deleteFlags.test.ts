@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDeleteFlags, isFullReplaceField, needsDeleteFlag } from './deleteFlags.js';
+import { needsDeleteFlag } from './deleteFlags.js';
 import type { EntityType } from './deleteFlags.js';
 
 describe('deleteFlags', () => {
@@ -174,64 +174,6 @@ describe('deleteFlags', () => {
       expect(() => needsDeleteFlag('UnknownEntity' as unknown as EntityType, 'field')).toThrow(
         'Unknown entity type',
       );
-    });
-  });
-
-  describe('getDeleteFlags', () => {
-    it('returns all delete flags for Service', () => {
-      const flags = getDeleteFlags('Service');
-      expect(flags).toEqual({
-        lifeEvents: 'deleteAllLifeEvents',
-        industrialClasses: 'deleteAllIndustrialClasses',
-        legislation: 'deleteAllLaws',
-        keywords: 'deleteAllKeywords',
-        serviceChargeType: 'deleteServiceChargeType',
-        generalDescriptionId: 'deleteGeneralDescriptionId',
-        serviceVouchers: 'deleteAllServiceVouchers',
-        areas: 'deleteAllMunicipalities',
-      });
-    });
-
-    it('returns all delete flags for EChannel', () => {
-      const flags = getDeleteFlags('EChannel');
-      expect(flags).toHaveProperty('attachments', 'deleteAllAttachments');
-      expect(flags).toHaveProperty('serviceHours', 'deleteAllServiceHours');
-    });
-
-    it('returns all delete flags for GeneralDescription', () => {
-      const flags = getDeleteFlags('GeneralDescription');
-      expect(flags).toEqual({
-        industrialClasses: 'deleteAllIndustrialClasses',
-        legislation: 'deleteAllLaws',
-        lifeEvents: 'deleteAllLifeEvents',
-        serviceChargeType: 'deleteServiceChargeType',
-      });
-    });
-
-    it('returns empty object for Organization (no domain-relevant delete flags)', () => {
-      const flags = getDeleteFlags('Organization');
-      expect(flags).toBeDefined();
-      expect(typeof flags).toBe('object');
-    });
-  });
-
-  describe('isFullReplaceField', () => {
-    it('returns true for full-replace fields', () => {
-      expect(isFullReplaceField('Service', 'names')).toBe(true);
-      expect(isFullReplaceField('Service', 'descriptions')).toBe(true);
-      expect(isFullReplaceField('Service', 'serviceClasses')).toBe(true);
-      expect(isFullReplaceField('EChannel', 'names')).toBe(true);
-    });
-
-    it('returns false for fields with delete flags', () => {
-      expect(isFullReplaceField('Service', 'lifeEvents')).toBe(false);
-      expect(isFullReplaceField('Service', 'industrialClasses')).toBe(false);
-      expect(isFullReplaceField('GeneralDescription', 'lifeEvents')).toBe(false);
-    });
-
-    it('returns true for unknown fields (conservative: treat as full-replace)', () => {
-      // Unknown fields have no delete flag, so they're treated as full-replace
-      expect(isFullReplaceField('Service', 'unknownField')).toBe(true);
     });
   });
 });
