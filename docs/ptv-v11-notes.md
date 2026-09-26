@@ -125,6 +125,11 @@ below):
   records the acting user.
 - PTV returns `serviceChannels: null`, not `[]`, for a service without
   connections.
+- `Service/list?guids=` answers 404 (*"Services not found."*) when none
+  of the ids exist, not `[]` (confirmed live). `getConnectionsForServices`
+  reads it that way; services already read through
+  `Service/list/organization` in the same adapter instance are not
+  re-read, since that list carries `serviceChannels` with extra info.
 
 ### Publishing status
 
