@@ -7,7 +7,6 @@ import { createDatabase } from '../db/client.js';
 import { AuditService } from '../audit/auditService.js';
 import { TenantService } from '../tenants/tenantService.js';
 import { OAuthService } from './oauthService.js';
-import { jwtVerify } from 'jose';
 
 const config = loadConfig();
 const db = createDatabase(config.databaseUrl);
@@ -32,17 +31,10 @@ try {
     throw new Error('Email and password are required.');
   }
 
-  const session = await auth.login(email, password);
-  const { payload } = await jwtVerify(
-    session.accessToken,
-    Buffer.from(config.jwtSecret, 'base64'),
-    { algorithms: ['HS256'] },
-  );
-  if (typeof payload.sub !== 'string') {
-    throw new Error('Application access token missing subject.');
-  }
+  // verifyCredentials, not login: an MCP token needs no web-UI session.
+  const userId = await auth.verifyCredentials(email, password);
 
-  const memberships = await tenantService.listTenantsForUser(payload.sub);
+  const memberships = await tenantService.listTenantsForUser(userId);
   if (memberships.length === 0) {
     throw new Error('This user has no tenant memberships to mint an MCP token for.');
   }
@@ -61,7 +53,7 @@ try {
   const writeApiVersion = (await rl.question('Write API version [v11]: ')).trim() || 'v11';
 
   const token = await oauth.issueAccessToken(
-    payload.sub,
+    userId,
     'urn:ptv-mcp:dev-cli',
     'mcp',
     membership.tenantId,

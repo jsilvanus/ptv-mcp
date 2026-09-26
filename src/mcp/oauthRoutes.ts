@@ -3,7 +3,6 @@ import { isAllowedWithoutTenant, parseClientMetadata, type OAuthService } from '
 import type { AuthService } from '../auth/authService.js';
 import type { TenantService } from '../tenants/tenantService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
-import { verifyAccessToken } from '../auth/jwt.js';
 
 const LEGACY_RESOURCE_SUFFIX = '/mcp';
 
@@ -19,7 +18,6 @@ export interface McpOAuthRouteOptions {
   oauthService: OAuthService;
   authService: AuthService;
   publicUrl: string;
-  jwtSecret: string;
   tenantService: TenantService;
   adapterConfigService: PtvAdapterConfigService;
 }
@@ -245,8 +243,12 @@ export async function mcpOAuthRoutes(
       if (!isSupportedResource(q.resource, options.publicUrl))
         return reply.badRequest('Unsupported resource');
 
-      const session = await options.authService.login(request.body.email, request.body.password);
-      const userId = (await verifyAccessToken(session.accessToken, options.jwtSecret)).sub;
+      // Only identifies the user: this flow mints its own MCP OAuth tokens,
+      // so it must not also open a web-UI session (see AuthService.login).
+      const userId = await options.authService.verifyCredentials(
+        request.body.email,
+        request.body.password,
+      );
       // Users without a membership can still read public PTV data.
       const memberships = await options.tenantService.listTenantsForUser(userId);
 

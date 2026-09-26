@@ -82,7 +82,7 @@ export class AuthService {
     this.now = deps.now ?? (() => new Date());
   }
 
-  /** Computed once and cached — a fixed hash whose only purpose is to make `login()`'s unknown-email path spend the same Argon2id cost as its wrong-password path. */
+  /** Computed once and cached — a fixed hash whose only purpose is to make `verifyCredentials()`'s unknown-email path spend the same Argon2id cost as its wrong-password path. */
   private getDummyPasswordHash(): Promise<string> {
     this.dummyPasswordHash ??= hashPassword('not-a-real-account-timing-normalization');
     return this.dummyPasswordHash;
@@ -148,6 +148,19 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<Session> {
+    const userId = await this.verifyCredentials(email, password);
+    return this.issueSession(userId);
+  }
+
+  /**
+   * Checks `email`/`password` (with the same lockout and failed-attempt
+   * handling as `login()`) and returns the user id, without issuing a
+   * web-UI session. For callers that only need to know who the user is,
+   * e.g. the MCP OAuth consent form and `npm run mcp:token` — those mint
+   * their own MCP OAuth tokens, so a refresh-token row here would just be
+   * an unused 30-day session nobody can revoke.
+   */
+  async verifyCredentials(email: string, password: string): Promise<string> {
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
       // Same error as a wrong password — don't reveal whether the email is
@@ -176,7 +189,7 @@ export class AuthService {
         .where(eq(users.id, user.id));
     }
 
-    return this.issueSession(user.id);
+    return user.id;
   }
 
   private async recordFailedLogin(userId: string, currentAttempts: number): Promise<void> {
