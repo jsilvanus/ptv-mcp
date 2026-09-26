@@ -1,14 +1,13 @@
 import { WriteApiNotSelectedError } from './toolContext.js';
-import type { QualityReport } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ApplyChannelChangeResult, NewChannel } from '../ptv/adapter.js';
 import type { ServiceChannel } from '../ptv/domain.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
-import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { ProposalService } from '../proposals/proposalService.js';
 import type { MembershipRoleResolver } from './authorization.js';
 import { CHANNEL_TYPE_FIELDS, UnsupportedChannelFieldError } from './channelProposal.js';
-import { auditedApply, queueKindProposal } from './proposalPipeline.js';
-import { diffFields, type ServiceDiffEntry } from './proposeChanges.js';
+import { auditedApply, queueKindProposal, type QueuedFields } from './proposalPipeline.js';
+import { diffFields, setFields, unknownFields, type ServiceDiffEntry } from './proposeChanges.js';
 import type { ToolContext } from './toolContext.js';
 
 const CHANNEL_TYPES: ServiceChannel['channelType'][] = [
@@ -39,9 +38,7 @@ export function normalizeNewChannel(input: Partial<NewChannel>): NewChannel {
   if (!type || !CHANNEL_TYPES.includes(type)) {
     throw new InvalidNewChannelError(`channelType must be one of ${CHANNEL_TYPES.join(', ')}`);
   }
-  const unsupported = Object.keys(input).filter(
-    (field) => !CHANNEL_TYPE_FIELDS[type].includes(field) && !CREATE_ONLY_FIELDS.includes(field),
-  );
+  const unsupported = unknownFields(input, [...CHANNEL_TYPE_FIELDS[type], ...CREATE_ONLY_FIELDS]);
   if (unsupported.length > 0) throw new UnsupportedChannelFieldError(unsupported, type);
   return {
     publishingStatus: 'Draft',
@@ -65,16 +62,11 @@ export function asChannel(channel: NewChannel): ServiceChannel {
 
 const EMPTY_CHANNEL = { names: {}, summaries: {}, descriptions: {}, languages: [] };
 
-export interface QueuedNewChannelResult {
+/** Validated at queue time, so problems show before anyone approves. */
+export type QueuedNewChannelResult = {
   proposed: NewChannel;
   diff: ServiceDiffEntry[];
-  /** Validation run at queue time so problems show before anyone approves. */
-  validation: { valid: boolean; errors: { field: string; message: string }[] };
-  quality: QualityReport;
-  correlationId: string;
-  proposalId: string;
-  status: ProposalStatus;
-}
+} & QueuedFields;
 
 /**
  * `ptv_propose_new_channel`: queues a `channel_create` proposal. Nothing is
@@ -102,7 +94,7 @@ export async function queueNewChannelProposal(
         const proposed = normalizeNewChannel(input);
         return {
           proposed,
-          diff: diffFields<Record<string, unknown>>(EMPTY_CHANNEL, channelFieldsOf(proposed)),
+          diff: diffFields<Record<string, unknown>>(EMPTY_CHANNEL, setFields(proposed)),
         };
       },
       changes: ({ proposed }) => proposed,
@@ -111,13 +103,6 @@ export async function queueNewChannelProposal(
     },
   );
   return { ...prepared, validation, quality, ...queued };
-}
-
-/** Every set field except the id-like ones, for the diff of a new channel. */
-function channelFieldsOf(channel: NewChannel): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(channel).filter(([, value]) => value !== undefined && value !== ''),
-  );
 }
 
 /**

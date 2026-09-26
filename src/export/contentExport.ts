@@ -13,7 +13,13 @@ import {
   checkService,
   type QualityFinding,
 } from '../quality/contentChecks.js';
-import { CHANNEL_TYPE_LABELS, formatValue, languageRank } from '../format/ptvFormat.js';
+import { collectedCheckContexts } from '../quality/serviceCheckContext.js';
+import {
+  CHANNEL_TYPE_LABELS,
+  displayName,
+  formatValue,
+  languageRank,
+} from '../format/ptvFormat.js';
 import type { Cell, Sheet } from './xlsx.js';
 
 /**
@@ -52,7 +58,7 @@ function languagesOf(texts: (LocalizedText | undefined)[]): string[] {
 }
 
 function name(names: LocalizedText | undefined): string {
-  return names?.fi ?? names?.sv ?? names?.en ?? Object.values(names ?? {}).find(Boolean) ?? '';
+  return displayName(names) ?? '';
 }
 
 /** A structured value as PTV's UI shows it, empty when missing. */
@@ -98,7 +104,7 @@ export function contentSheets(content: ContentExport): Sheet[] {
   const orgNames = new Map(content.organisations.map((org) => [org.id, name(org.names)]));
   const serviceNames = new Map(content.services.map((s) => [s.id, name(s.names)]));
   const channelNames = new Map(content.channels.map((c) => [c.id, name(c.names)]));
-  const orgsById = new Map(content.organisations.map((org) => [org.id, org]));
+  const checkContexts = collectedCheckContexts(content);
 
   const orgLanguages = languagesOf(
     content.organisations.flatMap((o) => [o.names, o.summaries, o.descriptions]),
@@ -286,12 +292,7 @@ export function contentSheets(content: ContentExport): Sheet[] {
           'Palvelu',
           service.id,
           name(service.names),
-          checkService(service, {
-            organisationNames: orgsById.get(service.organizationId)?.names,
-            generalDescription: service.generalDescriptionId
-              ? content.generalDescriptions.get(service.generalDescriptionId)
-              : undefined,
-          }).findings,
+          checkService(service, checkContexts.service(service)).findings,
         ),
       ),
       ...content.channels.flatMap((channel) =>
@@ -299,9 +300,7 @@ export function contentSheets(content: ContentExport): Sheet[] {
           'Asiointikanava',
           channel.id,
           name(channel.names),
-          checkChannel(channel, {
-            connectedServiceCount: content.connectedServiceCount.get(channel.id) ?? 0,
-          }).findings,
+          checkChannel(channel, checkContexts.channel(channel)).findings,
         ),
       ),
       ...content.connections.flatMap((connection) =>

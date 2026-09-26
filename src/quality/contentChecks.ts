@@ -385,14 +385,7 @@ export function checkService(
   const findings = textFieldFindings(service.names, service.summaries, service.descriptions);
   const error = (checkId: string, field: string, message: string) =>
     findings.push({ checkId, severity: 'error', field, message });
-  const warn = (checkId: string, field: string, message: string, language?: string) =>
-    findings.push({
-      checkId,
-      severity: 'warning',
-      field,
-      message,
-      ...(language ? { language } : {}),
-    });
+  const warn = warner(findings);
 
   const organisationNames = context.organisationNames ?? {};
   for (const [language, name] of Object.entries(service.names)) {
@@ -594,6 +587,11 @@ function phoneFindings(field: string, phones: PhoneNumber[], warn: Warn): void {
   }
 }
 
+/** Today as YYYY-MM-DD, the default for the service-hour date checks. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function serviceHourFindings(hours: ServiceHour[], today: string, warn: Warn): void {
   for (const hour of hours) {
     // A single-day exceptional hour has only validFrom: it ends that day.
@@ -668,9 +666,7 @@ export function checkChannel(
 ): QualityReport {
   // Channels read without summaries (e.g. v12 today) skip the summary checks.
   const findings = textFieldFindings(channel.names, channel.summaries, channel.descriptions);
-  findings.push(
-    ...channelDetailFindings(channel, context.today ?? new Date().toISOString().slice(0, 10)),
-  );
+  findings.push(...channelDetailFindings(channel, context.today ?? todayIso()));
   if (channel.languages.length === 0) {
     findings.push({
       checkId: 'Q-LANG-1',
@@ -729,11 +725,7 @@ export function checkConnection(
     );
   }
   phoneFindings('phoneNumbers', details.phoneNumbers ?? [], warn);
-  serviceHourFindings(
-    details.serviceHours ?? [],
-    context.today ?? new Date().toISOString().slice(0, 10),
-    warn,
-  );
+  serviceHourFindings(details.serviceHours ?? [], context.today ?? todayIso(), warn);
   return report(findings);
 }
 

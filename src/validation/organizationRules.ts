@@ -1,6 +1,10 @@
 import type { NewOrganization } from '../ptv/adapter.js';
 import type { Organization, OrganizationType } from '../ptv/domain.js';
-import type { ValidationError, ValidationResult } from './changeValidator.js';
+import {
+  requireWritablePublishingStatus,
+  type ValidationError,
+  type ValidationResult,
+} from './changeValidator.js';
 import { ORGANIZATION_DESCRIPTION_MAX, SUMMARY_MAX } from '../ptv/limits.js';
 import { checkAddress, checkContactDetails } from './channelRules.js';
 
@@ -91,16 +95,7 @@ export function validateOrganization(
       message: `Not a valid business ID (Y-tunnus, 1234567-8): ${organization.businessCode}`,
     });
   }
-  const status = organization.publishingStatus;
-  if (status === 'Modified' || status === 'Withdrawn') {
-    errors.push({
-      field: 'publishingStatus',
-      message:
-        status === 'Modified'
-          ? "PTV has an unpublished modified version of this organisation; the v11 API can't update it. Publish or discard it in PTV's web UI first."
-          : 'Withdrawn cannot be written through the v11 API; use Archived to archive.',
-    });
-  }
+  requireWritablePublishingStatus(organization.publishingStatus, 'organisation', errors);
   checkContactDetails(organization, errors);
   (organization.addresses ?? []).forEach((address, i) =>
     checkAddress(address, `addresses[${i}]`, errors, false),

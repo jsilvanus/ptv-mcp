@@ -41,6 +41,11 @@ const DAY_LABELS: Record<Weekday, string> = {
 };
 
 /** Sort key for languages: fi, sv, en, the Sámi languages, then the rest. */
+/** An item's name for lists and reports: Finnish, else Swedish, English or any language. */
+export function displayName(names: LocalizedText | undefined): string | undefined {
+  return names?.fi ?? names?.sv ?? names?.en ?? Object.values(names ?? {}).find(Boolean);
+}
+
 export function languageRank(language: string | undefined): number {
   if (!language) return -1;
   const index = LANGUAGE_ORDER.indexOf(language);

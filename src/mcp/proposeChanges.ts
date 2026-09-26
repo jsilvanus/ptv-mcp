@@ -178,6 +178,18 @@ export function diffFields<T extends object>(
   return entries;
 }
 
+/** The keys of `input` that aren't in `allowed`, for a proposal's unsupported-field error. */
+export function unknownFields(input: object, allowed: readonly string[]): string[] {
+  return Object.keys(input).filter((field) => !allowed.includes(field));
+}
+
+/** The fields a new item sets (not undefined or ''), which its diff against an empty one lists. */
+export function setFields<T extends object>(item: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(item).filter(([, value]) => value !== undefined && value !== ''),
+  ) as Partial<T>;
+}
+
 /**
  * A value's comparison key: key order and undefined members don't matter,
  * and service hours compare in canonical form (PTV returns weekly hours

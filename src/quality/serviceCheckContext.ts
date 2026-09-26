@@ -1,6 +1,7 @@
 import type { PtvAdapter } from '../ptv/adapter.js';
-import type { GeneralDescription, PtvContentId, Service } from '../ptv/domain.js';
-import type { ServiceCheckContext } from './contentChecks.js';
+import type { GeneralDescription, PtvContentId, Service, ServiceChannel } from '../ptv/domain.js';
+import type { OrganisationContent } from '../ptv/organisationContent.js';
+import type { ChannelCheckContext, ServiceCheckContext } from './contentChecks.js';
 
 /**
  * The general description a service links to, for the Q-GD-1 copy check.
@@ -39,4 +40,39 @@ export async function serviceCheckContext(
     loadGeneralDescription(adapter, service.generalDescriptionId, generalDescriptions),
   ]);
   return { organisationNames: organisation?.names, generalDescription };
+}
+
+/**
+ * What checkChannel needs: how many services the channel is connected to.
+ * A failed read leaves the connection check out.
+ */
+export async function channelCheckContext(
+  adapter: Pick<PtvAdapter, 'getConnectionsFor'>,
+  channelId: PtvContentId,
+): Promise<ChannelCheckContext> {
+  const connections = await adapter.getConnectionsFor(channelId, 'channel').catch(() => undefined);
+  return connections ? { connectedServiceCount: connections.length } : {};
+}
+
+/**
+ * The service and channel check contexts from content already read
+ * (collectOrganisationContent), without reading PTV again: a service's
+ * organisation names and general description, a channel's connection count.
+ */
+export function collectedCheckContexts(content: OrganisationContent): {
+  service(service: Service): ServiceCheckContext;
+  channel(channel: ServiceChannel): ChannelCheckContext;
+} {
+  const organisationNames = new Map(content.organisations.map((org) => [org.id, org.names]));
+  return {
+    service: (service) => ({
+      organisationNames: organisationNames.get(service.organizationId),
+      generalDescription: service.generalDescriptionId
+        ? content.generalDescriptions.get(service.generalDescriptionId)
+        : undefined,
+    }),
+    channel: (channel) => ({
+      connectedServiceCount: content.connectedServiceCount.get(channel.id) ?? 0,
+    }),
+  };
 }
