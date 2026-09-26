@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { apiFetch, ApiError, errorMessage } from '../api/client';
 import type { Member, MembershipRole } from '../api/types';
 import { ROLE_LABELS, ROLES } from '../auth/roles';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import { TenantSettingsPanel } from './TenantSettingsPanel';
 
 export function MembersPage() {
@@ -14,10 +15,10 @@ export function MembersPage() {
 
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<MembershipRole>('viewer');
-  const [addError, setAddError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const { busy: adding, error: addError, run: runAdd } = useAsyncAction();
 
-  const [rowError, setRowError] = useState<string | null>(null);
+  // One row action at a time; `pendingUserId` marks the row it is for.
+  const { error: rowError, run: runRowAction } = useAsyncAction();
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   const loadMembers = useCallback(async () => {
@@ -46,25 +47,34 @@ export function MembersPage() {
   async function handleAdd(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (!tenantId) return;
-    setAddError(null);
-    setAdding(true);
-    try {
-      await apiFetch<void>(`/tenants/${tenantId}/members`, {
-        method: 'POST',
-        body: JSON.stringify({ email, role }),
-      });
-      setEmail('');
-      setRole('viewer');
+    await runAdd(
+      async () => {
+        await apiFetch<void>(`/tenants/${tenantId}/members`, {
+          method: 'POST',
+          body: JSON.stringify({ email, role }),
+        });
+        setEmail('');
+        setRole('viewer');
+        await loadMembers();
+      },
+      (err) =>
+        err instanceof ApiError && err.status === 404
+          ? 'No user is registered with that email.'
+          : errorMessage(err, 'Could not add member.'),
+    );
+  }
+
+  async function runForMember(
+    member: Member,
+    action: () => Promise<unknown>,
+    fallback: string,
+  ): Promise<void> {
+    setPendingUserId(member.userId);
+    await runRowAction(async () => {
+      await action();
       await loadMembers();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        setAddError('No user is registered with that email.');
-      } else {
-        setAddError(errorMessage(err, 'Could not add member.'));
-      }
-    } finally {
-      setAdding(false);
-    }
+    }, fallback);
+    setPendingUserId(null);
   }
 
   async function handleRoleChange(member: Member, newRole: MembershipRole): Promise<void> {
@@ -76,19 +86,15 @@ export function MembersPage() {
     ) {
       return;
     }
-    setRowError(null);
-    setPendingUserId(member.userId);
-    try {
-      await apiFetch<void>(`/tenants/${tenantId}/members/${member.userId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role: newRole }),
-      });
-      await loadMembers();
-    } catch (err) {
-      setRowError(errorMessage(err, 'Could not change role.'));
-    } finally {
-      setPendingUserId(null);
-    }
+    await runForMember(
+      member,
+      () =>
+        apiFetch<void>(`/tenants/${tenantId}/members/${member.userId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ role: newRole }),
+        }),
+      'Could not change role.',
+    );
   }
 
   async function handleRemove(member: Member): Promise<void> {
@@ -96,18 +102,11 @@ export function MembersPage() {
     if (!window.confirm(`Remove ${member.name} (${member.email}) from this tenant?`)) {
       return;
     }
-    setRowError(null);
-    setPendingUserId(member.userId);
-    try {
-      await apiFetch<void>(`/tenants/${tenantId}/members/${member.userId}`, {
-        method: 'DELETE',
-      });
-      await loadMembers();
-    } catch (err) {
-      setRowError(errorMessage(err, 'Could not remove member.'));
-    } finally {
-      setPendingUserId(null);
-    }
+    await runForMember(
+      member,
+      () => apiFetch<void>(`/tenants/${tenantId}/members/${member.userId}`, { method: 'DELETE' }),
+      'Could not remove member.',
+    );
   }
 
   if (forbidden) {

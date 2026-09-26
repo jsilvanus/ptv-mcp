@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { apiFetch, errorMessage } from '../api/client';
+import { apiFetch } from '../api/client';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import { useTenants } from '../tenants/TenantContext';
 import { ROLE_LABELS } from '../auth/roles';
 
@@ -14,14 +15,11 @@ function slugify(name: string): string {
 export function TenantsPage() {
   const { tenants, loading, refresh, setCurrentTenantId } = useTenants();
   const [name, setName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const { busy: submitting, error, run } = useAsyncAction();
 
   async function handleCreate(event: FormEvent): Promise<void> {
     event.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
+    await run(async () => {
       const created = await apiFetch<{ tenantId: string }>('/tenants', {
         method: 'POST',
         body: JSON.stringify({ name, slug: `${slugify(name)}-${Date.now().toString(36)}` }),
@@ -29,11 +27,7 @@ export function TenantsPage() {
       setName('');
       await refresh();
       setCurrentTenantId(created.tenantId);
-    } catch (err) {
-      setError(errorMessage(err, 'Could not create tenant.'));
-    } finally {
-      setSubmitting(false);
-    }
+    }, 'Could not create tenant.');
   }
 
   return (
