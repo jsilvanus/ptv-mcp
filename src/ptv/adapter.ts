@@ -15,6 +15,9 @@ import type {
 
 export type PtvEnvironment = 'test' | 'production';
 
+/** Which end of a connection an id is. */
+export type ConnectionEndpoint = 'service' | 'channel';
+
 /**
  * Which table a PtvAdapter's credential is resolved from. 'tenant' for a
  * shared organisational secret (TenantEnvironment — e.g. v12's API key,
@@ -150,7 +153,20 @@ export interface PtvAdapter {
   /** One general description, or null when unknown (or the adapter can't read them). */
   getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null>;
 
-  getConnectionsFor(entityId: PtvContentId): Promise<Connection[]>;
+  /**
+   * Connections of a service or channel, extra info included. `kind`, when
+   * the caller knows it, spares adapters that would otherwise try the id as
+   * both (v11 reads it as a service first, then as a channel).
+   */
+  getConnectionsFor(entityId: PtvContentId, kind?: ConnectionEndpoint): Promise<Connection[]>;
+
+  /**
+   * Every connection of each service, extra info included: the same
+   * connections as `getConnectionsFor(id, 'service')` for each id, in id
+   * order, but read in batches (or from services this instance already
+   * read) instead of one request per service.
+   */
+  getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]>;
 
   listCodes(codeListName: string): Promise<CodeListEntry[]>;
 

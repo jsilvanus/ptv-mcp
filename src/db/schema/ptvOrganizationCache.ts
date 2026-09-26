@@ -3,12 +3,13 @@ import { tenants } from './tenant.js';
 import { ptvEnvironmentEnum } from './enums.js';
 
 /**
- * Persistent cache of the PTV v11 organization catalogue.
+ * Persistent cache of the PTV organization catalogue (v11 and v12).
  *
  * The cache is tenant-scoped because the catalogue is used through a
- * tenant/environment/API-version adapter context. The complete PTV wire
- * object is retained so later organization lookups do not need to refetch
- * /Organization/list.
+ * tenant/environment/API-version adapter context. `organization` holds the
+ * complete domain `Organization` (older v11 rows held the wire object; see
+ * PtvOrganizationCacheService) so later organization lookups do not need
+ * to refetch the catalogue.
  */
 export const ptvOrganizationCache = pgTable(
   'ptv_organization_cache',

@@ -300,3 +300,18 @@ Still open: write support (v12 has no write endpoints in this spec), and
 the in-memory code cache could move to Postgres if restart cold-starts
 matter.
 
+
+## Organisation cache and batched connection reads (2026-09-26)
+
+- **Organisation search is cached.** `searchOrganisations` reads the
+  tenant's persistent catalogue cache (`PtvOrganizationCacheService`,
+  table `ptv_organization_cache`, key `api_version = 'v12'`), the same
+  one v11 uses, instead of scanning and hydrating the whole catalogue on
+  every call. The catalogue is refetched only when the cache has gone
+  stale, so **v12 organisation results can be up to the cache TTL (1 h)
+  stale, the same as v11**. Without a tenant (no cache) the full scan is
+  used as before. Matching is unchanged: official names only, client-side.
+- **Connections of many services** (`getConnectionsForServices`, used by
+  the content report) are read with `/connection/search`, 20
+  `serviceContentIds` per request, instead of two searches per service.
+  `getConnectionsFor(id, kind)` runs only the search for the named end.

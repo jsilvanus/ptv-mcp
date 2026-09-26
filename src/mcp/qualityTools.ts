@@ -40,7 +40,7 @@ export async function checkQuality(
     if (!service) throw new ServiceNotFoundError(id);
     const [context, connections] = await Promise.all([
       serviceCheckContext(adapter, service),
-      adapter.getConnectionsFor(id).catch(() => []),
+      adapter.getConnectionsFor(id, 'service').catch(() => []),
     ]);
     const findings: QualityFinding[] = [
       ...checkService(service, context).findings,
@@ -60,7 +60,7 @@ export async function checkQuality(
   }
   const channel: ServiceChannel | null = await adapter.getChannel(id);
   if (!channel) throw new ChannelNotFoundError(id);
-  const connections = await adapter.getConnectionsFor(id).catch(() => undefined);
+  const connections = await adapter.getConnectionsFor(id, 'channel').catch(() => undefined);
   return {
     kind,
     id,

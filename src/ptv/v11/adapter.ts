@@ -8,6 +8,7 @@ import type {
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
+  ConnectionEndpoint,
   NewChannel,
   NewService,
   PtvAdapter,
@@ -241,8 +242,7 @@ export class PtvV11Adapter implements PtvAdapter {
         await this.refreshOrganizationCache(cacheKey);
       }
 
-      const wires = await this.organizationCache.search(cacheKey, query);
-      return paginate(wires.map(organizationWireToDomain), params);
+      return paginate(await this.organizationCache.search(cacheKey, query), params);
     }
 
     if (query) {
@@ -293,7 +293,7 @@ export class PtvV11Adapter implements PtvAdapter {
       '/api/v11/Organization/list',
       catalog.map((item) => item.id),
     );
-    await this.organizationCache!.replaceCatalogue(key, wires);
+    await this.organizationCache!.replaceCatalogue(key, wires.map(organizationWireToDomain));
   }
 
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
@@ -387,9 +387,15 @@ export class PtvV11Adapter implements PtvAdapter {
     return wire ? generalDescriptionWireToDomain(wire) : null;
   }
 
-  async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
-    const serviceWire = await this.getOrNull<V11ServiceWire>(`/api/v11/Service/${entityId}`);
-    if (serviceWire) return connectionsFromService(serviceWire);
+  async getConnectionsFor(
+    entityId: PtvContentId,
+    kind?: ConnectionEndpoint,
+  ): Promise<Connection[]> {
+    if (kind !== 'channel') {
+      const serviceWire = await this.getOrNull<V11ServiceWire>(`/api/v11/Service/${entityId}`);
+      if (serviceWire) return connectionsFromService(serviceWire);
+      if (kind === 'service') return [];
+    }
 
     const channelWire = await this.getOrNull<V11ServiceChannelWire>(
       `/api/v11/ServiceChannel/${entityId}`,
@@ -397,6 +403,27 @@ export class PtvV11Adapter implements PtvAdapter {
     if (channelWire) return connectionsFromChannel(channelWire);
 
     return [];
+  }
+
+  /**
+   * Services this instance already read through an organisation search
+   * carry their connections; the rest come from `Service/list?guids=`, 100
+   * per request. Both are the published version, like `Service/{id}`.
+   */
+  async getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]> {
+    const wires = await this.organizationServiceWires();
+    const missing = [...new Set(serviceIds)].filter((id) => !wires.has(id));
+    const fetched = await fetchListByIds<V11ServiceWire>(
+      this.client,
+      '/api/v11/Service/list',
+      missing,
+      { notFoundAsEmpty: true },
+    );
+    for (const wire of fetched) wires.set(wire.id, wire);
+    return serviceIds.flatMap((id) => {
+      const wire = wires.get(id);
+      return wire ? connectionsFromService(wire) : [];
+    });
   }
 
   async listCodes(codeListName: string): Promise<CodeListEntry[]> {
@@ -590,6 +617,16 @@ export class PtvV11Adapter implements PtvAdapter {
       pending.catch(() => this.organizationLists.delete(key));
     }
     return pending;
+  }
+
+  /** Service wires from the organisation service lists this instance has downloaded, by id. */
+  private async organizationServiceWires(): Promise<Map<string, V11ServiceWire>> {
+    const lists = await Promise.all(
+      [...this.organizationLists]
+        .filter(([key]) => key.startsWith('services:'))
+        .map(([, list]) => list.catch(() => [])),
+    );
+    return new Map((lists.flat() as V11ServiceWire[]).map((wire) => [wire.id, wire] as const));
   }
 
   /** Connections are written through their own endpoint, after the service PUT. */

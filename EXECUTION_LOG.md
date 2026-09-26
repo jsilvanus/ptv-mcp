@@ -1906,3 +1906,37 @@ Behaviour is unchanged: tool names, descriptions and schemas, REST
 responses (including result key order), audit entries, error classes and
 messages, and the manual-publishing sheets are the same. No test needed
 changes.
+
+## 2026-09-26 — Fewer PTV requests: connections from search results, v12 organisation cache
+
+Two of the leftovers from the simplify pass.
+
+- **Batched connection reads.** New `PtvAdapter.getConnectionsForServices(ids)`
+  (option (b) of the task: the domain `Service` stays the editable entity,
+  so nothing new can leak into proposal diffs, manual-publishing sheets or
+  the web UI). v11 takes services this adapter instance already read
+  through `Service/list/organization` (they carry `serviceChannels` with
+  extra info) and reads the rest from `Service/list?guids=`, 100 per
+  request; PTV answers 404 when none of a batch exists, read as empty
+  (`fetchListByIds`'s new `notFoundAsEmpty`). v12 uses
+  `/connection/search` with 20 `serviceContentIds` per request; the
+  in-memory adapter filters. `connectionsOf` (content report) uses it and
+  falls back to per-service reads if the batch fails. For the content
+  report on v11 this drops N `Service/{id}` reads to none.
+- **`getConnectionsFor(id, kind?)`**: an optional `'service' | 'channel'`
+  hint. v11 then skips the wasted `Service/{id}` 404 for a channel (and the
+  channel read for an unknown service); v12 runs one search instead of two.
+  `ptv_check_quality`, review items, `collectOrganisationContent`'s
+  unconnected channels and connection proposals pass it.
+- **Organisation cache for v12.** `PtvOrganizationCacheService` now stores
+  domain `Organization`s (was: v11 wire objects) and is passed to v12 by
+  `v12Factory`; v12 `searchOrganisations` uses it like v11. No migration:
+  rows in the old shape (no `names` key) count as stale, so the next
+  search replaces them. Name matching is unchanged for both versions (v11:
+  official and alternative names; v12: official names).
+
+Behaviour change: v12 organisation results can now be up to the cache TTL
+(1 h) stale, the same as v11 (noted in `docs/ptv-v12-notes.md`). Results
+are otherwise identical. Contract tests cover both new/extended methods;
+unit tests show the saved requests; an integration test covers the cache's
+old-row handling.

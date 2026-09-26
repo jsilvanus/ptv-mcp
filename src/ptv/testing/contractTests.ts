@@ -105,6 +105,22 @@ export function runPtvAdapterContractTests(
       expect(Array.isArray(connections)).toBe(true);
     });
 
+    it('getConnectionsFor with a kind returns only that end of the connections', async () => {
+      const asService = await adapter.getConnectionsFor(fixtures.knownServiceId, 'service');
+      expect(asService.every((c) => c.serviceId === fixtures.knownServiceId)).toBe(true);
+      const asChannel = await adapter.getConnectionsFor(fixtures.knownChannelId, 'channel');
+      expect(asChannel.every((c) => c.channelId === fixtures.knownChannelId)).toBe(true);
+      expect(await adapter.getConnectionsFor(fixtures.knownServiceId, 'channel')).toEqual([]);
+    });
+
+    it('getConnectionsForServices matches getConnectionsFor per service', async () => {
+      expect(await adapter.getConnectionsForServices([])).toEqual([]);
+      expect(await adapter.getConnectionsForServices([fixtures.unknownId])).toEqual([]);
+      expect(
+        await adapter.getConnectionsForServices([fixtures.knownServiceId, fixtures.unknownId]),
+      ).toEqual(await adapter.getConnectionsFor(fixtures.knownServiceId, 'service'));
+    });
+
     it('listCodes returns at least one entry for a known code list', async () => {
       const codes = await adapter.listCodes(fixtures.knownCodeListName);
       expect(codes.length).toBeGreaterThan(0);

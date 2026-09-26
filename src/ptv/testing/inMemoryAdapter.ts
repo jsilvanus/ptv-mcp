@@ -8,6 +8,7 @@ import type {
   ConnectionChangeProposal,
   ApplyServiceChangeResult,
   ChannelChangeProposal,
+  ConnectionEndpoint,
   NewChannel,
   NewService,
   PtvAdapter,
@@ -113,8 +114,19 @@ export class InMemoryPtvAdapter implements PtvAdapter {
     return this.generalDescriptions.find((gd) => gd.id === id) ?? null;
   }
 
-  async getConnectionsFor(entityId: PtvContentId): Promise<Connection[]> {
-    return this.connections.filter((c) => c.serviceId === entityId || c.channelId === entityId);
+  async getConnectionsFor(
+    entityId: PtvContentId,
+    kind?: ConnectionEndpoint,
+  ): Promise<Connection[]> {
+    return this.connections.filter(
+      (c) =>
+        (kind !== 'channel' && c.serviceId === entityId) ||
+        (kind !== 'service' && c.channelId === entityId),
+    );
+  }
+
+  async getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]> {
+    return serviceIds.flatMap((id) => this.connections.filter((c) => c.serviceId === id));
   }
 
   async listCodes(codeListName: string): Promise<CodeListEntry[]> {

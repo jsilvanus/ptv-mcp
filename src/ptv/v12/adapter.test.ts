@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { V11ChangeValidator } from '../../validation/changeValidator.js';
 import { mapV12Service } from './adapter.js';
+import type { PtvOrganizationCacheService } from '../../db/ptvOrganizationCacheService.js';
+import type { Organization } from '../domain.js';
 
 describe('PTV v12 service mapping', () => {
   it('maps languageVersions and v12 scalar fields without losing content', () => {
@@ -1207,5 +1209,91 @@ describe('PTV v12 ontology term search', () => {
     await adapter.searchOntologyTerms({ query: 'kaste', pageSize: 500 });
 
     expect(pageSize).toBe('100');
+  });
+});
+
+describe('PTV v12 connection batches and organisation cache', () => {
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  const page = (items: unknown[]) =>
+    json({ page: 1, pageSize: 100, totalItems: items.length, totalPages: 1, items });
+
+  it('reads the connections of 25 services in 2 requests, in service order', async () => {
+    const requested: URL[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url);
+      return page(
+        url.searchParams
+          .getAll('serviceContentIds')
+          .reverse()
+          .map((id) => ({ serviceContentId: id, channelContentId: `${id}-channel` })),
+      );
+    };
+    const ids = Array.from({ length: 25 }, (_, i) => `service-${i}`);
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+    const connections = await adapter.getConnectionsForServices(ids);
+
+    expect(requested.map((url) => url.searchParams.getAll('serviceContentIds').length)).toEqual([
+      20, 5,
+    ]);
+    expect(connections.map((connection) => connection.serviceId)).toEqual(ids);
+  });
+
+  it('searches connections by one end only when told which it is', async () => {
+    const requested: URL[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url);
+      return page([{ serviceContentId: 'service-1', channelContentId: 'channel-1' }]);
+    };
+
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const adapter = new PtvV12Adapter({ environment: 'test', apiKey: 'test-key', fetchImpl });
+
+    expect(await adapter.getConnectionsFor('channel-1', 'channel')).toHaveLength(1);
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.searchParams.getAll('channelContentIds')).toEqual(['channel-1']);
+  });
+
+  it('serves organisation searches from the tenant cache until it goes stale', async () => {
+    const { PtvV12Adapter } = await import('./adapter.js');
+    const stored = new Map<string, Organization[]>();
+    const cache = {
+      hasFreshCatalogue: async (key: { apiVersion: string }) => stored.has(key.apiVersion),
+      replaceCatalogue: async (key: { apiVersion: string }, organizations: Organization[]) => {
+        stored.set(key.apiVersion, organizations);
+      },
+      search: async (key: { apiVersion: string }) => stored.get(key.apiVersion) ?? [],
+    } as unknown as PtvOrganizationCacheService;
+    const requested: URL[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      requested.push(new URL(String(input)));
+      return page([
+        { contentId: 'org-1', languageVersions: { fi: { name: 'Riihimäen seurakunta' } } },
+        { contentId: 'org-2', languageVersions: { fi: { name: 'Hyvinkään seurakunta' } } },
+      ]);
+    };
+    const adapter = () =>
+      new PtvV12Adapter({
+        environment: 'test',
+        apiKey: 'test-key',
+        fetchImpl,
+        organizationCache: cache,
+        tenantId: 'tenant-1',
+      });
+
+    const first = await adapter().searchOrganisations({ query: 'riihimäen' });
+    const second = await adapter().searchOrganisations({ query: 'riihimäen' });
+
+    expect(first.items.map((org) => org.id)).toEqual(['org-1']);
+    expect(second).toEqual(first);
+    expect(requested).toHaveLength(1);
+    expect(stored.get('v12')?.map((org) => org.id)).toEqual(['org-1', 'org-2']);
   });
 });

@@ -1,4 +1,4 @@
-import { mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
+import { isNotFound, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
 import type { PtvV11Client } from './client.js';
 import type {
   V11GeneralDescriptionWire,
@@ -42,18 +42,23 @@ export async function fetchAllIdNamePairs(
 /**
  * Full records for `ids` from a v11 `.../list?guids=` endpoint, in batches
  * of 100, returned in the order of `ids` (ids PTV doesn't return are
- * dropped).
+ * dropped). PTV answers 404 when it finds none of a batch's ids; with
+ * `notFoundAsEmpty` that batch is empty instead of an error.
  */
 export async function fetchListByIds<T extends { id: string }>(
   client: PtvV11Client,
   listPath: string,
   ids: string[],
+  { notFoundAsEmpty = false }: { notFoundAsEmpty?: boolean } = {},
 ): Promise<T[]> {
   const wires: T[] = [];
   for (let i = 0; i < ids.length; i += 100) {
     const batch = ids.slice(i, i + 100);
-    const result = await client.get<T[]>(listPath, { guids: batch.join(',') });
-    wires.push(...result);
+    try {
+      wires.push(...(await client.get<T[]>(listPath, { guids: batch.join(',') })));
+    } catch (err) {
+      if (!notFoundAsEmpty || !isNotFound(err)) throw err;
+    }
   }
   const byId = new Map(wires.map((wire) => [wire.id, wire]));
   return ids.map((id) => byId.get(id)).filter((wire): wire is T => wire !== undefined);

@@ -55,9 +55,109 @@ describe('PtvV11Adapter organisation-scoped search', () => {
   });
 });
 
+describe('PtvV11Adapter connection reads', () => {
+  const organizationId = 'ae788356-6950-48fc-b3ff-63243f74fe53';
+  const connected = (id: string) =>
+    serviceWire({
+      id,
+      serviceChannels: [
+        {
+          serviceChannel: { id: `${id}-channel` },
+          serviceChargeType: 'FreeOfCharge',
+          description: [{ language: 'fi', value: 'Vastaanotto', type: 'Description' }],
+        },
+      ],
+    });
+
+  it('reads the connections of searched services without another request', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      'GET /api/v11/Service/list/organization': () =>
+        Response.json({
+          pageNumber: 1,
+          pageSize: 1000,
+          pageCount: 1,
+          itemList: [connected(SERVICE_ID), connected('second')],
+        }),
+      [`GET /api/v11/Service/${SERVICE_ID}`]: () => Response.json(connected(SERVICE_ID)),
+    });
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+    await adapter.searchServices({ organizationId, page: 1, pageSize: 10 });
+
+    const connections = await adapter.getConnectionsForServices([SERVICE_ID, 'second']);
+
+    expect(calls).toHaveLength(1);
+    expect(connections).toEqual([
+      {
+        serviceId: SERVICE_ID,
+        channelId: `${SERVICE_ID}-channel`,
+        chargeType: 'FreeOfCharge',
+        descriptions: { fi: 'Vastaanotto' },
+        modifiedAt: '2026-09-24T00:00:00',
+      },
+      expect.objectContaining({ serviceId: 'second', channelId: 'second-channel' }),
+    ]);
+    // The same connections, extra info included, as the per-service read.
+    expect(connections.slice(0, 1)).toEqual(await adapter.getConnectionsFor(SERVICE_ID));
+  });
+
+  it('reads other services 100 per Service/list request instead of one each', async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `service-${i}`);
+    const { fetchImpl, calls } = fakeFetch({
+      'GET /api/v11/Service/list': () =>
+        Response.json(calls.at(-1)!.query.get('guids')!.split(',').map(connected)),
+    });
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+
+    const connections = await adapter.getConnectionsForServices(ids);
+
+    expect(calls.map((call) => call.path)).toEqual([
+      '/api/v11/Service/list',
+      '/api/v11/Service/list',
+    ]);
+    expect(calls.map((call) => call.query.get('guids')!.split(',').length)).toEqual([100, 50]);
+    expect(connections.map((connection) => connection.serviceId)).toEqual(ids);
+  });
+
+  it('reads a channel id straight from ServiceChannel when told it is a channel', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      'GET /api/v11/ServiceChannel/channel-1': () =>
+        Response.json({ id: 'channel-1', services: [{ service: { id: SERVICE_ID } }] }),
+    });
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+
+    expect(await adapter.getConnectionsFor('channel-1', 'channel')).toMatchObject([
+      { serviceId: SERVICE_ID, channelId: 'channel-1' },
+    ]);
+    expect(calls.map((call) => call.path)).toEqual(['/api/v11/ServiceChannel/channel-1']);
+
+    // Without the hint the id is tried as a service first.
+    await adapter.getConnectionsFor('channel-1');
+    expect(calls.map((call) => call.path).slice(1)).toEqual([
+      '/api/v11/Service/channel-1',
+      '/api/v11/ServiceChannel/channel-1',
+    ]);
+  });
+
+  it('reads no connections when PTV finds none of the services (404)', async () => {
+    const { fetchImpl } = fakeFetch({});
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+
+    expect(await adapter.getConnectionsForServices(['missing'])).toEqual([]);
+  });
+
+  it('does not try an unknown service id as a channel when told it is a service', async () => {
+    const { fetchImpl, calls } = fakeFetch({});
+    const adapter = new PtvV11Adapter({ environment: 'test', fetchImpl });
+
+    expect(await adapter.getConnectionsFor('missing', 'service')).toEqual([]);
+    expect(calls.map((call) => call.path)).toEqual(['/api/v11/Service/missing']);
+  });
+});
+
 interface Call {
   method: string;
   path: string;
+  query: URLSearchParams;
   authorization: string | undefined;
   body: unknown;
 }
@@ -74,6 +174,7 @@ function fakeFetch(routes: Record<string, () => Response>): {
     calls.push({
       method,
       path: url.pathname,
+      query: url.searchParams,
       authorization: headers.Authorization,
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
