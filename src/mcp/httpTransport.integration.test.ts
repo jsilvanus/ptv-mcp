@@ -142,6 +142,7 @@ describe('MCP HTTP transport', () => {
     expect(body.result?._meta).toHaveProperty('mcp/www_authenticate');
   });
 
+  // Calls PTV's real test environment, whose response time is outside our control.
   it('calls ptv_search_services against PTV live test environment and gets real results back', async () => {
     const { token, tenantId } = await registeredUserWithTenant({ v11: true });
 
@@ -155,7 +156,7 @@ describe('MCP HTTP transport', () => {
     const payload = toolJson<{ items: unknown[] }>(result);
     expect(Array.isArray(payload.items)).toBe(true);
     await client.close();
-  });
+  }, 30_000);
 
   it('surfaces a not_authorized tool error for a tenant the user does not belong to', async () => {
     // Which tenant a call operates against comes from the OAuth token's own
