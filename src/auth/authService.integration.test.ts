@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
-import { users } from '../db/schema/index.js';
+import { refreshTokens, users } from '../db/schema/index.js';
 import {
   AccountLockedError,
   AuthService,
@@ -135,6 +135,51 @@ describe('AuthService', () => {
     clock = new Date(clock.getTime() + 16 * 60 * 1000);
     const session = await service.login(email, 'correct-password');
     expect(session.accessToken).toBeTruthy();
+  });
+
+  it('verifies credentials and returns the user id without issuing a session', async () => {
+    const email = uniqueEmail();
+    const { userId } = await service.register(email, 'Test User', 'correct-password');
+
+    await expect(service.verifyCredentials(email, 'correct-password')).resolves.toBe(userId);
+    const rows = await db.select().from(refreshTokens).where(eq(refreshTokens.userId, userId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it('rejects bad credentials in verifyCredentials with the same error as login', async () => {
+    const email = uniqueEmail();
+    await service.register(email, 'Test User', 'correct-password');
+    await expect(service.verifyCredentials(email, 'wrong-password')).rejects.toThrow(
+      InvalidCredentialsError,
+    );
+    await expect(service.verifyCredentials('nobody@example.test', 'whatever')).rejects.toThrow(
+      InvalidCredentialsError,
+    );
+  });
+
+  it('counts verifyCredentials failures toward the same lockout as login', async () => {
+    const email = uniqueEmail();
+    const { userId } = await service.register(email, 'Test User', 'correct-password');
+
+    for (let i = 0; i < 4; i++) {
+      await expect(service.verifyCredentials(email, 'wrong-password')).rejects.toThrow(
+        InvalidCredentialsError,
+      );
+    }
+    let user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    expect(user?.failedLoginAttempts).toBe(4);
+
+    await expect(service.login(email, 'wrong-password')).rejects.toThrow(InvalidCredentialsError);
+    await expect(service.verifyCredentials(email, 'correct-password')).rejects.toThrow(
+      AccountLockedError,
+    );
+    await expect(service.login(email, 'correct-password')).rejects.toThrow(AccountLockedError);
+
+    clock = new Date(clock.getTime() + 16 * 60 * 1000);
+    await expect(service.verifyCredentials(email, 'correct-password')).resolves.toBe(userId);
+    user = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    expect(user?.failedLoginAttempts).toBe(0);
+    expect(user?.lockedUntil).toBeNull();
   });
 
   it('rotates the refresh token and revokes the old one on refresh', async () => {

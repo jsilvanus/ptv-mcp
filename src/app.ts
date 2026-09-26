@@ -132,7 +132,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     tenantService,
     adapterConfigService,
     publicUrl: config.mcpPublicUrl,
-    jwtSecret: config.jwtSecret,
   });
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,

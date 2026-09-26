@@ -9,7 +9,7 @@ import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { memberships, tenants, users } from '../db/schema/index.js';
+import { memberships, refreshTokens, tenants, users } from '../db/schema/index.js';
 import { AuthService } from '../auth/authService.js';
 import { LoggingMailer } from '../auth/mailer.js';
 import { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
@@ -292,6 +292,36 @@ describe('MCP HTTP transport', () => {
       'no organisation (public PTV data only)',
     );
     await client.close();
+  });
+
+  it('signs in on the OAuth consent form without creating a web-UI refresh token', async () => {
+    const email = `mcp-consent-${randomUUID()}@example.test`;
+    const { userId } = await authService.register(email, 'MCP Test User', 'correct-password');
+    createdUserIds.push(userId);
+    const oauth = Buffer.from(
+      new URLSearchParams({
+        client_id: 'urn:ptv-mcp:test-client',
+        redirect_uri: 'https://example.test/cb',
+        code_challenge: 'x',
+      }).toString(),
+    ).toString('base64url');
+    const consent = (password: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/oauth/authorize',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload: new URLSearchParams({ oauth, email, password }).toString(),
+      });
+
+    const failed = await consent('wrong-password');
+    expect(failed.statusCode).toBe(200);
+    expect(failed.body).toContain('Invalid email or password.');
+
+    const ok = await consent('correct-password');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.body).toContain('Choose PTV connection');
+    const rows = await db.select().from(refreshTokens).where(eq(refreshTokens.userId, userId));
+    expect(rows).toHaveLength(0);
   });
 
   it('refuses a public (no organisation) authorization for v12 or with writes', async () => {

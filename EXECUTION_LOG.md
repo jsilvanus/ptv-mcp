@@ -1940,3 +1940,20 @@ Behaviour change: v12 organisation results can now be up to the cache TTL
 are otherwise identical. Contract tests cover both new/extended methods;
 unit tests show the saved requests; an integration test covers the cache's
 old-row handling.
+
+## 2026-09-26 — MCP login no longer creates web-UI sessions
+
+The `/oauth/authorize` consent POST and `npm run mcp:token` called
+`AuthService.login()` only to learn the user id, then decoded its JWT.
+Each call left an unused 30-day refresh-token row behind. `login()` is now
+`verifyCredentials()` (lookup, dummy-hash timing, lockout and failed-attempt
+counting, unchanged) plus the existing `issueSession()`; both MCP paths call
+only `verifyCredentials()`. The consent route's JWT decode, its `jwtSecret`
+option and `token.ts`'s `jose` verification are gone.
+
+Error types, messages and statuses are unchanged (`/auth/login` 423/401,
+the consent form's "Invalid email or password."). New integration tests
+check that the consent POST and `verifyCredentials()` (which is all
+`mcp:token` calls; the script itself is top-level and not importable)
+create no refresh-token row, and that `verifyCredentials()` shares
+`login()`'s lockout.
