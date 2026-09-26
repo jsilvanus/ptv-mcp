@@ -29,7 +29,7 @@ import type {
   ServiceCollection,
 } from '../domain.js';
 import { walkOrganisationHierarchy } from '../hierarchy.js';
-import { isNotFound, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
+import { chunk, isNotFound, mapWithConcurrency, PAGE_FETCH_CONCURRENCY } from '../http.js';
 import { paginate } from '../paging.js';
 import { PtvV12Client } from './client.js';
 import {
@@ -38,145 +38,29 @@ import {
   MISSING_CODE_NAME_TTL_MS,
   sharedCodeNameCache,
 } from './codeNameCache.js';
+import { referenceCodeToDomain, V12_REFERENCE_CODE_LIST_PATHS } from './mappers/codeList.js';
+import { isUri, organizationIdOf } from './mappers/common.js';
+import { mapV12Connection } from './mappers/connection.js';
+import { mapV12GeneralDescription } from './mappers/generalDescription.js';
+import { mapV12Organization } from './mappers/organization.js';
+import { mapV12Service } from './mappers/service.js';
+import { mapV12ServiceChannel } from './mappers/serviceChannel.js';
+import { mapV12ServiceCollection } from './mappers/serviceCollection.js';
+import { extractItems, extractPageCount, extractTotalCount } from './pagination.js';
+import type {
+  V12GeneralDescriptionWire,
+  V12OrganizationWire,
+  V12ServiceChannelWire,
+  V12ServiceCollectionWire,
+  V12ServiceWire,
+} from './wireModel.js';
 
-interface V12ServiceChannelWire {
-  contentId?: string;
-  id?: string;
-  sourceId?: string;
-  organizationId?: string;
-  organizationContentId?: string;
-  organization?: {
-    contentId?: string;
-    id?: string;
-    organizationId?: string;
-    organizationContentId?: string;
-  };
-  serviceChannelType?: string;
-  serviceLanguages?: string[];
-  channelType?: string;
-  type?: string;
-  publishingStatus?: string;
-  name?: unknown;
-  names?: unknown;
-  languageVersions?: Record<string, unknown>;
-  description?: unknown;
-  descriptions?: unknown;
-  languages?: string[];
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-  publishedAt?: string;
-  migratedAt?: string;
-}
+type V12Query = Record<string, string | number | readonly string[] | undefined>;
 
-interface V12OrganizationWire {
-  contentId?: string;
-  id?: string;
-  sourceId?: string;
-  parentOrganizationContentId?: string | null;
-  parentOrganizationId?: string;
-  parentOrganization?: { contentId?: string; id?: string };
-  businessCode?: string;
-  businessId?: string;
-  publishingStatus?: string;
-  name?: unknown;
-  names?: unknown;
-  languageVersions?: Record<string, unknown>;
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-}
-interface V12ServiceWire {
-  contentId?: string;
-  id?: string;
-  sourceId?: string;
-  organizationId?: string;
-  organizationContentId?: string;
-  organization?: {
-    contentId?: string;
-    id?: string;
-    organizationId?: string;
-    organizationContentId?: string;
-  };
-  serviceType?: string;
-  type?: string;
-  publishingStatus?: string;
-  name?: unknown;
-  names?: unknown;
-  languageVersions?: Record<string, unknown>;
-  description?: unknown;
-  descriptions?: unknown;
-  summary?: unknown;
-  summaries?: unknown;
-  serviceClasses?: unknown[];
-  ontologyTerms?: unknown[];
-  targetGroups?: unknown[];
-  lifeEvents?: unknown[];
-  industrialClasses?: unknown[];
-  languages?: string[];
-  generalDescriptionContentId?: string | null;
-  generalDescriptionId?: string;
-  serviceLanguages?: string[];
-  serviceChannelIds?: Array<string | { contentId?: string; id?: string }>;
-  serviceChannels?: Array<string | { contentId?: string; id?: string }>;
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-}
+/** The largest `pageSize` v12's paginated endpoints take. */
+const V12_MAX_PAGE_SIZE = 100;
 
-interface V12ServiceCollectionWire {
-  contentId?: string;
-  id?: string;
-  publishingStatus?: string;
-  languageVersions?: Record<string, unknown>;
-  names?: unknown;
-  name?: unknown;
-  descriptions?: unknown;
-  description?: unknown;
-  organizationContentId?: string;
-  organizationId?: string;
-  services?: Array<string | { contentId?: string; id?: string }>;
-  serviceIds?: Array<string | { contentId?: string; id?: string }>;
-  /** v12: collection members, each tagged Service or Channel. */
-  items?: Array<{ itemType?: string; contentId?: string }>;
-  serviceChannels?: Array<string | { contentId?: string; id?: string }>;
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-}
-
-interface V12GeneralDescriptionWire {
-  contentId?: string;
-  id?: string;
-  serviceType?: string;
-  type?: string;
-  publishingStatus?: string;
-  languageVersions?: Record<string, unknown>;
-  names?: unknown;
-  name?: unknown;
-  descriptions?: unknown;
-  description?: unknown;
-  organizationContentId?: string;
-  organizationId?: string;
-  serviceClasses?: unknown[];
-  ontologyTerms?: unknown[];
-  targetGroups?: unknown[];
-  lifeEvents?: unknown[];
-  industrialClasses?: unknown[];
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-}
+const WRITES_NOT_ENABLED = 'PTV v12 write operations are not enabled yet';
 
 export class PtvV12Adapter implements PtvAdapter {
   private readonly client: PtvV12Client;
@@ -224,31 +108,17 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async searchServices(params: SearchParams): Promise<PaginatedResult<Service>> {
-    const path = '/api/v12/service/search';
-    const hydrated = await this.organizationList(path, params.organizationId, async () =>
-      this.hydrate(
-        await this.fetchAll(
-          path,
-          (item) => mapV12Service(item as V12ServiceWire),
-          100,
-          organizationQuery(params.organizationId),
-        ),
-        (service) => !!service.organizationId && hasNames(service),
-        '/api/v12/service',
-        mapV12Service,
-      ),
+    const hydrated = await this.hydratedSearch(
+      '/api/v12/service',
+      params.organizationId,
+      mapV12Service,
+      (service) => !!service.organizationId && hasNames(service),
     );
     const query = params.query?.trim();
     const filtered = hydrated.filter(
       (service) =>
         (!params.organizationId || service.organizationId === params.organizationId) &&
-        (!query ||
-          matchesText(
-            query,
-            ...Object.values(service.names),
-            ...Object.values(service.summaries),
-            ...Object.values(service.descriptions),
-          )),
+        matchesQuery(query, service.names, service.summaries, service.descriptions),
     );
     const result = paginate(filtered, params);
     return {
@@ -269,30 +139,17 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async searchChannels(params: SearchParams): Promise<PaginatedResult<ServiceChannel>> {
-    const path = '/api/v12/service-channel/search';
-    const hydrated = await this.organizationList(path, params.organizationId, async () =>
-      this.hydrate(
-        await this.fetchAll(
-          path,
-          (item) => mapV12ServiceChannel(item as V12ServiceChannelWire),
-          100,
-          organizationQuery(params.organizationId),
-        ),
-        (channel) => !!channel.organizationId && hasNames(channel),
-        '/api/v12/service-channel',
-        mapV12ServiceChannel,
-      ),
+    const hydrated = await this.hydratedSearch(
+      '/api/v12/service-channel',
+      params.organizationId,
+      mapV12ServiceChannel,
+      (channel) => !!channel.organizationId && hasNames(channel),
     );
     const query = params.query?.trim();
     const filtered = hydrated.filter(
       (channel) =>
         (!params.organizationId || channel.organizationId === params.organizationId) &&
-        (!query ||
-          matchesText(
-            query,
-            ...Object.values(channel.names),
-            ...Object.values(channel.descriptions),
-          )),
+        matchesQuery(query, channel.names, channel.descriptions),
     );
     return paginate(filtered, params);
   }
@@ -301,7 +158,7 @@ export class PtvV12Adapter implements PtvAdapter {
     const query = params.query?.trim();
     const organizations = await this.organizationCatalogue();
     const filtered = query
-      ? organizations.filter((org) => matchesText(query, ...Object.values(org.names)))
+      ? organizations.filter((org) => matchesQuery(query, org.names))
       : organizations;
     return paginate(filtered, params);
   }
@@ -328,16 +185,16 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   private async fetchOrganizationCatalogue(): Promise<Organization[]> {
-    const all = await this.fetchAll(
-      '/api/v12/organization/search',
-      (item) => mapV12Organization(item as V12OrganizationWire),
-      100,
-      // The live v12 organization search catalogue otherwise returns rows
-      // without localized names in some environments. Request Finnish
-      // language versions explicitly; text matching remains client-side
-      // because v12 exposes no organization-name query parameter.
-      { languageVersions: ['fi'] },
-    );
+    const all = (
+      await this.fetchAllRaw<V12OrganizationWire>(
+        '/api/v12/organization/search',
+        // The live v12 organization search catalogue otherwise returns rows
+        // without localized names in some environments. Request Finnish
+        // language versions explicitly; text matching remains client-side
+        // because v12 exposes no organization-name query parameter.
+        { languageVersions: ['fi'] },
+      )
+    ).map(mapV12Organization);
     // v12 search is a catalogue feed; search results can omit fields present
     // on the individual resource. Hydrate every organization before applying
     // the MCP query so the public interface does not depend on search DTO shape.
@@ -345,49 +202,32 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async getChannel(id: PtvContentId): Promise<ServiceChannel | null> {
-    try {
-      const raw = await this.client.get<V12ServiceChannelWire>(`/api/v12/service-channel/${id}`);
-      return mapV12ServiceChannel(raw);
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
-    }
+    const raw = await this.getOrNull<V12ServiceChannelWire>(`/api/v12/service-channel/${id}`);
+    return raw === null ? null : mapV12ServiceChannel(raw);
   }
 
   async getOrganisation(id: PtvContentId): Promise<Organization | null> {
-    try {
-      const raw = await this.client.get<V12OrganizationWire>(`/api/v12/organization/${id}`);
-      return mapV12Organization(raw);
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
-    }
+    const raw = await this.getOrNull<V12OrganizationWire>(`/api/v12/organization/${id}`);
+    return raw === null ? null : mapV12Organization(raw);
   }
 
   async getOrganisationHierarchy(id: PtvContentId): Promise<Organization[]> {
     return walkOrganisationHierarchy((orgId) => this.getOrganisation(orgId), id);
   }
+
   async searchServiceCollections(
     params: SearchParams,
   ): Promise<PaginatedResult<ServiceCollection>> {
     const query = params.query?.trim();
-    const path = '/api/v12/service-collection/search';
-    const rawItems = await this.organizationList(path, params.organizationId, () =>
-      this.fetchAllRaw<V12ServiceCollectionWire>(
-        path,
-        100,
-        organizationQuery(params.organizationId),
-      ),
+    const rawItems = await this.organizationSearch<V12ServiceCollectionWire>(
+      '/api/v12/service-collection/search',
+      params.organizationId,
     );
     const filtered = rawItems.filter((item) => {
       if (params.organizationId && organizationIdOf(item) !== params.organizationId) return false;
       if (!query) return true;
       const collection = mapV12ServiceCollection(item);
-      return matchesText(
-        query,
-        ...Object.values(collection.names),
-        ...Object.values(collection.descriptions),
-      );
+      return matchesQuery(query, collection.names, collection.descriptions);
     });
     const result = paginate(filtered, params);
     // The search listing omits collection members (`items`); only the
@@ -397,14 +237,10 @@ export class PtvV12Adapter implements PtvAdapter {
         if (item.items ?? item.serviceIds ?? item.services) return item;
         const id = item.contentId ?? item.id;
         if (!id) return item;
-        try {
-          return await this.client.get<V12ServiceCollectionWire>(
-            `/api/v12/service-collection/${id}`,
-          );
-        } catch (err) {
-          if (isNotFound(err)) return item;
-          throw err;
-        }
+        const detail = await this.getOrNull<V12ServiceCollectionWire>(
+          `/api/v12/service-collection/${id}`,
+        );
+        return detail === null ? item : detail;
       }),
     );
     return { ...result, items: hydrated.map(mapV12ServiceCollection) };
@@ -419,50 +255,27 @@ export class PtvV12Adapter implements PtvAdapter {
     params: SearchParams,
   ): Promise<PaginatedResult<GeneralDescription>> {
     const query = params.query?.trim();
-    const path = '/api/v12/general-description/search';
-    const rawItems = await this.organizationList(path, params.organizationId, () =>
-      this.fetchAllRaw<V12GeneralDescriptionWire>(
-        path,
-        100,
-        organizationQuery(params.organizationId),
-      ),
+    const rawItems = await this.organizationSearch<V12GeneralDescriptionWire>(
+      '/api/v12/general-description/search',
+      params.organizationId,
     );
     const filtered = rawItems
       .filter((item) => !params.organizationId || organizationIdOf(item) === params.organizationId)
       .map(mapV12GeneralDescription)
-      .filter(
-        (description) =>
-          !query ||
-          matchesText(
-            query,
-            ...Object.values(description.names),
-            ...Object.values(description.descriptions),
-          ),
-      );
+      .filter((description) => matchesQuery(query, description.names, description.descriptions));
     const result = paginate(filtered, params);
     return { ...result, items: await this.withCodeNames(result.items) };
   }
+
   /**
    * v12 services carry no channel list; connections are their own
-   * resource. Fill `serviceChannelIds` from /connection/search (which takes
-   * at most 20 service ids per request) so v12 matches v11's shape.
+   * resource. Fill `serviceChannelIds` from /connection/search so v12
+   * matches v11's shape.
    */
   private async withChannelIds(services: Service[]): Promise<Service[]> {
     const needingIds = services.filter((service) => service.serviceChannelIds.length === 0);
     if (needingIds.length === 0) return services;
-    const batches: string[][] = [];
-    for (let i = 0; i < needingIds.length; i += CONNECTION_SEARCH_MAX_IDS) {
-      batches.push(needingIds.slice(i, i + CONNECTION_SEARCH_MAX_IDS).map((service) => service.id));
-    }
-    const connections = (
-      await Promise.all(
-        batches.map((serviceContentIds) =>
-          this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { serviceContentIds }),
-        ),
-      )
-    )
-      .flat()
-      .map(mapV12Connection);
+    const connections = await this.connectionsOfServices(needingIds.map((service) => service.id));
     const channelIdsByService = new Map<string, string[]>();
     for (const connection of connections) {
       const channelIds = channelIdsByService.get(connection.serviceId) ?? [];
@@ -482,7 +295,7 @@ export class PtvV12Adapter implements PtvAdapter {
   ): Promise<Connection[]> {
     // The id may be a service or a channel; v12 filters by either server-side.
     const search = (filter: 'serviceContentIds' | 'channelContentIds') =>
-      this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { [filter]: [entityId] });
+      this.fetchAllRaw<unknown>('/api/v12/connection/search', { [filter]: [entityId] });
     const [asService, asChannel] = await Promise.all([
       kind === 'channel' ? [] : search('serviceContentIds'),
       kind === 'service' ? [] : search('channelContentIds'),
@@ -494,25 +307,21 @@ export class PtvV12Adapter implements PtvAdapter {
       );
   }
 
-  /** `/connection/search` by service, CONNECTION_SEARCH_MAX_IDS services per request. */
   async getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]> {
-    const ids = [...new Set(serviceIds)];
-    const batches: string[][] = [];
-    for (let i = 0; i < ids.length; i += CONNECTION_SEARCH_MAX_IDS) {
-      batches.push(ids.slice(i, i + CONNECTION_SEARCH_MAX_IDS));
-    }
-    const connections = (
-      await Promise.all(
-        batches.map((serviceContentIds) =>
-          this.fetchAllRaw<unknown>('/api/v12/connection/search', 100, { serviceContentIds }),
-        ),
-      )
-    )
-      .flat()
-      .map(mapV12Connection);
+    const connections = await this.connectionsOfServices([...new Set(serviceIds)]);
     return serviceIds.flatMap((id) =>
       connections.filter((connection) => connection.serviceId === id),
     );
+  }
+
+  /** `/connection/search` by service, CONNECTION_SEARCH_MAX_IDS services per request. */
+  private async connectionsOfServices(serviceIds: PtvContentId[]): Promise<Connection[]> {
+    const pages = await Promise.all(
+      chunk(serviceIds, CONNECTION_SEARCH_MAX_IDS).map((serviceContentIds) =>
+        this.fetchAllRaw<unknown>('/api/v12/connection/search', { serviceContentIds }),
+      ),
+    );
+    return pages.flat().map(mapV12Connection);
   }
 
   async listCodes(codeListName: string): Promise<CodeListEntry[]> {
@@ -524,18 +333,15 @@ export class PtvV12Adapter implements PtvAdapter {
         ).join(', ')}`,
       );
     }
-    const items = (await this.fetchAllRaw<unknown>(path, 100)).map(referenceCodeToDomain);
-    if (isCodeListKind(codeListName)) {
-      for (const item of items) this.cacheCodeEntry(codeListName, item);
-      await this.codeNames.flush();
-    }
+    const items = (await this.fetchAllRaw<unknown>(path)).map(referenceCodeToDomain);
+    if (isCodeListKind(codeListName)) await this.cacheCodeEntries(codeListName, items);
     return items;
   }
 
   async searchOntologyTerms(params: SearchParams): Promise<PaginatedResult<CodeListEntry>> {
     const page = params.page ?? 1;
-    // v12 pages server-side with pageSize ≤ 100.
-    const pageSize = Math.min(params.pageSize ?? 20, 100);
+    // v12 pages server-side.
+    const pageSize = Math.min(params.pageSize ?? 20, V12_MAX_PAGE_SIZE);
     const query = params.query?.trim();
     const raw = await this.client.get<unknown>('/api/v12/ontology-terms', {
       page,
@@ -544,8 +350,7 @@ export class PtvV12Adapter implements PtvAdapter {
       ...(query ? { name: query } : {}),
     });
     const items = extractItems(raw).map(referenceCodeToDomain);
-    for (const item of items) this.cacheCodeEntry('ontologyTerms', item);
-    await this.codeNames.flush();
+    await this.cacheCodeEntries('ontologyTerms', items);
     return { items, page, pageSize, totalCount: extractTotalCount(raw, items.length) };
   }
 
@@ -575,18 +380,17 @@ export class PtvV12Adapter implements PtvAdapter {
         const missing = [...incomplete].filter(
           (key) => !this.codeNames.get(environment, kind, key),
         );
-        const batches: Array<{ param: 'codes' | 'uris'; values: string[] }> = [];
-        for (const param of ['uris', 'codes'] as const) {
-          const values = missing.filter((key) => isUri(key) === (param === 'uris'));
-          for (let i = 0; i < values.length; i += CODE_FILTER_MAX_ITEMS) {
-            batches.push({ param, values: values.slice(i, i + CODE_FILTER_MAX_ITEMS) });
-          }
-        }
+        const batches = (['uris', 'codes'] as const).flatMap((param) =>
+          chunk(
+            missing.filter((key) => isUri(key) === (param === 'uris')),
+            CODE_FILTER_MAX_ITEMS,
+          ).map((values) => ({ param, values })),
+        );
         await Promise.all(
           batches.map(async ({ param, values }) => {
             try {
               const found = (
-                await this.fetchAllRaw<unknown>(V12_REFERENCE_CODE_LIST_PATHS[kind]!, 100, {
+                await this.fetchAllRaw<unknown>(V12_REFERENCE_CODE_LIST_PATHS[kind]!, {
                   [param]: values,
                 })
               ).map(referenceCodeToDomain);
@@ -637,17 +441,30 @@ export class PtvV12Adapter implements PtvAdapter {
       if (key) this.codeNames.set(environment, kind, key, entry);
     }
   }
+
+  private async cacheCodeEntries(kind: CodeListKind, entries: CodeListEntry[]): Promise<void> {
+    for (const entry of entries) this.cacheCodeEntry(kind, entry);
+    await this.codeNames.flush();
+  }
+
+  /** A GET that reads PTV's 404 as `null`. */
+  private async getOrNull<W>(path: string): Promise<W | null> {
+    try {
+      return await this.client.get<W>(path);
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+  }
+
   /**
    * Fetch every page of a v12 paginated endpoint. Page 1 tells us
    * totalPages/totalItems; the remaining pages are fetched with bounded
    * concurrency so a full catalogue scan (e.g. organisation name search,
    * which v12 cannot do server-side) stays fast.
    */
-  private async fetchAllRaw<T>(
-    path: string,
-    pageSize = 100,
-    query?: Record<string, string | number | readonly string[] | undefined>,
-  ): Promise<T[]> {
+  private async fetchAllRaw<T>(path: string, query?: V12Query): Promise<T[]> {
+    const pageSize = V12_MAX_PAGE_SIZE;
     const first = await this.client.get<unknown>(path, { ...query, page: 1, pageSize });
     const firstItems = extractItems(first) as T[];
     const pageCount = extractPageCount(first, firstItems.length, pageSize);
@@ -659,13 +476,41 @@ export class PtvV12Adapter implements PtvAdapter {
     return [...firstItems, ...rest.flat()];
   }
 
-  private async fetchAll<T>(
-    path: string,
-    map: (item: unknown) => T,
-    pageSize = 100,
-    query?: Record<string, string | number | readonly string[] | undefined>,
+  /** Every search row, filtered to one organisation server-side when given. */
+  private searchRows<W>(path: string, organizationId: string | undefined): Promise<W[]> {
+    return this.fetchAllRaw<W>(
+      path,
+      organizationId ? { organizationContentIds: [organizationId] } : undefined,
+    );
+  }
+
+  /** `searchRows`, downloaded once per organisation (see `organizationList`). */
+  private organizationSearch<W>(path: string, organizationId: string | undefined): Promise<W[]> {
+    return this.organizationList(path, organizationId, () =>
+      this.searchRows<W>(path, organizationId),
+    );
+  }
+
+  /**
+   * `${detailPath}/search` mapped to the domain, with incomplete rows
+   * re-read from `${detailPath}/{id}` (see `hydrate`); downloaded once per
+   * organisation.
+   */
+  private hydratedSearch<W, T extends { id: string }>(
+    detailPath: string,
+    organizationId: string | undefined,
+    map: (wire: W) => T,
+    isComplete: (item: T) => boolean,
   ): Promise<T[]> {
-    return (await this.fetchAllRaw<unknown>(path, pageSize, query)).map(map);
+    const path = `${detailPath}/search`;
+    return this.organizationList(path, organizationId, async () =>
+      this.hydrate(
+        (await this.searchRows<W>(path, organizationId)).map(map),
+        isComplete,
+        detailPath,
+        map,
+      ),
+    );
   }
 
   /**
@@ -683,12 +528,8 @@ export class PtvV12Adapter implements PtvAdapter {
   ): Promise<T[]> {
     return mapWithConcurrency(items, PAGE_FETCH_CONCURRENCY, async (item) => {
       if (isComplete(item)) return item;
-      try {
-        return map(await this.client.get<W>(`${detailPath}/${item.id}`));
-      } catch (err) {
-        if (isNotFound(err)) return item;
-        throw err;
-      }
+      const wire = await this.getOrNull<W>(`${detailPath}/${item.id}`);
+      return wire === null ? item : map(wire);
     });
   }
 
@@ -714,63 +555,40 @@ export class PtvV12Adapter implements PtvAdapter {
   }
 
   async applyServiceChange(_proposal: ServiceChangeProposal): Promise<ApplyServiceChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async createService(_service: NewService): Promise<ApplyServiceChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async applyChannelChange(_proposal: ChannelChangeProposal): Promise<ApplyChannelChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async createChannel(_channel: NewChannel): Promise<ApplyChannelChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async applyConnectionChange(
     _proposal: ConnectionChangeProposal,
   ): Promise<ApplyConnectionChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async applyOrganizationChange(
     _proposal: OrganizationChangeProposal,
   ): Promise<ApplyOrganizationChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 
   async createOrganization(_organization: NewOrganization): Promise<ApplyOrganizationChangeResult> {
-    throw new Error('PTV v12 write operations are not enabled yet');
+    throw new Error(WRITES_NOT_ENABLED);
   }
 }
 
-function extractItems(raw: unknown): unknown[] {
-  if (Array.isArray(raw)) return raw;
-  if (!raw || typeof raw !== 'object') return [];
-  const object = raw as {
-    items?: unknown[];
-    content?: unknown[];
-    data?: unknown[];
-    results?: unknown[];
-  };
-  return object.items ?? object.content ?? object.data ?? object.results ?? [];
-}
-
-function extractTotalCount(raw: unknown, fallback: number): number {
-  if (!raw || typeof raw !== 'object') return fallback;
-  // v12's paginated responses carry `totalItems` (see PaginatedType in
-  // docs/ptv-api-documentation.json). Missing it made every catalogue scan
-  // stop after the first page of 100.
-  const object = raw as {
-    totalItems?: number;
-    totalCount?: number;
-    totalElements?: number;
-    total?: number;
-  };
-  return object.totalItems ?? object.totalCount ?? object.totalElements ?? object.total ?? fallback;
-}
+/** `serviceContentIds` / `channelContentIds` maxItems in the v12 spec. */
+const CONNECTION_SEARCH_MAX_IDS = 20;
 
 /** `codes` / `uris` maxItems on the v12 reference-data endpoints. */
 const CODE_FILTER_MAX_ITEMS = 20;
@@ -801,28 +619,6 @@ function isIncomplete(kind: CodeListKind, entry: CodeListEntry): boolean {
   );
 }
 
-function isUri(value: string): boolean {
-  return /^https?:\/\//.test(value);
-}
-/** `serviceContentIds` / `channelContentIds` maxItems in the v12 spec. */
-const CONNECTION_SEARCH_MAX_IDS = 20;
-
-function extractPageCount(raw: unknown, firstPageLength: number, pageSize: number): number {
-  if (firstPageLength === 0) return 1;
-  if (raw && typeof raw === 'object') {
-    const totalPages = (raw as { totalPages?: unknown }).totalPages;
-    if (typeof totalPages === 'number' && Number.isFinite(totalPages))
-      return Math.max(1, totalPages);
-  }
-  return Math.max(1, Math.ceil(extractTotalCount(raw, firstPageLength) / pageSize));
-}
-
-function organizationQuery(
-  organizationId: string | undefined,
-): { organizationContentIds: string[] } | undefined {
-  return organizationId ? { organizationContentIds: [organizationId] } : undefined;
-}
-
 function hasNames(item: { names: Record<string, string | undefined> }): boolean {
   return Object.keys(item.names).length > 0;
 }
@@ -831,351 +627,19 @@ function normalizeSearchText(value: string): string {
   return value.normalize('NFKC').trim().toLocaleLowerCase('fi-FI');
 }
 
-/** Whether any of `texts` contains `query`, compared case- and width-insensitively. */
-function matchesText(query: string, ...texts: Array<string | undefined>): boolean {
-  const needle = normalizeSearchText(query);
-  return texts.some((value) => value !== undefined && normalizeSearchText(value).includes(needle));
-}
-
-function mapV12ServiceChannel(wire: V12ServiceChannelWire): ServiceChannel {
-  const id = wire.contentId ?? wire.id;
-  if (!id) throw new Error('PTV v12 service channel response has no contentId');
-  return {
-    id,
-    ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId: organizationIdOf(wire),
-    channelType: normalizeChannelType(wire.serviceChannelType ?? wire.channelType ?? wire.type),
-    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    descriptions: localized(
-      wire.descriptions ?? wire.description ?? wire.languageVersions,
-      'description',
-    ),
-    languages:
-      wire.languages ??
-      wire.serviceLanguages ??
-      (wire.languageVersions ? Object.keys(wire.languageVersions) : []),
-    ...modifiedAtField(wire),
-  };
-}
-
-function mapV12Organization(wire: V12OrganizationWire): Organization {
-  const id = wire.contentId ?? wire.id;
-  if (!id) throw new Error('PTV v12 organization response has no contentId');
-  const parentOrganizationId =
-    wire.parentOrganizationContentId ??
-    wire.parentOrganizationId ??
-    wire.parentOrganization?.contentId ??
-    wire.parentOrganization?.id;
-  return {
-    id,
-    ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    ...(parentOrganizationId ? { parentOrganizationId } : {}),
-    ...((wire.businessCode ?? wire.businessId)
-      ? { businessCode: wire.businessCode ?? wire.businessId }
-      : {}),
-    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    ...modifiedAtField(wire),
-  };
-}
-
-function mapV12ServiceCollection(wire: V12ServiceCollectionWire): ServiceCollection {
-  const id = wire.contentId ?? wire.id;
-  if (!id) throw new Error('PTV v12 service collection response has no contentId');
-  return {
-    id,
-    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    descriptions: localized(
-      wire.descriptions ?? wire.description ?? wire.languageVersions,
-      'description',
-    ),
-    serviceIds: wire.items
-      ? wire.items.flatMap((item) =>
-          item.itemType === 'Service' && item.contentId ? [item.contentId] : [],
-        )
-      : ids(wire.serviceIds ?? wire.services),
-    ...modifiedAtField(wire),
-  };
-}
-
-function mapV12GeneralDescription(wire: V12GeneralDescriptionWire): GeneralDescription {
-  const id = wire.contentId ?? wire.id;
-  if (!id) throw new Error('PTV v12 general description response has no contentId');
-  return {
-    id,
-    serviceType: normalizeServiceType(wire.serviceType ?? wire.type),
-    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names: localized(wire.names ?? wire.name ?? wire.languageVersions, 'name'),
-    descriptions: localized(
-      wire.descriptions ?? wire.description ?? wire.languageVersions,
-      'description',
-    ),
-    serviceClasses: codeEntries(wire.serviceClasses),
-    ontologyTerms: codeEntries(wire.ontologyTerms),
-    targetGroups: codeEntries(wire.targetGroups),
-    lifeEvents: codeEntries(wire.lifeEvents),
-    industrialClasses: codeEntries(wire.industrialClasses),
-    ...modifiedAtField(wire),
-  };
-}
-
-const V12_REFERENCE_CODE_LIST_PATHS: Record<string, string> = {
-  countries: '/api/v12/country-codes',
-  industrialClasses: '/api/v12/industrial-classes',
-  languages: '/api/v12/language-codes',
-  lifeEvents: '/api/v12/life-events',
-  municipalities: '/api/v12/municipality-codes',
-  ontologyTerms: '/api/v12/ontology-terms',
-  postalCodes: '/api/v12/postal-codes',
-  regions: '/api/v12/region-codes',
-  serviceClasses: '/api/v12/service-classes',
-  targetGroups: '/api/v12/target-groups',
-  wellbeingServicesCounties: '/api/v12/wellbeing-services-county-codes',
-};
-
-function referenceCodeToDomain(value: unknown): CodeListEntry {
-  if (typeof value === 'string') return { code: value, names: {} };
-  if (!value || typeof value !== 'object') return { names: {} };
-  const item = value as Record<string, unknown>;
-  const code = firstString(item.code, item.contentId, item.id, item.value);
-  return {
-    ...(code ? { code } : {}),
-    ...(typeof item.uri === 'string' ? { uri: item.uri } : {}),
-    names: localized(item.names ?? item.name ?? item.languageVersions, 'name'),
-  };
-}
-
-function organizationIdOf(wire: {
-  organizationId?: string;
-  organizationContentId?: string;
-  organization?: {
-    contentId?: string;
-    id?: string;
-    organizationId?: string;
-    organizationContentId?: string;
-  };
-}): string {
-  return (
-    wire.organizationContentId ??
-    wire.organizationId ??
-    wire.organization?.organizationContentId ??
-    wire.organization?.contentId ??
-    wire.organization?.id ??
-    wire.organization?.organizationId ??
-    ''
-  );
-}
-
-function modifiedAtOf(wire: {
-  modifiedAt?: string | number;
-  modified?: string | number;
-  lastModified?: string | number;
-  lastModifiedAt?: string | number;
-  updatedAt?: string | number;
-}): string | undefined {
-  const value =
-    wire.modifiedAt ?? wire.modified ?? wire.lastModified ?? wire.lastModifiedAt ?? wire.updatedAt;
-  if (typeof value === 'string') {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    const millis = value < 1_000_000_000_000 ? value * 1000 : value;
-    const date = new Date(millis);
-    if (!Number.isNaN(date.getTime()) && date.getTime() !== 0) return date.toISOString();
-  }
-  return undefined;
-}
-
-function modifiedAtField(wire: Parameters<typeof modifiedAtOf>[0]): { modifiedAt?: string } {
-  const modifiedAt = modifiedAtOf(wire);
-  return modifiedAt ? { modifiedAt } : {};
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === 'string' && value.length > 0);
-}
-
-function mapV12Connection(wire: unknown): Connection {
-  const value = (wire && typeof wire === 'object' ? wire : {}) as Record<string, unknown>;
-  const service = value.service as Record<string, unknown> | undefined;
-  const channel = value.channel as Record<string, unknown> | undefined;
-  const serviceId =
-    value.serviceContentId ?? value.serviceId ?? service?.contentId ?? service?.id ?? '';
-  const channelId =
-    value.channelContentId ??
-    value.channelId ??
-    value.serviceChannelId ??
-    channel?.contentId ??
-    channel?.id ??
-    '';
-  if (!serviceId || !channelId)
-    throw new Error('PTV v12 connection response has no service/channel id');
-  const descriptions = localized(value.languageVersions, 'description');
-  const timestamp = value.modifiedAt ?? value.publishedAt;
-  const modifiedAt = modifiedAtOf(typeof timestamp === 'string' ? { modifiedAt: timestamp } : {});
-  return {
-    serviceId: String(serviceId),
-    channelId: String(channelId),
-    ...(Object.keys(descriptions).length > 0 ? { descriptions } : {}),
-    ...(modifiedAt ? { modifiedAt } : {}),
-  };
-}
-
-function normalizeChannelType(value: string | undefined): ServiceChannel['channelType'] {
-  if (
-    value === 'Phone' ||
-    value === 'PrintableForm' ||
-    value === 'ServiceLocation' ||
-    value === 'WebPage'
-  )
-    return value;
-  // v12's wire name for the phone channel subtype (see ChannelResponse's discriminator).
-  if (value === 'TelephoneService') return 'Phone';
-  return 'EChannel';
-}
 /**
- * Map the v12 wire representation into the stable PTV domain model.
- *
- * v12 deliberately changed localized content from v11's array of
- * {language,value} records to languageVersions, e.g.
- * { fi: { name, summary, description }, sv: { ... } }.
- * The old mapper treated those nested objects as non-string values and
- * consequently discarded every localized field.
+ * Whether any text in `fields` (localized texts) contains `query`, compared
+ * case- and width-insensitively. No query matches everything.
  */
-export function mapV12Service(wire: V12ServiceWire): Service {
-  const id = wire.contentId ?? wire.id;
-  if (!id) throw new Error('PTV v12 service response has no contentId');
-
-  const languageVersions = wire.languageVersions;
-  const names = localized(wire.names ?? wire.name ?? languageVersions, 'name');
-  const summaries = localized(wire.summaries ?? wire.summary ?? languageVersions, 'summary');
-  const descriptions = localized(
-    wire.descriptions ?? wire.description ?? languageVersions,
-    'description',
-  );
-  const languages =
-    wire.languages ??
-    wire.serviceLanguages ??
-    (languageVersions ? Object.keys(languageVersions) : []);
-
-  return {
-    id,
-    ...(wire.sourceId ? { sourceId: wire.sourceId } : {}),
-    organizationId: organizationIdOf(wire),
-    serviceType: normalizeServiceType(wire.serviceType ?? wire.type),
-    publishingStatus: normalizePublishingStatus(wire.publishingStatus),
-    names,
-    summaries,
-    descriptions,
-    serviceClasses: codeEntries(wire.serviceClasses),
-    ontologyTerms: codeEntries(wire.ontologyTerms),
-    targetGroups: codeEntries(wire.targetGroups),
-    lifeEvents: codeEntries(wire.lifeEvents),
-    industrialClasses: codeEntries(wire.industrialClasses),
-    languages,
-    ...((wire.generalDescriptionContentId ?? wire.generalDescriptionId)
-      ? { generalDescriptionId: (wire.generalDescriptionContentId ?? wire.generalDescriptionId)! }
-      : {}),
-    serviceChannelIds: ids(wire.serviceChannelIds ?? wire.serviceChannels),
-    ...modifiedAtField(wire),
-  };
-}
-
-/** PTV sends `""` for missing translations; treat those as absent. */
-function localized(value: unknown, preferredField?: string): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(localizedWithEmpty(value, preferredField)).filter(
-      ([, text]) => text.trim() !== '',
+function matchesQuery(
+  query: string | undefined,
+  ...fields: Array<Record<string, string | undefined>>
+): boolean {
+  if (!query) return true;
+  const needle = normalizeSearchText(query);
+  return fields.some((field) =>
+    Object.values(field).some(
+      (value) => value !== undefined && normalizeSearchText(value).includes(needle),
     ),
   );
-}
-
-function localizedWithEmpty(value: unknown, preferredField?: string): Record<string, string> {
-  if (!value) return {};
-
-  if (Array.isArray(value)) {
-    return Object.fromEntries(
-      value.flatMap((entry) => {
-        if (!entry || typeof entry !== 'object') return [];
-        const e = entry as Record<string, unknown>;
-        const language = String(e.languageCode ?? e.language ?? e.lang ?? '');
-        const text = preferredField ? e[preferredField] : (e.value ?? e.text ?? e.description);
-        return language && typeof text === 'string' ? [[language, text]] : [];
-      }),
-    );
-  }
-
-  if (typeof value === 'object') {
-    const object = value as Record<string, unknown>;
-
-    if (preferredField && typeof object[preferredField] === 'string') {
-      return { fi: object[preferredField] as string };
-    }
-
-    if (preferredField && 'languageVersions' in object) {
-      return localized(object.languageVersions, preferredField);
-    }
-
-    const entries = Object.entries(object).flatMap(([language, entry]) => {
-      if (typeof entry === 'string') return [[language, entry] as [string, string]];
-      if (!entry || typeof entry !== 'object') return [];
-      const e = entry as Record<string, unknown>;
-      const text = preferredField ? e[preferredField] : (e.value ?? e.text ?? e.description);
-      return typeof text === 'string' ? [[language, text] as [string, string]] : [];
-    });
-    return Object.fromEntries(entries);
-  }
-
-  if (typeof value === 'string') return { fi: value };
-  return {};
-}
-
-function codeEntries(values: unknown[] | undefined): CodeListEntry[] {
-  if (!values) return [];
-
-  return values.map((value) => {
-    // v12 sends bare strings: a URI for ontology terms and industrial
-    // classes, a code for the rest. withCodeNames fills in the other half.
-    if (typeof value === 'string') {
-      return isUri(value) ? { uri: value, names: {} } : { code: value, names: {} };
-    }
-    if (!value || typeof value !== 'object') return { names: {} };
-
-    const v = value as Record<string, unknown>;
-    const code = firstString(v.code, v.contentId, v.id, v.value);
-    const names = localized(
-      v.names ?? v.name ?? v.languageVersions ?? v.displayName ?? v.label,
-      'name',
-    );
-
-    return {
-      ...(code ? { code } : {}),
-      ...(typeof v.uri === 'string' ? { uri: v.uri } : {}),
-      names,
-    };
-  });
-}
-
-function ids(values: Array<string | { contentId?: string; id?: string }> | undefined): string[] {
-  return (values ?? []).flatMap((value) => {
-    if (typeof value === 'string') return [value];
-    const id = value.contentId ?? value.id;
-    return id ? [id] : [];
-  });
-}
-
-function normalizeServiceType(value: string | undefined): Service['serviceType'] {
-  if (value === 'ProfessionalQualification' || value === 'PermitOrObligation') return value;
-  // v12's wire name for the same subtype.
-  if (value === 'PermitOrOtherObligation') return 'PermitOrObligation';
-  return 'Service';
-}
-
-function normalizePublishingStatus(value: string | undefined): Service['publishingStatus'] {
-  if (value === 'Draft' || value === 'Modified' || value === 'Archived' || value === 'Withdrawn')
-    return value;
-  return 'Published';
 }
