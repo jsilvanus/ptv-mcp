@@ -20,11 +20,141 @@ export interface McpOAuthRouteOptions {
   publicUrl: string;
   tenantService: TenantService;
   adapterConfigService: PtvAdapterConfigService;
+  /** Set when OIDC sign-in is configured: the sign-in page then shows an SSO button with this label. */
+  oidcButtonLabel?: string;
 }
 
-function html(body: string) {
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Validates a pending authorization request's parameters, as the consent
+ * form carries them (`encodeAuthorizationRequest`): the same checks
+ * `GET /oauth/authorize` makes, apart from `response_type`. Returns an error
+ * message, or null when the request is valid. Also used by `/oidc/login`
+ * to re-validate the request it is handed.
+ */
+export async function authorizationRequestError(
+  q: Record<string, string | undefined>,
+  oauthService: OAuthService,
+  publicUrl: string,
+): Promise<string | null> {
+  if (!q.client_id || !q.redirect_uri || !q.code_challenge) {
+    return 'response_type=code, client_id, redirect_uri and code_challenge are required';
+  }
+  if (!isSupportedResource(q.resource, publicUrl)) return 'Unsupported resource';
+  if (!(await oauthService.validateClient(q.client_id, q.redirect_uri))) {
+    return 'Unknown client or redirect_uri';
+  }
+  if (q.code_challenge_method !== 'S256') return 'Only S256 PKCE is supported';
+  return null;
+}
+
+/** The consent form's hidden `oauth` field: the pending request's parameters, base64url-encoded. */
+export function encodeAuthorizationRequest(q: Record<string, string | undefined>): string {
+  const params = new URLSearchParams({
+    client_id: q.client_id ?? '',
+    redirect_uri: q.redirect_uri ?? '',
+    code_challenge: q.code_challenge ?? '',
+    code_challenge_method: 'S256',
+    scope: q.scope ?? 'mcp',
+    ...(q.resource ? { resource: q.resource } : {}),
+    ...(q.state ? { state: q.state } : {}),
+  });
+  return Buffer.from(params.toString()).toString('base64url');
+}
+
+/** Inverse of `encodeAuthorizationRequest`; null when the value is not decodable. */
+export function decodeAuthorizationRequest(encoded: string): Record<string, string> | null {
+  try {
+    return Object.fromEntries(
+      new URLSearchParams(Buffer.from(encoded, 'base64url').toString('utf8')),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export interface ConnectionSelectionDeps {
+  oauthService: OAuthService;
+  tenantService: TenantService;
+}
+
+/**
+ * Where an authorization continues once the human is signed in (password
+ * form or OIDC): the page that asks which organisation, environment and API
+ * versions this OAuth connection represents. `q` is the decoded pending
+ * request, already validated.
+ */
+export async function connectionSelectionPage(
+  deps: ConnectionSelectionDeps,
+  userId: string,
+  q: Record<string, string>,
+): Promise<string> {
+  const clientId = q.client_id;
+  const redirectUri = q.redirect_uri;
+  const codeChallenge = q.code_challenge;
+  if (!clientId || !redirectUri || !codeChallenge) {
+    throw new Error('Invalid authorization request');
+  }
+  // Users without a membership can still read public PTV data.
+  const memberships = await deps.tenantService.listTenantsForUser(userId);
+
+  const selectionToken = await deps.oauthService.createTenantSelectionToken(userId, {
+    clientId,
+    redirectUri,
+    codeChallenge,
+    ...(q.state ? { state: q.state } : {}),
+    scope: q.scope ?? 'mcp',
+  });
+
+  const tenantOptions =
+    memberships
+      .map(
+        (membership) =>
+          `<option value="${escapeHtml(membership.tenantId)}">${escapeHtml(membership.tenantName)} (${escapeHtml(membership.tenantSlug)}) — ${escapeHtml(membership.role)}</option>`,
+      )
+      .join('') +
+    // Value '' = no organisation: public, published data via v11, read-only.
+    '<option value="">No organisation: public PTV data only (v11, read-only)</option>';
+
+  return html(`
+        <h1>Choose PTV connection</h1>
+        <p>Select the organisation, environment, and independently which API version handles reads and writes. You can select NONE for writes.</p>
+        <form method="post" action="/oauth/authorize">
+          <input type="hidden" name="selection_token" value="${escapeHtml(selectionToken)}">
+          <label>Organisation</label>
+          <select name="tenant_id" id="tenant_id">${tenantOptions}</select>
+          <label>Environment</label>
+          <select name="environment" required>
+            <option value="test">Test</option>
+            <option value="production" selected>Production</option>
+          </select>
+          <label>Read API version</label>
+          <select name="read_api_version" required>
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
+          <label>Write API version</label>
+          <select name="write_api_version">
+            <option value="">NONE — read-only</option>
+            <option value="v11">v11</option>
+            <option value="v12">v12</option>
+          </select>
+          <button type="submit">Continue</button>
+        </form>
+      `);
+}
+
+export function html(body: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>ptv-mcp login</title>
-<style>body{font-family:system-ui;max-width:420px;margin:8rem auto;padding:2rem}input{display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem;padding:.7rem}button{padding:.7rem 1.2rem}p.error{color:#b00020}</style>
+<style>body{font-family:system-ui;max-width:420px;margin:8rem auto;padding:2rem}input{display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem;padding:.7rem}button,a.sso{padding:.7rem 1.2rem}a.sso{display:inline-block;border:1px solid #333;border-radius:4px;color:inherit;text-decoration:none}p.error{color:#b00020}</style>
 </head><body>${body}</body></html>`;
 }
 
@@ -80,36 +210,26 @@ export async function mcpOAuthRoutes(
     '/oauth/authorize',
     async (request, reply) => {
       const q = request.query;
-      if (q.response_type !== 'code' || !q.client_id || !q.redirect_uri || !q.code_challenge) {
+      if (q.response_type !== 'code') {
         return reply.badRequest(
           'response_type=code, client_id, redirect_uri and code_challenge are required',
         );
       }
-      if (!isSupportedResource(q.resource, options.publicUrl)) {
-        return reply.badRequest('Unsupported resource');
-      }
-      if (!(await options.oauthService.validateClient(q.client_id, q.redirect_uri))) {
-        return reply.badRequest('Unknown client or redirect_uri');
-      }
-      if (q.code_challenge_method !== 'S256')
-        return reply.badRequest('Only S256 PKCE is supported');
+      const error = await authorizationRequestError(q, options.oauthService, options.publicUrl);
+      if (error) return reply.badRequest(error);
 
-      const params = new URLSearchParams({
-        client_id: q.client_id,
-        redirect_uri: q.redirect_uri,
-        code_challenge: q.code_challenge,
-        code_challenge_method: 'S256',
-        scope: q.scope ?? 'mcp',
-        ...(q.resource ? { resource: q.resource } : {}),
-        ...(q.state ? { state: q.state } : {}),
-      });
+      const oauth = encodeAuthorizationRequest(q);
+      const sso = options.oidcButtonLabel
+        ? `<p><a class="sso" href="/oidc/login?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p><p>or sign in with your ptv-mcp password:</p>`
+        : '';
 
       return reply.type('text/html').send(
         html(`
       <h1>Sign in to ptv-mcp</h1>
       <p>This authorizes the MCP client to use your ptv-mcp account.</p>
+      ${sso}
       <form method="post" action="/oauth/authorize">
-        <input type="hidden" name="oauth" value="${Buffer.from(params.toString()).toString('base64url')}">
+        <input type="hidden" name="oauth" value="${oauth}">
         <label>Email</label><input name="email" type="email" autocomplete="username" required>
         <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
         <button type="submit">Sign in and authorize</button>
@@ -225,20 +345,11 @@ export async function mcpOAuthRoutes(
 
     if (!request.body.oauth || !request.body.email || !request.body.password)
       return reply.badRequest('Login required');
-    let q: Record<string, string>;
-    try {
-      q = Object.fromEntries(
-        new URLSearchParams(Buffer.from(request.body.oauth, 'base64url').toString('utf8')),
-      );
-    } catch {
-      return reply.badRequest('Invalid authorization request');
-    }
+    const q = decodeAuthorizationRequest(request.body.oauth);
+    if (!q) return reply.badRequest('Invalid authorization request');
 
     try {
-      const clientId = q.client_id;
-      const redirectUri = q.redirect_uri;
-      const codeChallenge = q.code_challenge;
-      if (!clientId || !redirectUri || !codeChallenge)
+      if (!q.client_id || !q.redirect_uri || !q.code_challenge)
         return reply.badRequest('Invalid authorization request');
       if (!isSupportedResource(q.resource, options.publicUrl))
         return reply.badRequest('Unsupported resource');
@@ -249,55 +360,8 @@ export async function mcpOAuthRoutes(
         request.body.email,
         request.body.password,
       );
-      // Users without a membership can still read public PTV data.
-      const memberships = await options.tenantService.listTenantsForUser(userId);
 
-      const selectionToken = await options.oauthService.createTenantSelectionToken(userId, {
-        clientId,
-        redirectUri,
-        codeChallenge,
-        ...(q.state ? { state: q.state } : {}),
-        scope: q.scope ?? 'mcp',
-      });
-
-      const tenantOptions =
-        memberships
-          .map(
-            (membership) =>
-              `<option value="${membership.tenantId}">${membership.tenantName} (${membership.tenantSlug}) — ${membership.role}</option>`,
-          )
-          .join('') +
-        // Value '' = no organisation: public, published data via v11, read-only.
-        '<option value="">No organisation: public PTV data only (v11, read-only)</option>';
-
-      return reply.type('text/html').send(
-        html(`
-        <h1>Choose PTV connection</h1>
-        <p>Select the organisation, environment, and independently which API version handles reads and writes. You can select NONE for writes.</p>
-        <form method="post" action="/oauth/authorize">
-          <input type="hidden" name="selection_token" value="${selectionToken}">
-          <label>Organisation</label>
-          <select name="tenant_id" id="tenant_id">${tenantOptions}</select>
-          <label>Environment</label>
-          <select name="environment" required>
-            <option value="test">Test</option>
-            <option value="production" selected>Production</option>
-          </select>
-          <label>Read API version</label>
-          <select name="read_api_version" required>
-            <option value="v11">v11</option>
-            <option value="v12">v12</option>
-          </select>
-          <label>Write API version</label>
-          <select name="write_api_version">
-            <option value="">NONE — read-only</option>
-            <option value="v11">v11</option>
-            <option value="v12">v12</option>
-          </select>
-          <button type="submit">Continue</button>
-        </form>
-      `),
-      );
+      return reply.type('text/html').send(await connectionSelectionPage(options, userId, q));
     } catch (err) {
       request.log.error({ err }, 'OAuth authorization failed');
       return reply

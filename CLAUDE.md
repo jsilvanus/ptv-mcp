@@ -255,6 +255,12 @@ equals the proposal.
 - `src/app.ts` wires all Fastify plugins/routes together (`buildApp`) —
   the single place that shows how every module is assembled; start here
   when tracing how a request flows end to end.
+- `src/oidc/` + `src/routes/oidc.ts` — optional single sign-on: ptv-mcp is
+  an OpenID Connect Relying Party (never a provider), on only when
+  `OIDC_ISSUER` is set. Web sign-ins hand the SPA a one-time code
+  (`/login#oidc=…` → `POST /oidc/session`); MCP sign-ins continue at the
+  same `connectionSelectionPage` as the password form and open no web-UI
+  session. See README "Single sign-on" and `EXECUTION_LOG.md`.
 - `src/audit/auditService.ts` — append-only audit log; every mutating
   action (proposal queue/resolve, credential changes, tenant/membership
   changes) should record one entry with a `correlationId` shared across a

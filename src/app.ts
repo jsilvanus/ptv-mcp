@@ -32,6 +32,9 @@ import { ptvV11ApiUserRoutes } from './routes/ptvV11ApiUser.js';
 import { mcpRoutes } from './mcp/httpTransport.js';
 import { mcpOAuthRoutes } from './mcp/oauthRoutes.js';
 import { OAuthService } from './mcp/oauthService.js';
+import { OidcClient } from './oidc/oidcClient.js';
+import { OidcService } from './oidc/oidcService.js';
+import { oidcRoutes } from './routes/oidc.js';
 
 export interface BuildAppOptions {
   config: Pick<
@@ -46,6 +49,7 @@ export interface BuildAppOptions {
     | 'ptvV11OAuthRedirectUri'
     | 'mcpPublicUrl'
     | 'webDevUrl'
+    | 'oidc'
   >;
   db?: Database;
   mailer?: Mailer;
@@ -132,7 +136,26 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     tenantService,
     adapterConfigService,
     publicUrl: config.mcpPublicUrl,
+    ...(config.oidc ? { oidcButtonLabel: config.oidc.buttonLabel } : {}),
   });
+  if (config.oidc) {
+    await app.register(oidcRoutes, {
+      oidcClient: new OidcClient(
+        config.oidc,
+        `${config.mcpPublicUrl.replace(/\/+$/, '')}/oidc/callback`,
+      ),
+      oidcService: new OidcService(db, {
+        createUsers: config.oidc.createUsers,
+        trustEmail: config.oidc.trustEmail,
+      }),
+      authService,
+      oauthService,
+      tenantService,
+      publicUrl: config.mcpPublicUrl,
+      buttonLabel: config.oidc.buttonLabel,
+      secureCookies: config.nodeEnv === 'production',
+    });
+  }
   await app.register(mcpRoutes, {
     jwtSecret: config.jwtSecret,
     oauthService,

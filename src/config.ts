@@ -28,6 +28,76 @@ export interface AppConfig {
    * for browser page loads under /tenants and /ptv-connections.
    */
   webDevUrl?: string;
+  /**
+   * OpenID Connect sign-in (this app is a Relying Party toward an IdP such as
+   * authentik). Undefined when `OIDC_ISSUER` is unset: no SSO button, no
+   * `/oidc/*` routes.
+   */
+  oidc?: OidcConfig;
+}
+
+export interface OidcConfig {
+  issuer: string;
+  clientId: string;
+  /** Unset = public client (PKCE only). */
+  clientSecret?: string;
+  scopes: string;
+  buttonLabel: string;
+  /** Create a local account for an IdP user who has none. */
+  createUsers: boolean;
+  /** Link to an existing account by email even when `email_verified` is not true. */
+  trustEmail: boolean;
+}
+
+function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  throw new Error(`Invalid ${name}: expected true or false, got ${value}`);
+}
+
+/** `OIDC_*` variables; undefined when `OIDC_ISSUER` is unset or empty (OIDC off). */
+export function loadOidcConfig(
+  env: NodeJS.ProcessEnv,
+  nodeEnv: AppConfig['nodeEnv'],
+): OidcConfig | undefined {
+  const issuer = env.OIDC_ISSUER?.trim();
+  if (!issuer) return undefined;
+
+  let issuerUrl: URL;
+  try {
+    issuerUrl = new URL(issuer);
+  } catch {
+    throw new Error(`Invalid OIDC_ISSUER: not an absolute URL: ${issuer}`);
+  }
+  if (issuerUrl.protocol !== 'https:' && issuerUrl.protocol !== 'http:') {
+    throw new Error(`Invalid OIDC_ISSUER: must be an http(s) URL: ${issuer}`);
+  }
+  if (nodeEnv === 'production' && issuerUrl.protocol !== 'https:') {
+    throw new Error('Invalid OIDC_ISSUER: https is required in production');
+  }
+
+  const clientId = env.OIDC_CLIENT_ID?.trim();
+  if (!clientId) {
+    throw new Error('OIDC_CLIENT_ID is required when OIDC_ISSUER is set');
+  }
+
+  const scopes = (env.OIDC_SCOPES?.trim() || 'openid email profile').split(/\s+/).join(' ');
+  if (!scopes.split(' ').includes('openid')) {
+    throw new Error('Invalid OIDC_SCOPES: must include openid');
+  }
+
+  const clientSecret = env.OIDC_CLIENT_SECRET?.trim();
+  return {
+    issuer,
+    clientId,
+    ...(clientSecret ? { clientSecret } : {}),
+    scopes,
+    buttonLabel: env.OIDC_BUTTON_LABEL?.trim() || 'Sign in with single sign-on',
+    createUsers: parseBoolean('OIDC_CREATE_USERS', env.OIDC_CREATE_USERS, false),
+    trustEmail: parseBoolean('OIDC_TRUST_EMAIL', env.OIDC_TRUST_EMAIL, false),
+  };
 }
 
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
@@ -77,6 +147,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid PORT: ${env.PORT}`);
   }
 
+  const oidc = loadOidcConfig(env, nodeEnv);
+
   return {
     nodeEnv,
     // Loopback by default: outside a container the API sits behind a reverse proxy. Containers set HOST=0.0.0.0.
@@ -91,5 +163,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
     mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
     webDevUrl: env.WEB_DEV_URL ?? 'http://127.0.0.1:5173',
+    ...(oidc ? { oidc } : {}),
   };
 }

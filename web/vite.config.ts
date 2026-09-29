@@ -36,6 +36,8 @@ export default defineConfig({
       '/mcp': target,
       '/oauth': target,
       '/.well-known': target,
+      // OIDC sign-in (only served when the API has OIDC_ISSUER set).
+      '/oidc': target,
     },
   },
 });

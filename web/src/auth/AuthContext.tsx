@@ -10,6 +10,8 @@ interface LoginResponse {
 interface AuthContextValue {
   isAuthenticated: boolean;
   login(email: string, password: string): Promise<void>;
+  /** Finishes a single sign-on (OIDC) sign-in: exchanges the one-time code from `/login#oidc=...`. */
+  loginWithOidcCode(code: string): Promise<void>;
   register(email: string, name: string, password: string): Promise<void>;
   logout(): Promise<void>;
 }
@@ -24,6 +26,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
+    setSession(session);
+    setIsAuthenticated(true);
+  }
+
+  async function loginWithOidcCode(code: string): Promise<void> {
+    const session = await apiFetch<LoginResponse>(
+      '/oidc/session',
+      { method: 'POST', body: JSON.stringify({ code }) },
+      false,
+    );
     setSession(session);
     setIsAuthenticated(true);
   }
@@ -50,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, login, register, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, login, loginWithOidcCode, register, logout }}>
       {children}
     </AuthContext.Provider>
   );
