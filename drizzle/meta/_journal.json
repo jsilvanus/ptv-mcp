@@ -169,6 +169,13 @@
       "when": 1790268000000,
       "tag": "0024_proposal_kinds_connection_organisation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790269000000,
+      "tag": "0025_oidc_sign_in",
+      "breakpoints": true
     }
   ]
 }

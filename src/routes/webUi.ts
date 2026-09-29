@@ -7,7 +7,7 @@ export interface WebUiRoutesOptions {
   nodeEnv: 'development' | 'test' | 'production';
 }
 
-const API_PREFIXES = ['auth', 'tenants', 'ptv-connections', 'health', 'mcp'];
+const API_PREFIXES = ['auth', 'tenants', 'ptv-connections', 'health', 'mcp', 'oidc'];
 
 /**
  * Whether `path` is a file inside `root`. Checked per request rather than

@@ -31,6 +31,14 @@ docker build -t ghcr.io/<owner>/<repo>:<tag> .
   - `PTV_V11_OAUTH_CLIENT_ID`
   - `PTV_V11_OAUTH_CLIENT_SECRET`
   - `PTV_V11_OAUTH_REDIRECT_URI`
+- `MCP_PUBLIC_URL`: the public URL (MCP OAuth issuer, and the base of the
+  OIDC redirect URI `<MCP_PUBLIC_URL>/oidc/callback`)
+- Optional single sign-on (README, "Single sign-on"; off while
+  `OIDC_ISSUER` is empty):
+  - `OIDC_ISSUER` (https in production), `OIDC_CLIENT_ID`,
+    `OIDC_CLIENT_SECRET`
+  - `OIDC_SCOPES`, `OIDC_BUTTON_LABEL`, `OIDC_CREATE_USERS`,
+    `OIDC_TRUST_EMAIL`
 
 ## 3) Run database migrations
 

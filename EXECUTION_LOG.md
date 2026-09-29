@@ -2150,3 +2150,54 @@ cleanup, which the shared tracker would not simplify);
 builders and little repetition; the review tests' `service()` builder
 (different content, used for quality findings) was not folded into
 `validService`.
+
+## 2026-09-29 — Single sign-on (OpenID Connect Relying Party)
+
+Sign-in through an OIDC IdP (authentik) next to the password form, for
+both the web UI and the MCP authorization page. ptv-mcp is only a Relying
+Party (`openid-client` v6); the MCP OAuth authorization server, consent,
+tokens and `.well-known` metadata are unchanged. Off unless `OIDC_ISSUER`
+is set (README, "Single sign-on").
+
+- **Config** (`src/config.ts`, `loadOidcConfig`): `OIDC_ISSUER`,
+  `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`,
+  `OIDC_BUTTON_LABEL`, `OIDC_CREATE_USERS`, `OIDC_TRUST_EMAIL`; startup
+  errors for a missing client id, a non-URL issuer, `http:` in production,
+  scopes without `openid` and invalid booleans.
+- **Routes** (`src/routes/oidc.ts`, registered only when configured):
+  `GET /oidc/config`, `GET /oidc/login[?oauth=…]`, `GET /oidc/callback`,
+  `POST /oidc/session`. State, nonce and PKCE verifier are stored
+  server-side in `oidc_login_states` keyed by SHA-256(state), single use,
+  10 minutes; the state also sits in an httpOnly `ptv_mcp_oidc` cookie
+  (`Path=/oidc`, `SameSite=Lax`, `Secure` in production) that the callback
+  requires to match. Discovery is lazy and retried after a failure.
+- **Identity mapping** (`src/oidc/oidcService.ts`): `oidc_identities`
+  (issuer + sub) first, then an existing account by trusted email
+  (case-insensitive), then `OIDC_CREATE_USERS`. The lockout is checked
+  through `AuthService.assertCanSignIn`, like the password path.
+- **Web UI**: the SPA keeps its session in localStorage, so the callback
+  cannot set it directly. It stores a one-time code (`oidc_web_handoffs`,
+  60 s, SHA-256) and redirects to `/login#oidc=<code>`; `LoginPage`
+  exchanges it at `POST /oidc/session` for the same `Session`
+  `POST /auth/login` returns (`AuthService.createSession`).
+- **MCP**: `/oauth/authorize` shows the SSO button; the callback continues
+  with the same connection-selection page as the password path
+  (`connectionSelectionPage` in `src/mcp/oauthRoutes.ts`) and, like it,
+  opens no web-UI session. `/oidc/login?oauth=` re-validates the pending
+  request as `/oauth/authorize` does (`authorizationRequestError`).
+- **Migration 0025** (`drizzle/0025_oidc_sign_in.sql`): the three tables
+  and `users.password_hash` nullable (accounts created by OIDC have no
+  password; `verifyCredentials` answers them like an unknown email).
+  Written by hand with a journal entry, like 0017–0024:
+  `npm run db:generate` diffs against the last snapshot (0005) and would
+  re-create nine tables; its output for the new tables matches 0025.
+- **Rate limit**: no HTTP rate limiter existed, so `/oidc/login` has a
+  small in-memory per-IP limiter (30/min, `src/oidc/rateLimit.ts`). The
+  app does not set `trustProxy`, so behind a reverse proxy all clients
+  share one IP and the limit is effectively global.
+- **Not audited**: the audit log is tenant-scoped (RLS) and sign-ins have
+  no tenant (password sign-ins are not audited either); OIDC failures are
+  logged without tokens, codes or claims.
+- Also: the connection-selection page now HTML-escapes tenant names.
+- **Tests**: `src/testing/fakeOidcProvider.ts` (node:http + jose, RS256)
+  and `src/routes/oidc.integration.test.ts`; `src/config.test.ts`.

@@ -59,7 +59,8 @@ select {
   font: inherit;
 }
 
-button {
+button,
+a.button {
   cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -68,7 +69,13 @@ button {
   padding: 6px 12px;
 }
 
-button.primary {
+a.button {
+  display: inline-block;
+  text-decoration: none;
+}
+
+button.primary,
+a.button.primary {
   background: var(--accent);
   color: var(--accent-contrast);
   border-color: var(--accent);

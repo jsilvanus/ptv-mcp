@@ -52,6 +52,63 @@ Or via Docker Compose, which runs the bootstrap script automatically:
 docker compose up
 ```
 
+## Single sign-on (OpenID Connect)
+
+ptv-mcp can let people sign in through an OpenID Connect identity provider
+(for example authentik). ptv-mcp is only a *Relying Party* toward the IdP:
+it never issues ID tokens and publishes no JWKS. It stays the OAuth
+authorization server and resource server for MCP clients (`/oauth/*`,
+`/mcp`), so MCP clients, consent and the PTV connection choice work as
+before; OIDC only adds another way to sign in.
+
+OIDC is off unless `OIDC_ISSUER` is set. When it is set, the web UI login
+page and the MCP authorization page show a single sign-on button next to
+the email + password form (password sign-in keeps working).
+
+| Variable | Meaning |
+| --- | --- |
+| `OIDC_ISSUER` | Issuer URL exactly as the IdP publishes it (authentik: `https://auth.example.org/application/o/<slug>/`, keep the trailing slash). Unset or empty = OIDC off: no button, every `/oidc/*` route is a 404. `https:` is required when `NODE_ENV=production`. |
+| `OIDC_CLIENT_ID` | Required when `OIDC_ISSUER` is set. |
+| `OIDC_CLIENT_SECRET` | Optional. Set = confidential client (HTTP Basic client authentication); unset = public client. PKCE is always used. |
+| `OIDC_SCOPES` | Default `openid email profile`; must contain `openid`. |
+| `OIDC_BUTTON_LABEL` | Button text. Default `Sign in with single sign-on`. |
+| `OIDC_CREATE_USERS` | `true` = create a ptv-mcp account (no password, no memberships) for an IdP user who has none. Default `false`. Only created from a trusted email (see below). |
+| `OIDC_TRUST_EMAIL` | `true` = link to an existing account by email even when the IdP does not say `email_verified: true`. Default `false`. |
+
+The redirect URI is `<MCP_PUBLIC_URL>/oidc/callback`, one for both the web
+UI and MCP sign-ins, so `MCP_PUBLIC_URL` must be the public URL the browser
+uses. Invalid values (missing client id, a non-URL issuer, `http:` in
+production, scopes without `openid`, booleans other than `true`/`false`)
+stop the server at startup.
+
+How an IdP identity finds its ptv-mcp account:
+
+1. An identity (issuer + `sub`) linked before (`oidc_identities`) signs in
+   as that account.
+2. Otherwise an account with the same email (case-insensitive) is linked,
+   if the email is verified by the IdP or `OIDC_TRUST_EMAIL=true`.
+3. Otherwise, with `OIDC_CREATE_USERS=true` and a trusted email, a new
+   account is created. Tenant admins still add it to organisations and pick
+   its role; nothing about roles comes from the IdP.
+4. Otherwise sign-in is refused ("No account for this sign-in; ask the
+   administrator.").
+
+A temporarily locked account (too many wrong passwords) is refused on the
+OIDC path as well. Who may sign in at all is decided by the IdP (in
+authentik: the application's policy bindings).
+
+### authentik
+
+1. *Applications → Providers → Create → OAuth2/OpenID Provider*: client
+   type **Confidential**, redirect URI `<MCP_PUBLIC_URL>/oidc/callback`
+   (strict), and a **signing key** (so ID tokens are RS256). The default
+   `openid`, `email` and `profile` scope mappings are enough.
+2. *Applications → Create*: link it to the provider; bind policies/groups
+   to decide who may sign in.
+3. Copy the provider's client ID and secret to `OIDC_CLIENT_ID` /
+   `OIDC_CLIENT_SECRET` and its *OpenID Configuration Issuer* URL to
+   `OIDC_ISSUER`.
+
 ## PTV v12 raw-response debugging
 
 Set `PTV_V12_DEBUG_RAW=true` to print successful v12 API responses to the

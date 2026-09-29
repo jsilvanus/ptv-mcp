@@ -172,8 +172,13 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
 
-    if (user.lockedUntil && user.lockedUntil > this.now()) {
-      throw new AccountLockedError(user.lockedUntil);
+    this.assertNotLocked(user);
+
+    if (user.passwordHash === null) {
+      // An account created by OIDC sign-in has no password (until a reset
+      // sets one). Same answer and cost as an unknown email.
+      await verifyPassword(await this.getDummyPasswordHash(), password);
+      throw new InvalidCredentialsError();
     }
 
     const valid = await verifyPassword(user.passwordHash, password);
@@ -190,6 +195,34 @@ export class AuthService {
     }
 
     return user.id;
+  }
+
+  /** The account state checks every sign-in path applies (today: the login lockout). */
+  private assertNotLocked(user: { lockedUntil: Date | null }): void {
+    if (user.lockedUntil && user.lockedUntil > this.now()) {
+      throw new AccountLockedError(user.lockedUntil);
+    }
+  }
+
+  /**
+   * For sign-in paths that identified the user some other way (OIDC,
+   * `src/oidc/`): refuses the account exactly as `verifyCredentials()` would
+   * before checking a password. Throws `InvalidCredentialsError` for an
+   * unknown user id.
+   */
+  async assertCanSignIn(userId: string): Promise<void> {
+    const user = await this.db.query.users.findFirst({ where: eq(users.id, userId) });
+    if (!user) throw new InvalidCredentialsError();
+    this.assertNotLocked(user);
+  }
+
+  /**
+   * The web-UI session `login()` returns, for a user already identified and
+   * checked with `assertCanSignIn()` (OIDC web sign-in).
+   */
+  async createSession(userId: string): Promise<Session> {
+    await this.assertCanSignIn(userId);
+    return this.issueSession(userId);
   }
 
   private async recordFailedLogin(userId: string, currentAttempts: number): Promise<void> {
