@@ -16,6 +16,9 @@ export function MembersPage() {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<MembershipRole>('viewer');
   const { busy: adding, error: addError, run: runAdd } = useAsyncAction();
+  // The server answers the same whether or not the account exists, so the
+  // success text it sends is shown as-is.
+  const [addNotice, setAddNotice] = useState<string | null>(null);
 
   // One row action at a time; `pendingUserId` marks the row it is for.
   const { error: rowError, run: runRowAction } = useAsyncAction();
@@ -47,20 +50,19 @@ export function MembersPage() {
   async function handleAdd(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (!tenantId) return;
+    setAddNotice(null);
     await runAdd(
       async () => {
-        await apiFetch<void>(`/tenants/${tenantId}/members`, {
+        const result = await apiFetch<{ message: string }>(`/tenants/${tenantId}/members`, {
           method: 'POST',
           body: JSON.stringify({ email, role }),
         });
+        setAddNotice(result.message);
         setEmail('');
         setRole('viewer');
         await loadMembers();
       },
-      (err) =>
-        err instanceof ApiError && err.status === 404
-          ? 'No user is registered with that email.'
-          : errorMessage(err, 'Could not add member.'),
+      (err) => errorMessage(err, 'Could not add member.'),
     );
   }
 
@@ -198,6 +200,7 @@ export function MembersPage() {
         </button>
       </form>
       {addError && <p className="error">{addError}</p>}
+      {addNotice && <p role="status">{addNotice}</p>}
 
       {tenantId && <TenantSettingsPanel tenantId={tenantId} />}
     </div>

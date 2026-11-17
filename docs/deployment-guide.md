@@ -35,6 +35,9 @@ docker build -t ghcr.io/<owner>/<repo>:<tag> .
   - `PTV_V11_OAUTH_REDIRECT_URI`
 - `MCP_PUBLIC_URL`: the public URL (MCP OAuth issuer, and the base of the
   OIDC redirect URI `<MCP_PUBLIC_URL>/oidc/callback`)
+- `ALLOW_TENANT_CREATION`: default `true`, so any signed-in account can create
+  an organisation with `POST /tenants`. Set `false` in production: the route
+  then answers 403. See "Creating tenants" below.
 - Optional single sign-on (README, "Single sign-on"; off while
   `OIDC_ISSUER` is empty):
   - `OIDC_ISSUER` (https in production), `OIDC_CLIENT_ID`,
@@ -49,6 +52,23 @@ Run once for each deploy target:
 ```bash
 npm run db:migrate
 ```
+
+### Creating tenants
+
+With `ALLOW_TENANT_CREATION=false`, an operator creates each tenant. The
+account must already exist (register it first); it becomes the tenant's first
+Tenant Admin:
+
+```bash
+# From a checkout (dev dependencies installed):
+npm run tenant:create -- --name "Example parish" --slug example-parish --admin-email admin@example.org
+
+# In the production container, which has no dev dependencies, from the compiled build:
+node dist/tenants/createTenant.js --name "Example parish" --slug example-parish --admin-email admin@example.org
+```
+
+The command uses the same code path as `POST /tenants` (it does not depend on
+the flag), so it works whether the route is on or off.
 
 ## 4) Run with production compose
 

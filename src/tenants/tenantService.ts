@@ -1,7 +1,7 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { withContext } from '../db/context.js';
-import { memberships, tenants, users } from '../db/schema/index.js';
+import { withContext, type TransactionalDb } from '../db/context.js';
+import { memberships, proposalReviewers, proposals, tenants, users } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
 import type { AuditService } from '../audit/auditService.js';
 
@@ -31,6 +31,17 @@ export class EmailNotVerifiedForMembershipError extends Error {
   constructor(email: string) {
     super(`${email} has not verified their email address yet, so the account cannot be added.`);
     this.name = 'EmailNotVerifiedForMembershipError';
+  }
+}
+
+/**
+ * Refused: removing or demoting the tenant's only Tenant Admin would leave an
+ * organisation nobody can manage.
+ */
+export class LastTenantAdminError extends Error {
+  constructor() {
+    super('The tenant must keep at least one Tenant Admin (Pääkäyttäjä).');
+    this.name = 'LastTenantAdminError';
   }
 }
 
@@ -67,6 +78,27 @@ export interface Member {
   email: string;
   name: string;
   role: MembershipRole;
+}
+
+/**
+ * Locks the tenant's Tenant Admin membership rows until `tx` ends and returns
+ * their user ids. Two concurrent demotions or removals both take this lock:
+ * the second waits, then re-reads the admins after the first has committed,
+ * so it sees the new count and is refused rather than leaving no admin.
+ */
+async function lockTenantAdmins(tx: TransactionalDb, tenantId: string): Promise<string[]> {
+  const rows = await tx
+    .select({ userId: memberships.userId })
+    .from(memberships)
+    .where(and(eq(memberships.tenantId, tenantId), eq(memberships.role, 'tenant_admin')))
+    .orderBy(asc(memberships.userId))
+    .for('update');
+  return rows.map((row) => row.userId);
+}
+
+/** Throws when `userId` is the only Tenant Admin, so leaving them out would leave none. */
+function assertNotLastAdmin(admins: string[], userId: string): void {
+  if (admins.length === 1 && admins[0] === userId) throw new LastTenantAdminError();
 }
 
 /**
@@ -138,6 +170,11 @@ export class TenantService {
     );
   }
 
+  /**
+   * Adds (or re-roles) a member by email. Refused attempts are audited as
+   * `NotApplied` and then thrown; the REST route turns both refusals into the
+   * same neutral answer, so a Tenant Admin cannot learn which emails have accounts.
+   */
   async addMember(
     tenantId: string,
     email: string,
@@ -146,9 +183,11 @@ export class TenantService {
   ): Promise<void> {
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
+      await this.recordNotApplied(tenantId, actingUserId, null, role, 'UnknownEmail');
       throw new UserNotFoundError(email);
     }
     if (this.options.requireVerifiedEmail && user.emailVerifiedAt === null) {
+      await this.recordNotApplied(tenantId, actingUserId, user.id, role, 'EmailNotVerified');
       throw new EmailNotVerifiedForMembershipError(email);
     }
     await withContext(this.db, { tenantId }, async (tx) => {
@@ -171,22 +210,25 @@ export class TenantService {
     });
   }
 
+  /** Refuses (LastTenantAdminError) a change that would leave the tenant with no Tenant Admin. */
   async updateMemberRole(
     tenantId: string,
     userId: string,
     role: MembershipRole,
     actingUserId: string,
   ): Promise<void> {
-    const result = await withContext(this.db, { tenantId, userId }, async (tx) =>
-      tx
+    await withContext(this.db, { tenantId, userId }, async (tx) => {
+      const admins = await lockTenantAdmins(tx, tenantId);
+      if (role !== 'tenant_admin') assertNotLastAdmin(admins, userId);
+      const result = await tx
         .update(memberships)
         .set({ role, source: 'manual' })
         .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId)))
-        .returning(),
-    );
-    if (result.length === 0) {
-      throw new MembershipNotFoundError();
-    }
+        .returning({ userId: memberships.userId });
+      if (result.length === 0) {
+        throw new MembershipNotFoundError();
+      }
+    });
     await this.auditService.record({
       tenantId,
       userId: actingUserId,
@@ -198,11 +240,35 @@ export class TenantService {
     });
   }
 
+  /**
+   * Removes a member and, in the same transaction, drops their required-reviewer
+   * rows on pending proposals, so approval does not wait for someone who has
+   * left. Refuses (LastTenantAdminError) when they are the only Tenant Admin.
+   */
   async removeMember(tenantId: string, userId: string, actingUserId: string): Promise<void> {
-    await withContext(this.db, { tenantId, userId }, async (tx) => {
+    const droppedReviewerRequests = await withContext(this.db, { tenantId, userId }, async (tx) => {
+      const admins = await lockTenantAdmins(tx, tenantId);
+      assertNotLastAdmin(admins, userId);
       await tx
         .delete(memberships)
         .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId)));
+      const dropped = await tx
+        .delete(proposalReviewers)
+        .where(
+          and(
+            eq(proposalReviewers.tenantId, tenantId),
+            eq(proposalReviewers.userId, userId),
+            inArray(
+              proposalReviewers.proposalId,
+              tx
+                .select({ id: proposals.id })
+                .from(proposals)
+                .where(and(eq(proposals.tenantId, tenantId), eq(proposals.status, 'pending'))),
+            ),
+          ),
+        )
+        .returning({ id: proposalReviewers.id });
+      return dropped.length;
     });
     await this.auditService.record({
       tenantId,
@@ -210,7 +276,27 @@ export class TenantService {
       action: 'RemoveMember',
       resourceType: 'Membership',
       resourceId: userId,
+      afterState: { droppedReviewerRequests },
       result: 'Success',
+    });
+  }
+
+  /** Audits a refused add without the email itself (audit payloads are scrubbed; the reason is enough). */
+  private async recordNotApplied(
+    tenantId: string,
+    actingUserId: string,
+    resourceId: string | null,
+    role: MembershipRole,
+    reason: 'UnknownEmail' | 'EmailNotVerified',
+  ): Promise<void> {
+    await this.auditService.record({
+      tenantId,
+      userId: actingUserId,
+      action: 'AddMember',
+      resourceType: 'Membership',
+      resourceId,
+      afterState: { role, reason },
+      result: 'NotApplied',
     });
   }
 

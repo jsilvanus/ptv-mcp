@@ -51,6 +51,12 @@ export interface AppConfig {
   authMode: AuthMode;
   /** `OIDC_BREAK_GLASS_EMAILS`, lowercased. Only used when `authMode` is `oidc`. */
   breakGlassEmails: string[];
+  /**
+   * `ALLOW_TENANT_CREATION`: whether `POST /tenants` creates tenants. Default
+   * true (unchanged behaviour). When false the route answers 403; an operator
+   * creates tenants with `npm run tenant:create` instead (src/tenants/createTenant.ts).
+   */
+  allowTenantCreation: boolean;
 }
 
 export interface OidcConfig {
@@ -285,6 +291,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     requireVerifiedEmail: parseBoolean('REQUIRE_VERIFIED_EMAIL', env.REQUIRE_VERIFIED_EMAIL, false),
     authMode,
     breakGlassEmails,
+    allowTenantCreation: parseBoolean('ALLOW_TENANT_CREATION', env.ALLOW_TENANT_CREATION, true),
     ...(oidc ? { oidc } : {}),
   };
 }

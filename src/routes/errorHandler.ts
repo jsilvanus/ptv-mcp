@@ -26,6 +26,7 @@ import { ReviewCampaignError } from '../reviews/reviewCampaigns.js';
 import { ReviewCampaignNotFoundError, ReviewItemNotFoundError } from '../reviews/reviewService.js';
 import {
   EmailNotVerifiedForMembershipError,
+  LastTenantAdminError,
   MembershipNotFoundError,
   SlugAlreadyTakenError,
   TenantNotFoundError,
@@ -75,6 +76,7 @@ const ERROR_STATUS: ReadonlyArray<readonly [ErrorClass, number | ((err: Error) =
   [SlugAlreadyTakenError, 409],
   [UserNotFoundError, 404],
   [MembershipNotFoundError, 404],
+  [LastTenantAdminError, 409],
   [EmailAlreadyRegisteredError, 409],
   [EmailNotVerifiedError, 403],
   [EmailNotVerifiedForMembershipError, 409],
