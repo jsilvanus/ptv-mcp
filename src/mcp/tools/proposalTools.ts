@@ -439,6 +439,7 @@ export function registerProposalTools(tool: RegisterTool, deps: ToolDeps): void 
         args.proposalId,
         args.action,
         requireFourEyes,
+        { enforceGrantEnvironment: true },
       ),
   );
 
@@ -464,6 +465,7 @@ export function registerProposalTools(tool: RegisterTool, deps: ToolDeps): void 
         toolContext(extra),
         args.proposalId,
         args.ptvId,
+        { enforceGrantEnvironment: true },
       ),
   );
 

@@ -1,5 +1,5 @@
 import type { AuditService } from '../audit/auditService.js';
-import type { PtvAdapter } from '../ptv/adapter.js';
+import { PartialWriteError, type PtvAdapter } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry } from '../ptv/registry.js';
 import type {
   ProposalKind,
@@ -208,9 +208,38 @@ export async function auditedApply<K extends ProposalKind, R>(
     await audit('Success', writeStates(target, proposed, { written }));
     return written;
   } catch (err) {
-    await audit('Failed', writeStates(target, proposed));
+    await audit(
+      'Failed',
+      err instanceof PartialWriteError
+        ? partialWriteStates(target, proposed, err)
+        : writeStates(target, proposed),
+    );
     throw err;
   }
+}
+
+/**
+ * The Failed entry of a write that PTV accepted in some steps: the usual
+ * target and state, with `steps` in the after state saying which step
+ * succeeded, which failed and what a person still has to finish in PTV.
+ */
+function partialWriteStates(
+  target: WritePlan<ProposalKind, unknown>['target'],
+  proposed: object,
+  err: PartialWriteError,
+): object {
+  return {
+    ...writeStates(target, proposed),
+    afterState: {
+      proposed,
+      steps: {
+        completed: err.completedSteps,
+        failed: err.failedStep,
+        error: err.causeMessage,
+        remaining: err.remaining,
+      },
+    },
+  };
 }
 
 /**

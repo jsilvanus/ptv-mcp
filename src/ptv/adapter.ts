@@ -135,6 +135,49 @@ export class OntologySearchUnsupportedError extends Error {
   }
 }
 
+export interface PartialWriteDetails {
+  entityId: PtvContentId;
+  /** Steps that PTV has already accepted, in order, e.g. `['service']`. */
+  completedSteps: string[];
+  /** The step that failed; PTV holds none of its change. */
+  failedStep: string;
+  /** What a person must still do by hand in PTV's web UI, in words. */
+  remaining: string;
+  cause: unknown;
+}
+
+/**
+ * A write that PTV accepted in some steps and refused in a later one. PTV
+ * has no transaction across its endpoints, so the accepted steps stay and
+ * the rest has to be finished by hand. Thrown only after a step succeeded;
+ * a failure of the first step is the step's own error.
+ */
+export class PartialWriteError extends Error {
+  readonly entityId: PtvContentId;
+  readonly completedSteps: string[];
+  readonly failedStep: string;
+  readonly remaining: string;
+  /** The message of the error the failed step raised. */
+  readonly causeMessage: string;
+
+  constructor(details: PartialWriteDetails) {
+    const causeMessage =
+      details.cause instanceof Error ? details.cause.message : String(details.cause);
+    super(
+      `PTV was only partly updated for ${details.entityId}: ` +
+        `${details.completedSteps.join(', ')} saved, ${details.failedStep} failed (${causeMessage}). ` +
+        `To finish by hand in PTV: ${details.remaining}.`,
+      { cause: details.cause },
+    );
+    this.name = 'PartialWriteError';
+    this.entityId = details.entityId;
+    this.completedSteps = details.completedSteps;
+    this.failedStep = details.failedStep;
+    this.remaining = details.remaining;
+    this.causeMessage = causeMessage;
+  }
+}
+
 export interface PtvAdapter {
   getCapabilities(): PtvAdapterCapabilities;
 

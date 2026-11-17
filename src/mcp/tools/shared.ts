@@ -9,11 +9,12 @@ import type {
   ServerNotification,
   ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
+import type { PtvEnvironment } from '../../ptv/adapter.js';
 import { PtvAdapterResolutionError } from '../../ptv/registry.js';
 import type { ChangeValidator } from '../../validation/changeValidator.js';
 import type { ReviewDeps } from '../../reviews/reviewCampaigns.js';
 import type { FourEyesResolver } from '../authorization.js';
-import type { ReadToolContext, ToolContext } from '../toolContext.js';
+import { GrantScopeError, type ReadToolContext, type ToolContext } from '../toolContext.js';
 
 export type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -112,6 +113,23 @@ function actingUserId(extra: Extra): string {
   return userId;
 }
 
+/** The organisation the token's `tenant_id` claim names, if the connection has one. */
+function grantedTenantOf(extra: Extra): string | undefined {
+  const tenantId = extra.authInfo?.extra?.tenantId;
+  return typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined;
+}
+
+/** The environment the token's `environment` claim names; every connection has one. */
+function grantedEnvironmentOf(extra: Extra): PtvEnvironment {
+  const environment = extra.authInfo?.extra?.environment;
+  if (environment !== 'test' && environment !== 'production') {
+    throw new Error(
+      'No active PTV environment for this MCP connection; reconnect and select a connection',
+    );
+  }
+  return environment;
+}
+
 /** The token's read API version; every connection has one. */
 function readApiVersionOf(extra: Extra): string {
   const readApiVersion = extra.authInfo?.extra?.readApiVersion;
@@ -144,18 +162,11 @@ export function toolContext(extra: Extra): ToolContext {
  */
 export function readToolContext(extra: Extra): ReadToolContext {
   const userId = actingUserId(extra);
-  const activeTenantId = extra.authInfo?.extra?.tenantId;
-  const environment = extra.authInfo?.extra?.environment;
-  if (environment !== 'test' && environment !== 'production') {
-    throw new Error(
-      'No active PTV environment for this MCP connection; reconnect and select a connection',
-    );
-  }
+  const activeTenantId = grantedTenantOf(extra);
+  const environment = grantedEnvironmentOf(extra);
   const readApiVersion = readApiVersionOf(extra);
   return {
-    ...(typeof activeTenantId === 'string' && activeTenantId !== ''
-      ? { tenantId: activeTenantId }
-      : {}),
+    ...(activeTenantId ? { tenantId: activeTenantId } : {}),
     environment,
     readApiVersion,
     ...writeApiVersionField(extra),
@@ -164,15 +175,17 @@ export function readToolContext(extra: Extra): ReadToolContext {
 }
 
 /**
- * Resource reads carry tenant/environment in the URI itself (the
- * `ptv://{tenantId}/{environment}/...` templates in ../resources.ts),
- * unlike tools, which have no per-call channel for either and take both
- * from the OAuth token (see `toolContext()` above). Read/write API version
- * and the acting user still come from the token. Accepting whatever
- * tenantId the URI names doesn't bypass anything:
- * `PtvAdapterRegistry.resolve()` re-checks that `actingUserId` actually
- * belongs to that tenant before ever touching a credential, exactly as it
- * does for a tool call.
+ * Resource reads name tenant and environment in the URI itself (the
+ * `ptv://{tenantId}/{environment}/...` templates in ../resources.ts), unlike
+ * tools, which take both from the OAuth token (see `toolContext()` above).
+ * The URI is only an address, not a grant: it must name the organisation
+ * and environment the token's `tenant_id` and `environment` claims grant,
+ * otherwise this throws GrantScopeError (a JSON-RPC error, since resource
+ * reads have no `isError`; see CLAUDE.md). A public connection with no
+ * organisation reads no organisation resources. Read/write API version and
+ * the acting user still come from the token, and
+ * `PtvAdapterRegistry.resolve()` still re-checks membership before any
+ * credential is used.
  */
 export function resourceToolContext(
   extra: Extra,
@@ -183,10 +196,27 @@ export function resourceToolContext(
   if (uriEnvironment !== 'test' && uriEnvironment !== 'production') {
     throw new Error(`Invalid PTV environment in resource URI: ${uriEnvironment}`);
   }
+  const grantedTenantId = grantedTenantOf(extra);
+  if (!grantedTenantId) {
+    throw new GrantScopeError(
+      'This MCP connection has no organisation (public PTV data only), so organisation resources cannot be read. Reconnect and choose one.',
+    );
+  }
+  if (uriTenantId !== grantedTenantId) {
+    throw new GrantScopeError(
+      `This connection is authorised for organisation ${grantedTenantId}; the resource belongs to ${uriTenantId}. Reconnect for that organisation.`,
+    );
+  }
+  const grantedEnvironment = grantedEnvironmentOf(extra);
+  if (uriEnvironment !== grantedEnvironment) {
+    throw new GrantScopeError(
+      `This connection is authorised for ${grantedEnvironment}; the resource is in ${uriEnvironment}. Reconnect for that environment.`,
+    );
+  }
   const readApiVersion = readApiVersionOf(extra);
   return {
-    tenantId: uriTenantId,
-    environment: uriEnvironment,
+    tenantId: grantedTenantId,
+    environment: grantedEnvironment,
     readApiVersion,
     ...writeApiVersionField(extra),
     actingUserId: userId,
