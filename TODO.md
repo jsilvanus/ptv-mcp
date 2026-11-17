@@ -16,3 +16,36 @@ entry when it is fixed and note the fix in [`EXECUTION_LOG.md`](EXECUTION_LOG.md
       applies the change twice despite `ProposalService.claimForApply`, or
       an audit write repeated on a retry path; not yet investigated.
       Deferred: not being fixed now.
+
+## Open findings from the 2026-11-17 code review
+
+Medium-severity findings that PR #79 did not cover. Details, file names and
+suggested fixes are in
+[`docs/reviews/2026-11-17-code-review.md`](docs/reviews/2026-11-17-code-review.md)
+under the same numbers. Not being fixed now.
+
+- [ ] **6. v11 writes can be built on a stale published version.**
+      `getLatestOrNull` swallows errors from the restricted read; organisations
+      have no `/active` read; `applyConnectionChange` has no `Modified` check.
+- [ ] **7. v11 client retries POST and has no timeouts.** A lost response can
+      create an item twice; a hung connection is never aborted.
+- [ ] **8. Kept connections are resent in read shape.** `relationToWrite`
+      (`src/ptv/v11/connectionWrite.ts`) can lose fax numbers and addresses;
+      verify on the test environment.
+- [ ] **9. Service and connection writes are not atomic.** A failure of the
+      second PUT leaves PTV with half the change; record which step failed.
+- [ ] **10. OAuth grant scope is not enforced everywhere.** Resolve and manual
+      publish use the proposal's environment; `resourceToolContext` takes the
+      tenant from the resource URI.
+- [ ] **11. OAuth server hardening.** Code exchange race, no refresh-token
+      rotation, client-metadata fetch SSRF gaps, no frame-protection headers.
+- [ ] **12. No rate limits or input validation on auth routes.** Also a weak
+      `JWT_SECRET` is not rejected and the failed-login counter is racy.
+- [ ] **13. Row-level security depends on the database role.** The compose
+      and CI setups connect as a superuser, which bypasses it; check staging
+      and consider refusing to start.
+- [ ] **14. Tenant governance gaps.** Any account can create tenants, the last
+      Tenant Admin can leave, removed required reviewers block approval, and
+      `addMember` reveals which emails have accounts.
+- [ ] **15. Dependency advisories.** `npm audit --omit=dev` reports 12
+      (3 high), including zod below 4.6.6.
