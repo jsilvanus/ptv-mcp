@@ -220,6 +220,10 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
         });
         idToken = claims.idToken;
         userId = await options.oidcService.resolveUser(claims);
+        const { ignored } = await options.oidcService.syncGroupMemberships(userId, claims.groups);
+        if (ignored.length > 0) {
+          request.log.info({ ignoredGroups: ignored }, 'OIDC groups that grant no tenant role');
+        }
         await options.authService.assertCanSignIn(userId);
       } catch (err) {
         if (err instanceof OidcSignInError) {

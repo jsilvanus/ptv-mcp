@@ -67,6 +67,18 @@ export interface OidcConfig {
    * sign-out. Undefined = `<MCP public URL>/login`. Must be registered at the IdP.
    */
   postLogoutRedirectUri?: string;
+  /**
+   * `OIDC_GROUP_SYNC=true`: groups in the IdP's groups claim grant tenant
+   * memberships at sign-in (src/oidc/groupGrants.ts). Undefined = off.
+   */
+  groupSync?: OidcGroupSyncConfig;
+}
+
+export interface OidcGroupSyncConfig {
+  /** `OIDC_GROUPS_CLAIM`: the claim (ID token, else userinfo) that lists the user's groups. */
+  claim: string;
+  /** `OIDC_GROUP_PREFIX`, always ending in `/`: group names are `<prefix><tenant-slug>[/<role>]`. */
+  prefix: string;
 }
 
 function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
@@ -128,6 +140,8 @@ export function loadOidcConfig(
     }
   }
 
+  const groupSync = loadGroupSyncConfig(env);
+
   return {
     issuer,
     clientId,
@@ -137,7 +151,20 @@ export function loadOidcConfig(
     createUsers: parseBoolean('OIDC_CREATE_USERS', env.OIDC_CREATE_USERS, false),
     trustEmail: parseBoolean('OIDC_TRUST_EMAIL', env.OIDC_TRUST_EMAIL, false),
     ...(postLogout ? { postLogoutRedirectUri: postLogout } : {}),
+    ...(groupSync ? { groupSync } : {}),
   };
+}
+
+/** `OIDC_GROUP_SYNC` and its claim and prefix; undefined when off. */
+function loadGroupSyncConfig(env: NodeJS.ProcessEnv): OidcGroupSyncConfig | undefined {
+  if (!parseBoolean('OIDC_GROUP_SYNC', env.OIDC_GROUP_SYNC, false)) return undefined;
+  const claim = env.OIDC_GROUPS_CLAIM?.trim() || 'groups';
+  const rawPrefix = (env.OIDC_GROUP_PREFIX ?? '').trim() || 'ptv/';
+  if (/\s/.test(rawPrefix)) {
+    throw new Error('Invalid OIDC_GROUP_PREFIX: must not contain whitespace');
+  }
+  const prefix = rawPrefix.endsWith('/') ? rawPrefix : `${rawPrefix}/`;
+  return { claim, prefix };
 }
 
 /** `AUTH_MODE`. Throws when it conflicts with whether OIDC is configured. */

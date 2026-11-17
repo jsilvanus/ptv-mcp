@@ -154,8 +154,11 @@ export class TenantService {
     await withContext(this.db, { tenantId }, async (tx) => {
       await tx
         .insert(memberships)
-        .values({ tenantId, userId: user.id, role })
-        .onConflictDoUpdate({ target: [memberships.userId, memberships.tenantId], set: { role } });
+        .values({ tenantId, userId: user.id, role, source: 'manual' })
+        .onConflictDoUpdate({
+          target: [memberships.userId, memberships.tenantId],
+          set: { role, source: 'manual' },
+        });
     });
     await this.auditService.record({
       tenantId,
@@ -177,7 +180,7 @@ export class TenantService {
     const result = await withContext(this.db, { tenantId, userId }, async (tx) =>
       tx
         .update(memberships)
-        .set({ role })
+        .set({ role, source: 'manual' })
         .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId)))
         .returning(),
     );

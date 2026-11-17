@@ -9,6 +9,9 @@ export interface FakeOidcUser {
   email_verified?: boolean;
   name?: string;
   preferred_username?: string;
+  /** Sent as the `groups` claim (or as `OIDC_GROUPS_CLAIM`'s name, by the test). */
+  groups?: string[];
+  [claim: string]: unknown;
 }
 
 interface IssuedCode {
