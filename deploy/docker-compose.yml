@@ -1,0 +1,92 @@
+# Deploy-side compose file for the shared riksunsrk VPS. The deploy workflow
+# (.github/workflows/deploy.yml) copies this file to DEPLOY_PATH and writes the
+# .env next to it. Postgres and Traefik are shared infra (riksunsrk/infra); this
+# file runs no database and publishes no host ports.
+#
+# Startup order: `migrate` runs `node dist/db/migrate.js` once and exits 0;
+# `app` starts only after that. Re-running `docker compose up` re-runs migrate,
+# which is a no-op when nothing is pending.
+
+x-app-env: &app-env
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: 3000
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL (written by the deploy workflow)}
+  MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+  MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?set MCP_PUBLIC_URL (https://<domain>)}
+  ALLOW_PRIVILEGED_DB_ROLE: ${ALLOW_PRIVILEGED_DB_ROLE:-}
+  # Production default: tenants are created by an operator (see docs/deployment-guide.md).
+  ALLOW_TENANT_CREATION: ${ALLOW_TENANT_CREATION:-false}
+  REQUIRE_VERIFIED_EMAIL: ${REQUIRE_VERIFIED_EMAIL:-}
+  PTV_V11_OAUTH_CLIENT_ID: ${PTV_V11_OAUTH_CLIENT_ID:-}
+  PTV_V11_OAUTH_CLIENT_SECRET: ${PTV_V11_OAUTH_CLIENT_SECRET:-}
+  PTV_V11_OAUTH_REDIRECT_URI: ${PTV_V11_OAUTH_REDIRECT_URI:-}
+  # Single sign-on (OIDC); empty OIDC_ISSUER = off.
+  AUTH_MODE: ${AUTH_MODE:-}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_SCOPES: ${OIDC_SCOPES:-}
+  OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-}
+  OIDC_CREATE_USERS: ${OIDC_CREATE_USERS:-}
+  OIDC_TRUST_EMAIL: ${OIDC_TRUST_EMAIL:-}
+  OIDC_POST_LOGOUT_REDIRECT_URI: ${OIDC_POST_LOGOUT_REDIRECT_URI:-}
+  OIDC_BREAK_GLASS_EMAILS: ${OIDC_BREAK_GLASS_EMAILS:-}
+  OIDC_GROUP_SYNC: ${OIDC_GROUP_SYNC:-}
+  OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+  OIDC_GROUP_PREFIX: ${OIDC_GROUP_PREFIX:-}
+
+services:
+  migrate:
+    image: ghcr.io/jsilvanus/ptv-mcp:${IMAGE_TAG:?set IMAGE_TAG (sha-<short sha>)}
+    command: ['node', 'dist/db/migrate.js']
+    restart: 'no'
+    environment:
+      <<: *app-env
+    networks:
+      - shared_multi_network
+
+  app:
+    image: ghcr.io/jsilvanus/ptv-mcp:${IMAGE_TAG:?set IMAGE_TAG (sha-<short sha>)}
+    container_name: ptv-mcp-app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    # No `ports:` — Traefik reaches the app over traefik-public.
+    networks:
+      - default
+      - traefik-public
+      - shared_multi_network
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: traefik-public
+      traefik.http.routers.ptv-mcp.rule: Host(`${DOMAIN:?set DOMAIN}`)
+      traefik.http.routers.ptv-mcp.entrypoints: websecure
+      traefik.http.routers.ptv-mcp.tls.certresolver: letsencrypt
+      traefik.http.services.ptv-mcp.loadbalancer.server.port: '3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  default:
+  traefik-public:
+    external: true
+    name: traefik-public
+  shared_multi_network:
+    external: true
+    name: shared_multi_network

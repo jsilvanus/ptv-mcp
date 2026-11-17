@@ -246,9 +246,11 @@ export class PtvV12Adapter implements PtvAdapter {
     return { ...result, items: hydrated.map(mapV12ServiceCollection) };
   }
 
-  /** v12 general descriptions are not read yet (see searchGeneralDescriptions). */
-  async getGeneralDescription(_id: PtvContentId): Promise<GeneralDescription | null> {
-    return null;
+  async getGeneralDescription(id: PtvContentId): Promise<GeneralDescription | null> {
+    const raw = await this.getOrNull<V12GeneralDescriptionWire>(
+      `/api/v12/general-description/${id}`,
+    );
+    return raw === null ? null : mapV12GeneralDescription(raw);
   }
 
   async searchGeneralDescriptions(
@@ -300,11 +302,13 @@ export class PtvV12Adapter implements PtvAdapter {
       kind === 'channel' ? [] : search('serviceContentIds'),
       kind === 'service' ? [] : search('channelContentIds'),
     ]);
-    return [...asService, ...asChannel]
-      .map(mapV12Connection)
-      .filter(
-        (connection) => connection.serviceId === entityId || connection.channelId === entityId,
-      );
+    return [...asService, ...asChannel].map(mapV12Connection).filter((connection) => {
+      const asServiceEnd = connection.serviceId === entityId;
+      const asChannelEnd = connection.channelId === entityId;
+      if (kind === 'service') return asServiceEnd;
+      if (kind === 'channel') return asChannelEnd;
+      return asServiceEnd || asChannelEnd;
+    });
   }
 
   async getConnectionsForServices(serviceIds: PtvContentId[]): Promise<Connection[]> {

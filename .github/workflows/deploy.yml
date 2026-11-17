@@ -1,3 +1,32 @@
+# Build and deploy ptv-mcp.
+#
+# - push to main, or a manual run: build and push ghcr.io/<owner>/ptv-mcp:sha-<short sha>.
+# - manual run (workflow_dispatch) only: deploy that image to the shared VPS, after an
+#   approval on the `production` environment. Pushes never deploy.
+#
+# Deploy flow: copy deploy/docker-compose.yml to DEPLOY_PATH, provision the app's
+# role and database on the shared Postgres (riksunsrk/infra), write a chmod 600 .env,
+# pull, `up -d` (the one-shot `migrate` service runs first), then wait for the
+# container healthcheck and verify https://<DOMAIN>/health.
+#
+# Required GitHub Environment `production` secrets:
+#   SSH_PRIVATE_KEY, GHCR_TOKEN (read:packages), DB_PASSWORD (app DB role password),
+#   DB_SUDO_PASSWORD (infra Postgres superuser password), MASTER_ENCRYPTION_KEY,
+#   JWT_SECRET (base64, >= 32 bytes decoded)
+# Optional production secrets: OIDC_CLIENT_SECRET, PTV_V11_OAUTH_CLIENT_SECRET
+#
+# Required `production` variables: VM_HOST, VM_USER, DEPLOY_PATH (app directory on
+# the VPS), DEPLOY_DB_PATH (riksunsrk/infra database directory), APP_NAME (use
+# ptv_mcp, which gives role ptv_mcp_user and database ptv_mcp_db; no hyphen), DOMAIN
+# Optional `production` variables: VM_SSH_PORT (default 22), GHCR_USER (default the
+# triggering actor; must own GHCR_TOKEN), LOG_LEVEL, REQUIRE_VERIFIED_EMAIL,
+# PTV_V11_OAUTH_CLIENT_ID, PTV_V11_OAUTH_REDIRECT_URI, AUTH_MODE, OIDC_ISSUER,
+# OIDC_CLIENT_ID, OIDC_SCOPES, OIDC_BUTTON_LABEL, OIDC_CREATE_USERS, OIDC_TRUST_EMAIL,
+# OIDC_POST_LOGOUT_REDIRECT_URI, OIDC_BREAK_GLASS_EMAILS, OIDC_GROUP_SYNC,
+# OIDC_GROUPS_CLAIM, OIDC_GROUP_PREFIX
+# ALLOW_TENANT_CREATION is always false in production (use the operator tool; see
+# docs/deployment-guide.md).
+
 name: Deploy
 
 on:
@@ -7,11 +36,16 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # Exact tag docker/metadata-action's `type=sha` produces: sha-<7-char short sha>.
+      image_tag: ${{ steps.tag.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,3 +73,223 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - id: tag
+        run: echo "image_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build-and-push-image
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ needs.build-and-push-image.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy compose file to the VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.VM_HOST }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.VM_SSH_PORT || 22 }}
+          source: deploy/docker-compose.yml
+          target: ${{ vars.DEPLOY_PATH }}
+          strip_components: 1
+
+      # Derived values only: base64 and URL-encoded forms of the passwords. Each is
+      # masked before it reaches GITHUB_ENV. The raw secrets never leave this step's env.
+      - name: Prepare derived secrets
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SUDO_PASSWORD: ${{ secrets.DB_SUDO_PASSWORD }}
+        run: |
+          node -e '
+            const { appendFileSync } = require("node:fs");
+            const pw = process.env.DB_PASSWORD;
+            const sudo = process.env.DB_SUDO_PASSWORD;
+            if (!pw || !sudo) {
+              console.error("DB_PASSWORD and DB_SUDO_PASSWORD secrets must be set");
+              process.exit(1);
+            }
+            const values = {
+              DB_PASSWORD_B64: Buffer.from(pw).toString("base64"),
+              DB_SUDO_PASSWORD_B64: Buffer.from(sudo).toString("base64"),
+              DB_PASSWORD_URLENC: encodeURIComponent(pw),
+            };
+            for (const [name, value] of Object.entries(values)) {
+              console.log(`::add-mask::${value}`);
+              appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
+            }
+          '
+
+      - name: Provision app database and cluster role
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_DB_PATH: ${{ vars.DEPLOY_DB_PATH }}
+          APP_NAME: ${{ vars.APP_NAME }}
+        with:
+          host: ${{ vars.VM_HOST }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.VM_SSH_PORT || 22 }}
+          envs: DEPLOY_DB_PATH,APP_NAME,DB_PASSWORD_B64,DB_SUDO_PASSWORD_B64
+          script: |
+            set -eu
+            DB_PW="$(printf '%s' "$DB_PASSWORD_B64" | base64 -d)"
+            DB_SUDO_PW="$(printf '%s' "$DB_SUDO_PASSWORD_B64" | base64 -d)"
+
+            # Per-app role and database on the shared Postgres (riksunsrk/infra; idempotent).
+            docker compose -f "$DEPLOY_DB_PATH/docker-compose.yml" exec -T postgres \
+              env APP_NAME="$APP_NAME" APP_PASSWORD="$DB_PW" PGUSER=postgres PGPASSWORD="$DB_SUDO_PW" \
+              sh /scripts/create-app-user.sh
+
+            # Cluster role the migrations GRANT to (idempotent; see scripts/bootstrap-roles.sql).
+            docker compose -f "$DEPLOY_DB_PATH/docker-compose.yml" exec -T postgres \
+              env PGPASSWORD="$DB_SUDO_PW" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ptv_mcp_app') THEN
+                CREATE ROLE ptv_mcp_app NOLOGIN NOBYPASSRLS;
+              END IF;
+            END $$;
+            SQL
+
+      - name: Write .env, pull image, start services
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          GHCR_USER: ${{ vars.GHCR_USER || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          REQUIRE_VERIFIED_EMAIL: ${{ vars.REQUIRE_VERIFIED_EMAIL }}
+          PTV_V11_OAUTH_CLIENT_ID: ${{ vars.PTV_V11_OAUTH_CLIENT_ID }}
+          PTV_V11_OAUTH_CLIENT_SECRET: ${{ secrets.PTV_V11_OAUTH_CLIENT_SECRET }}
+          PTV_V11_OAUTH_REDIRECT_URI: ${{ vars.PTV_V11_OAUTH_REDIRECT_URI }}
+          AUTH_MODE: ${{ vars.AUTH_MODE }}
+          OIDC_ISSUER: ${{ vars.OIDC_ISSUER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+          OIDC_SCOPES: ${{ vars.OIDC_SCOPES }}
+          OIDC_BUTTON_LABEL: ${{ vars.OIDC_BUTTON_LABEL }}
+          OIDC_CREATE_USERS: ${{ vars.OIDC_CREATE_USERS }}
+          OIDC_TRUST_EMAIL: ${{ vars.OIDC_TRUST_EMAIL }}
+          OIDC_POST_LOGOUT_REDIRECT_URI: ${{ vars.OIDC_POST_LOGOUT_REDIRECT_URI }}
+          OIDC_BREAK_GLASS_EMAILS: ${{ vars.OIDC_BREAK_GLASS_EMAILS }}
+          OIDC_GROUP_SYNC: ${{ vars.OIDC_GROUP_SYNC }}
+          OIDC_GROUPS_CLAIM: ${{ vars.OIDC_GROUPS_CLAIM }}
+          OIDC_GROUP_PREFIX: ${{ vars.OIDC_GROUP_PREFIX }}
+        with:
+          host: ${{ vars.VM_HOST }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.VM_SSH_PORT || 22 }}
+          envs: DEPLOY_PATH,APP_NAME,DOMAIN,GHCR_USER,GHCR_TOKEN,IMAGE_TAG,DB_PASSWORD_URLENC,MASTER_ENCRYPTION_KEY,JWT_SECRET,LOG_LEVEL,REQUIRE_VERIFIED_EMAIL,PTV_V11_OAUTH_CLIENT_ID,PTV_V11_OAUTH_CLIENT_SECRET,PTV_V11_OAUTH_REDIRECT_URI,AUTH_MODE,OIDC_ISSUER,OIDC_CLIENT_ID,OIDC_CLIENT_SECRET,OIDC_SCOPES,OIDC_BUTTON_LABEL,OIDC_CREATE_USERS,OIDC_TRUST_EMAIL,OIDC_POST_LOGOUT_REDIRECT_URI,OIDC_BREAK_GLASS_EMAILS,OIDC_GROUP_SYNC,OIDC_GROUPS_CLAIM,OIDC_GROUP_PREFIX
+          script: |
+            set -eu
+            cd "$DEPLOY_PATH"
+
+            # Single-quoted KEY='value' lines: compose reads them literally (no $ expansion).
+            # A value containing a single quote would break that, so refuse it.
+            w() {
+              case "$2" in
+                *"'"*) echo "$1 contains a single quote; refusing to write .env" >&2; exit 1 ;;
+              esac
+              printf "%s='%s'\n" "$1" "$2"
+            }
+            umask 077
+            {
+              w DATABASE_URL "postgres://${APP_NAME}_user:${DB_PASSWORD_URLENC}@pg.shared.local:5432/${APP_NAME}_db"
+              w IMAGE_TAG "$IMAGE_TAG"
+              w DOMAIN "$DOMAIN"
+              w MCP_PUBLIC_URL "https://$DOMAIN"
+              w NODE_ENV production
+              w HOST 0.0.0.0
+              w PORT 3000
+              w LOG_LEVEL "${LOG_LEVEL:-info}"
+              w MASTER_ENCRYPTION_KEY "$MASTER_ENCRYPTION_KEY"
+              w JWT_SECRET "$JWT_SECRET"
+              w ALLOW_TENANT_CREATION false
+              w REQUIRE_VERIFIED_EMAIL "$REQUIRE_VERIFIED_EMAIL"
+              w PTV_V11_OAUTH_CLIENT_ID "$PTV_V11_OAUTH_CLIENT_ID"
+              w PTV_V11_OAUTH_CLIENT_SECRET "$PTV_V11_OAUTH_CLIENT_SECRET"
+              w PTV_V11_OAUTH_REDIRECT_URI "$PTV_V11_OAUTH_REDIRECT_URI"
+              w AUTH_MODE "$AUTH_MODE"
+              w OIDC_ISSUER "$OIDC_ISSUER"
+              w OIDC_CLIENT_ID "$OIDC_CLIENT_ID"
+              w OIDC_CLIENT_SECRET "$OIDC_CLIENT_SECRET"
+              w OIDC_SCOPES "$OIDC_SCOPES"
+              w OIDC_BUTTON_LABEL "$OIDC_BUTTON_LABEL"
+              w OIDC_CREATE_USERS "$OIDC_CREATE_USERS"
+              w OIDC_TRUST_EMAIL "$OIDC_TRUST_EMAIL"
+              w OIDC_POST_LOGOUT_REDIRECT_URI "$OIDC_POST_LOGOUT_REDIRECT_URI"
+              w OIDC_BREAK_GLASS_EMAILS "$OIDC_BREAK_GLASS_EMAILS"
+              w OIDC_GROUP_SYNC "$OIDC_GROUP_SYNC"
+              w OIDC_GROUPS_CLAIM "$OIDC_GROUPS_CLAIM"
+              w OIDC_GROUP_PREFIX "$OIDC_GROUP_PREFIX"
+            } > .env
+            chmod 600 .env
+
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            docker compose -f docker-compose.yml pull
+            docker logout ghcr.io || true
+
+            # `migrate` runs first and must exit 0; `app` starts only after that.
+            if ! docker compose -f docker-compose.yml up -d --remove-orphans; then
+              echo "docker compose up failed; migrate logs:"
+              docker compose -f docker-compose.yml logs --no-color migrate || true
+              exit 1
+            fi
+
+      - name: Wait for container healthcheck
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        with:
+          host: ${{ vars.VM_HOST }}
+          username: ${{ vars.VM_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.VM_SSH_PORT || 22 }}
+          envs: DEPLOY_PATH
+          script: |
+            set -u
+            cd "$DEPLOY_PATH"
+            for i in $(seq 1 12); do
+              status="$(docker inspect --format='{{.State.Health.Status}}' ptv-mcp-app 2>/dev/null || echo missing)"
+              echo "attempt $i: $status"
+              if [ "$status" = healthy ]; then
+                echo "ptv-mcp-app is healthy"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "ptv-mcp-app did not become healthy; dumping logs"
+            docker compose -f docker-compose.yml ps || true
+            docker compose -f docker-compose.yml logs --no-color migrate || true
+            docker logs --tail 200 ptv-mcp-app || true
+            exit 1
+
+      - name: Verify public endpoint through Traefik
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "https://${DOMAIN}/health"; then
+              echo
+              exit 0
+            fi
+            echo "attempt $i: https://${DOMAIN}/health not ready yet"
+            sleep 5
+          done
+          echo "https://${DOMAIN}/health did not respond with 2xx" >&2
+          exit 1

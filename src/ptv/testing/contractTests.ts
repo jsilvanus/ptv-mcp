@@ -10,6 +10,8 @@ export interface PtvAdapterContractFixtures {
   unknownId: PtvContentId;
   /** A code list name this adapter is expected to serve at least one entry for. */
   knownCodeListName: string;
+  /** Optional: a general description this adapter can read by id (checked only when given). */
+  knownGeneralDescriptionId?: PtvContentId;
 }
 
 /**
@@ -98,6 +100,12 @@ export function runPtvAdapterContractTests(
 
     it('getGeneralDescription returns null for an unknown id', async () => {
       expect(await adapter.getGeneralDescription(fixtures.unknownId)).toBeNull();
+    });
+
+    it('getGeneralDescription returns a match for a known id when the fixture has one', async () => {
+      if (!fixtures.knownGeneralDescriptionId) return;
+      const description = await adapter.getGeneralDescription(fixtures.knownGeneralDescriptionId);
+      expect(description?.id).toBe(fixtures.knownGeneralDescriptionId);
     });
 
     it('getConnectionsFor returns an array, even when there are none', async () => {

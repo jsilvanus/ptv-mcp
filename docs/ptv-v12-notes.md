@@ -21,57 +21,48 @@
 
 ## Status summary
 
-`PtvV12Adapter` is wired into `DbPtvAdapterRegistry`'s default adapter
-factories (`src/ptv/dbAdapterRegistry.ts`) alongside `PtvV11Adapter` —
-**both adapters are live in the running system today**, not sequenced as
-"v11 now, v12 later" the way `docs/plan.md`'s original phasing describes.
-A tenant admin configures a v12 API key per environment through
-`web/src/pages/PtvConnectionsPage.tsx` / `src/routes/ptvV12.ts`
-(`TenantEnvironment`, tenant-scoped credential). See `PLAN.md`/
-`docs/phase-plan.md`'s Phase 9 section for the full checklist state.
+As of 2026-11-17.
 
-**Read coverage is incomplete.** Of the 12 read-side `PtvAdapter` methods:
-
-- Implemented: `searchServices`/`getService`, `searchChannels`/
-  `getChannel`, `searchOrganisations`/`getOrganisation`/
-  `getOrganisationHierarchy`, `getConnectionsFor`.
-- **Unimplemented — throw unconditionally**: `searchServiceCollections`,
-  `searchGeneralDescriptions`, `listCodes` (`unsupported()` in
-  `adapter.ts`, message `'PTV v12 adapter operation not implemented yet:
-  ...'`). A tenant/connection reading via v12 gets a hard MCP tool error
-  from `ptv_search_service_collections`, `ptv_search_general_descriptions`,
-  and `ptv_list_codes`. `PtvV12Adapter` still satisfies the `PtvAdapter`
-  TypeScript interface — the methods exist and type-check — so this gap
-  is invisible to `npm run typecheck`/`npm run build` and only surfaces at
-  call time or via a contract-test run (not yet done for either real
-  adapter — see Phase 9 step 6).
-
-**Write is fully gated off.** `applyServiceChange` is a one-line throw
-(`'PTV v12 write operations are not enabled yet'`) — no beta `Post*/Put*`
-request-body mapping exists yet to gate, unlike what the original phase
-plan described ("implemented against the beta schemas, but gated off").
-That mapping work is still fully ahead of whoever picks up Phase
-10/MVP-1.
-
-**Search does not use server-side filtering — it downloads the whole
-catalogue.** `searchServices`/`searchChannels`/`searchOrganisations` all
-go through `fetchAll()`, which loops PTV's `/search` endpoint with
-`page`/`pageSize` until PTV reports no more results, fetching **every**
-item of that content type regardless of what was actually searched for.
-`query` and `organizationId` filtering, and this call's own requested
-`page`/`pageSize`, are then applied **in-memory in TypeScript** on the
-full result set. `getConnectionsFor` is worse: it calls
-`/api/v12/connection/search` exactly once, with no pagination loop at
-all — for a tenant/entity with more connections than PTV's default page
-size, results are silently truncated with no error. For Finland's
-national service catalogue (thousands of services/channels/organisations
-across all municipalities and parishes), this means **every v12 search
-call, however narrow, pays the cost of a full-catalogue fetch** —
-a real scalability problem to fix before production load, not a style
-nit. The right fix is server-side query params (`docs/plan.md`'s original
-comparison table already asserts v12 supports "area, org, service type,
-..." query-param filters on `/search`), but exact param names need the
-real OpenAPI spec (step 1's gap) to get right rather than guessed.
+- **Wired.** `PtvV12Adapter` is in `DbPtvAdapterRegistry`'s default adapter
+  factories (`src/ptv/dbAdapterRegistry.ts`) alongside `PtvV11Adapter`; both
+  run in the live system. A tenant admin configures a v12 API key per
+  environment in `web/src/pages/PtvConnectionsPage.tsx` / `src/routes/ptvV12.ts`
+  (`TenantEnvironment`, tenant-scoped credential).
+- **Read: complete.** Every read method of `PtvAdapter` is implemented:
+  services (`searchServices`/`getService`), channels (`searchChannels`/
+  `getChannel`), organisations (`searchOrganisations`/`getOrganisation`/
+  `getOrganisationHierarchy`), service collections (`searchServiceCollections`),
+  general descriptions (`searchGeneralDescriptions`/`getGeneralDescription`),
+  connections (`getConnectionsFor`/`getConnectionsForServices`), code lists
+  (`listCodes`) and ontology terms (`searchOntologyTerms`).
+  `getGeneralDescription` was a stub returning `null` until the 2026-11-17
+  contract run; it now reads `GET /api/v12/general-description/{contentId}`.
+- **Live-verified** against the v12 test environment on 2026-09-23/24
+  (test data: Riihimäen seurakunta, Tampere associations, Inarin kunta) and
+  checked against the vendored spec `docs/ptv-api-documentation.json`. Fixes
+  since then: full pagination (`totalItems`/`totalPages`), server-side
+  `organizationContentIds`/`serviceContentIds`/`channelContentIds`/`codes`/`uris`
+  filters where v12 has them (see the live-verification section), and the
+  persistent organisation cache (2026-09-26).
+- **Contract suite.** `src/ptv/v12/contract.test.ts` runs the shared suite
+  (`src/ptv/testing/contractTests.ts`) against `PtvV12Adapter` with a fixture
+  `fetch`. This checks shape and not-found behaviour offline; it is not a live
+  run.
+- **Search is partly client-side.** Organisation name search and free-text
+  search filter in TypeScript because v12 has no name/text filter on those
+  `/search` endpoints. Ontology term search uses `name=` server-side.
+- **Code names.** Classification entries are completed from the reference-data
+  endpoints. The resolved names are cached in Postgres (`ptv_code_name_cache`,
+  migration `drizzle/0016_ptv_code_name_cache.sql`, `PtvCodeNameCacheService`,
+  wired in `src/app.ts`), with an in-memory layer in front. The memory-only
+  default in `src/ptv/v12/codeNameCache.ts` applies only when no store is passed
+  (tests).
+- **Write: fully gated off.** `getCapabilities()` reports `supportsWrite: false`.
+  Every write method (`applyServiceChange`, `createService`, `applyChannelChange`,
+  `createChannel`, `applyConnectionChange`, `applyOrganizationChange`,
+  `createOrganization`) throws `'PTV v12 write operations are not enabled yet'`.
+  No beta `Post*/Put*` request mapping exists. The gate is covered by a unit
+  test in `src/ptv/v12/contract.test.ts`.
 
 ## Auth model
 
@@ -125,15 +116,16 @@ just version-path differences, the gateway host itself differs.)
 ## Endpoints currently called
 
 ```
-GET /api/v12/service/search           GET /api/v12/service/{id}
-GET /api/v12/service-channel/search   GET /api/v12/service-channel/{id}
-GET /api/v12/organization/search      GET /api/v12/organization/{id}
+GET /api/v12/service/search                  GET /api/v12/service/{contentId}
+GET /api/v12/service-channel/search          GET /api/v12/service-channel/{contentId}
+GET /api/v12/organization/search             GET /api/v12/organization/{contentId}
+GET /api/v12/service-collection/search       GET /api/v12/service-collection/{contentId}
+GET /api/v12/general-description/search      GET /api/v12/general-description/{contentId}
 GET /api/v12/connection/search
+GET /api/v12/{country-codes, industrial-classes, language-codes, life-events,
+              municipality-codes, ontology-terms, postal-codes, region-codes,
+              service-classes, target-groups, wellbeing-services-county-codes}
 ```
-
-No endpoints are called yet for service collections, general
-descriptions, or code lists (the three unimplemented methods above) —
-their PTV v12 paths haven't been vendored/confirmed in this codebase.
 
 ## Wire shape — localized content
 
@@ -182,23 +174,27 @@ off. This is not specific to v12 but is the reason v12 reads are reachable
 in production today even though v12 write isn't — see
 `docs/phase-plan.md`'s Phase 9 write-up for the fuller architecture note.
 
-## Open items for whoever picks up Phase 9/10 next
+## Open items
 
-1. Vendor the real `openapi.json`, generate wire types + validators —
-   removes the guessed-fallback-chain risk above and is a prerequisite
-   for confidently fixing the full-catalogue-fetch problem with real
-   filter param names.
-2. Implement `searchServiceCollections`, `searchGeneralDescriptions`,
-   `listCodes`, or explicitly mark them unsupported in
-   `PtvAdapterCapabilities` so calling code can detect the gap instead of
-   hitting a thrown error at call time.
-3. Push `query`/`organizationId` filtering and pagination down to PTV's
-   `/search` query params instead of the current full-fetch-then-filter
-   approach; fix `getConnectionsFor`'s missing pagination loop.
-4. Run the Phase 1 contract test suite (`src/ptv/testing/contractTests.ts`)
-   against `PtvV12Adapter` — this would have caught the unimplemented-method
-   gap immediately.
+1. **v12 write (external gate).** The vendored spec has no v12 write endpoints.
+   DVV announced the v12 write beta for October 2026 (see
+   [v12 write auth](#v12-write-auth-dvv-email-2026-09-24)). When it lands: map the
+   beta `Post*/Put*` bodies, add the write token source, and extend the contract
+   suite's write branch. This is Phase 10 (test environment).
+2. **Hand-written wire types.** `src/ptv/v12/wireModel.ts` and the mappers are
+   hand-written; nothing is generated from the vendored spec. v11's wire types are
+   generated (`src/ptv/v11/wire-types.ts`, `openapi-typescript`). Generating v12
+   types would let the defensive `??` fallback chains be checked against the spec.
+   Some are probably dead branches. Not blocking.
+3. **Client-side name/text search.** Organisation name and free-text search still
+   scan the catalogue in memory, because v12 has no such filter on those endpoints.
+   Revisit if the beta adds one.
+4. **Pilot confirmation.** The UI and routes are live, but there is no recorded
+   confirmation from a real pilot tenant's v12 search traffic (PLAN Phase 9).
 
+Done since the earlier open-items list: implemented the three stubbed read
+methods, ran the contract suite (fixture-based, `src/ptv/v12/contract.test.ts`),
+moved the code-name cache to Postgres, and fixed the full-catalogue scans.
 
 ## Read-parity implementation update
 
@@ -296,9 +292,8 @@ against the vendored spec `docs/ptv-api-documentation.json`
   v11 has no ontology endpoint and throws
   `OntologySearchUnsupportedError`.
 
-Still open: write support (v12 has no write endpoints in this spec), and
-the in-memory code cache could move to Postgres if restart cold-starts
-matter.
+Still open: write support (v12 has no write endpoints in this spec). The code
+cache is no longer memory-only; see the status summary.
 
 
 ## Organisation cache and batched connection reads (2026-09-26)
