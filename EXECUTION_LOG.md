@@ -2275,3 +2275,13 @@ is set (README, "Single sign-on").
   tests; the invalid-service test now expects `pending`).
   `src/routes/proposals.integration.test.ts` gained one REST `approve_and_apply`
   test (needs PostgreSQL, not run in the session that wrote it).
+
+## 2026-11-17 — SSO-only mode (`AUTH_MODE=oidc`, phase C of the Tunnus sign-in plan)
+
+- **Change**: `AUTH_MODE` (`local` | `both` | `oidc`, `src/config.ts`, `loadAuthMode`) and `OIDC_BREAK_GLASS_EMAILS` (`loadBreakGlassEmails`). Default `both` when `OIDC_ISSUER` is set, else `local`. `local` is refused while OIDC is configured; `oidc` and `both` are refused without it.
+- **Gate**: `src/auth/signInMode.ts` (`isPasswordSignInAllowed`). In `oidc` mode `AuthService.verifyCredentials` accepts a password only for break-glass emails. Other emails get the same `InvalidCredentialsError` and the same Argon2 cost as a wrong password. `register` throws `PasswordRegistrationDisabledError` (`/auth/register` → 403). `requestPasswordReset` sends nothing to non-break-glass accounts. OIDC sign-in (`assertCanSignIn`) is unchanged.
+- **UI**: `/oidc/config` returns `ssoOnly`. The web login page and the MCP `/oauth/authorize` page show the SSO button and put the password form in a collapsed "Break-glass sign-in" section. The web register link is hidden.
+- **Wiring**: `app.ts` passes the mode to `AuthService` and the pages. `mcp/token.ts` (`npm run mcp:token`) passes it too, so the helper cannot mint tokens with a password the server would refuse. Startup logs a warning for `oidc` with no break-glass emails.
+- **Decision**: in `oidc` mode the password form is not removed. It stays for break-glass accounts behind a collapsed section, since the plan keeps break-glass admins. The reading is recorded here so a reviewer can correct it.
+- **Known gap**: break-glass passwords are not rotated or audited by this change. Sign-ins are not written to the audit log (password sign-ins never were).
+- **Tests**: `src/config.test.ts` (AUTH_MODE and break-glass parsing), `src/auth/signInMode.test.ts` (unit), `src/auth/ssoOnly.integration.test.ts` (service and HTTP, needs PostgreSQL), `src/routes/oidc.integration.test.ts` (config body now includes `ssoOnly`).

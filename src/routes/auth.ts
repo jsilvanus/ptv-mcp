@@ -3,6 +3,7 @@ import {
   AccountLockedError,
   type AuthService,
   InvalidOrExpiredTokenError,
+  PasswordRegistrationDisabledError,
 } from '../auth/authService.js';
 import { createAuthenticate } from '../auth/rbac.js';
 
@@ -48,8 +49,15 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
     if (!email || !name || !password) {
       return reply.badRequest('email, name, and password are required');
     }
-    const { userId } = await authService.register(email, name, password);
-    return reply.code(201).send({ userId, email });
+    try {
+      const { userId } = await authService.register(email, name, password);
+      return reply.code(201).send({ userId, email });
+    } catch (err) {
+      if (err instanceof PasswordRegistrationDisabledError) {
+        return reply.forbidden(err.message);
+      }
+      throw err;
+    }
   });
 
   app.post<{ Body: VerifyEmailBody }>('/auth/verify-email', async (request, reply) => {

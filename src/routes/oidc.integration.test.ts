@@ -158,7 +158,7 @@ describe('OIDC sign-in', () => {
   it('serves the button label for the web UI', async () => {
     const instance = await app(oidcConfig({ buttonLabel: 'Kirjaudu' }));
     const res = await instance.inject({ method: 'GET', url: '/oidc/config' });
-    expect(res.json()).toEqual({ buttonLabel: 'Kirjaudu' });
+    expect(res.json()).toEqual({ buttonLabel: 'Kirjaudu', ssoOnly: false });
   });
 
   it('signs a linked user in to the web UI with the same session a password login creates', async () => {

@@ -1,3 +1,4 @@
+import type { AuthMode } from './auth/signInMode.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import sensible from '@fastify/sensible';
 import type { AppConfig } from './config.js';
@@ -53,6 +54,9 @@ export interface BuildAppOptions {
   > & {
     /** Optional so existing callers that build the app without it keep compiling; defaults to false. */
     requireVerifiedEmail?: boolean;
+    /** Optional, as `requireVerifiedEmail`: defaults to `both` with OIDC configured, else `local`. */
+    authMode?: AuthMode;
+    breakGlassEmails?: string[];
   };
   db?: Database;
   mailer?: Mailer;
@@ -71,11 +75,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
   const requireVerifiedEmail = config.requireVerifiedEmail ?? false;
+  const authMode: AuthMode = config.authMode ?? (config.oidc ? 'both' : 'local');
+  const breakGlassEmails = config.breakGlassEmails ?? [];
+  if (authMode === 'oidc' && breakGlassEmails.length === 0) {
+    app.log.warn('AUTH_MODE=oidc without OIDC_BREAK_GLASS_EMAILS: no password sign-in is possible');
+  }
   const authService = new AuthService({
     db,
     jwtSecret: config.jwtSecret,
     mailer,
     requireVerifiedEmail,
+    authMode,
+    breakGlassEmails,
   });
   const oauthService = new OAuthService(
     db,
@@ -146,6 +157,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     adapterConfigService,
     publicUrl: config.mcpPublicUrl,
     ...(config.oidc ? { oidcButtonLabel: config.oidc.buttonLabel } : {}),
+    ssoOnly: authMode === 'oidc',
   });
   if (config.oidc) {
     await app.register(oidcRoutes, {
@@ -162,6 +174,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       tenantService,
       publicUrl: config.mcpPublicUrl,
       buttonLabel: config.oidc.buttonLabel,
+      ssoOnly: authMode === 'oidc',
       secureCookies: config.nodeEnv === 'production',
     });
   }
