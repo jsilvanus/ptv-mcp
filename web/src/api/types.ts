@@ -62,7 +62,8 @@ export interface ServiceDiffEntry {
   after: unknown;
 }
 
-export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied' | 'failed';
+export type ProposalStatus =
+  'pending' | 'applying' | 'approved' | 'rejected' | 'applied' | 'failed';
 
 export type ProposalResolveAction = 'approve_and_export' | 'approve_and_apply' | 'reject';
 

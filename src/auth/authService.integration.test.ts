@@ -7,6 +7,7 @@ import {
   AccountLockedError,
   AuthService,
   EmailAlreadyRegisteredError,
+  EmailNotVerifiedError,
   InvalidCredentialsError,
   InvalidOrExpiredTokenError,
 } from './authService.js';
@@ -253,6 +254,27 @@ describe('AuthService', () => {
 
   it('does not reveal whether an email is registered when requesting a password reset', async () => {
     await expect(service.requestPasswordReset('nobody@example.test')).resolves.toBeUndefined();
+  });
+
+  it('with REQUIRE_VERIFIED_EMAIL, refuses an unverified account only after the right password', async () => {
+    const strict = new AuthService({
+      db,
+      jwtSecret: config.jwtSecret,
+      mailer,
+      now: () => clock,
+      requireVerifiedEmail: true,
+    });
+    const email = uniqueEmail();
+    await service.register(email, 'Test User', 'correct-password');
+
+    await expect(strict.login(email, 'correct-password')).rejects.toThrow(EmailNotVerifiedError);
+    await expect(strict.login(email, 'wrong-password')).rejects.toThrow(InvalidCredentialsError);
+
+    const token = mailer.verificationTokens.get(email);
+    if (!token) throw new Error('no token captured');
+    await strict.verifyEmail(token);
+    const session = await strict.login(email, 'correct-password');
+    expect(session.accessToken).toBeTruthy();
   });
 
   it('rejects an expired refresh token', async () => {

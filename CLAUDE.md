@@ -156,6 +156,12 @@ reviewers (`proposal_reviewers`, `ptv_request_review`/`ptv_sign_off_proposal`)
 must all have `approved` before either approve action; reject is always
 allowed.
 
+`approve_and_apply` first claims the proposal (`pending` → `applying`, via
+`ProposalService.claimForApply`), so only one resolution can write to PTV;
+the claim ends as `applied` or `failed`. Errors raised before any write
+(no write adapter, no write API selected, failed validation) release the claim
+and leave the proposal `pending`.
+
 ### MCP layer
 
 `src/mcp/mcpServer.ts` wires the real `@modelcontextprotocol/sdk` over a
@@ -175,6 +181,8 @@ do *not* use the tools' `try/catch → errorResult` convention, because
 protocol-shape difference, not an inconsistency to "fix" by matching tool
 error handling.
 
+OAuth client ids are always minted by the server (`urn:ptv-mcp:client:<uuid>`; a `client_id` sent to `POST /oauth/register` is ignored), and registration never updates an existing client, so redirect URIs cannot be replaced by an unauthenticated caller.
+
 **MCP OAuth access tokens are not the same token as the web UI's login
 session** — this has caused real bugs (fixed 2026-09-20, see
 `EXECUTION_LOG.md`). `AuthService.login()`/`signAccessToken()`
@@ -191,6 +199,8 @@ login-session token to call `/mcp` in code or tests** — construct an
 `/mcp` suffix on either) and call `issueAccessToken` directly instead (integration tests use
 `IntegrationFixtures.mcpToken` in `src/testing/integrationFixtures.ts`,
 which does exactly this).
+Session tokens carry audience `ptv-mcp:session` (`SESSION_TOKEN_AUDIENCE`) and
+`verifyAccessToken` requires it, so an MCP token is refused by the REST API too.
 A mismatched `resource`/audience between two `OAuthService` instances
 (e.g. one minting, another verifying) makes every token silently fail
 verification — `npm run mcp:token` (`src/mcp/token.ts`) had exactly this
@@ -269,6 +279,6 @@ equals the proposal.
   a proposed change, generated against the active adapter's own schema
   rather than hand-maintained rules.
 - Drizzle migrations are sequential and hand-numbered
-  (`drizzle/0000_...` → `drizzle/0011_...`); always add a new one via
+  (`drizzle/0000_...` → `drizzle/0026_...`); always add a new one via
   `npm run db:generate` after a schema change rather than editing an
   applied migration.

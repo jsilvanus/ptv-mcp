@@ -7,6 +7,26 @@ const base = {
   JWT_SECRET: 'secret',
 };
 
+describe('REQUIRE_VERIFIED_EMAIL config', () => {
+  it('defaults to false when unset or empty', () => {
+    expect(loadConfig({ ...base }).requireVerifiedEmail).toBe(false);
+    expect(loadConfig({ ...base, REQUIRE_VERIFIED_EMAIL: '' }).requireVerifiedEmail).toBe(false);
+  });
+
+  it('reads true and false', () => {
+    expect(loadConfig({ ...base, REQUIRE_VERIFIED_EMAIL: 'true' }).requireVerifiedEmail).toBe(true);
+    expect(loadConfig({ ...base, REQUIRE_VERIFIED_EMAIL: 'FALSE' }).requireVerifiedEmail).toBe(
+      false,
+    );
+  });
+
+  it('refuses a value that is not a boolean', () => {
+    expect(() => loadConfig({ ...base, REQUIRE_VERIFIED_EMAIL: 'yes' })).toThrow(
+      'Invalid REQUIRE_VERIFIED_EMAIL',
+    );
+  });
+});
+
 describe('OIDC config', () => {
   it('is off when OIDC_ISSUER is unset or empty', () => {
     expect(loadConfig({ ...base }).oidc).toBeUndefined();

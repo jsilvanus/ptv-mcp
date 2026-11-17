@@ -17,7 +17,14 @@ import { QualityFindings } from './QualityFindings';
 import { PROPOSAL_KIND_LABELS } from './ptvLabels';
 import { roleAtLeast } from '../auth/roles';
 
-const STATUSES: ProposalStatus[] = ['pending', 'approved', 'rejected', 'applied', 'failed'];
+const STATUSES: ProposalStatus[] = [
+  'pending',
+  'applying',
+  'approved',
+  'rejected',
+  'applied',
+  'failed',
+];
 /** Filter value for pending proposals waiting for the user's own sign-off. */
 const WAITING_FOR_ME = 'waiting';
 type StatusFilter = ProposalStatus | typeof WAITING_FOR_ME;

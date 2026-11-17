@@ -309,7 +309,9 @@ export function registerProposalTools(tool: RegisterTool, deps: ToolDeps): void 
       description:
         'List queued proposals for a tenant (kind: service_update, service_create or channel_update). waitingForMe: true lists only pending proposals waiting for your sign-off as a required reviewer. Requires the Contributor role (Ehdottaja) or above.',
       inputSchema: {
-        status: z.enum(['pending', 'approved', 'rejected', 'applied', 'failed']).optional(),
+        status: z
+          .enum(['pending', 'applying', 'approved', 'rejected', 'applied', 'failed'])
+          .optional(),
         waitingForMe: z.boolean().optional(),
       },
     },

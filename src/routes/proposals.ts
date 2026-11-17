@@ -17,6 +17,7 @@ import {
   type ResolveProposalAction,
 } from '../mcp/proposalQueue.js';
 import type { ProposalService, ProposalStatus } from '../proposals/proposalService.js';
+import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 import { TenantService, tenantRequiresFourEyes } from '../tenants/tenantService.js';
 import { toolContextFromRequest, type ContextQuery } from './context.js';
 
@@ -27,6 +28,7 @@ export interface ProposalRoutesOptions {
   registry: PtvAdapterRegistry;
   auditService: AuditService;
   validator: ChangeValidator;
+  adapterConfigService: PtvAdapterConfigService;
 }
 
 interface ListProposalQuery extends ContextQuery {
@@ -37,6 +39,8 @@ interface ListProposalQuery extends ContextQuery {
 
 interface ResolveProposalBody {
   action: ResolveProposalAction;
+  /** The write API version to apply with; defaults as described in writeApiVersionFor. */
+  writeApiVersion?: string;
 }
 
 /**
@@ -53,6 +57,27 @@ export async function proposalRoutes(
   const requireApprover = createRequireRole(options.db, 'approver');
   const tenantService = new TenantService(options.db, options.auditService);
   const listMembers = (tenantId: string) => tenantService.listMembers(tenantId);
+
+  /**
+   * The write API version for `approve_and_apply` from the web UI: the one
+   * the body names (if it names none that is configured, none), else v11,
+   * else the first writable one, for the proposal's environment. Undefined
+   * when nothing is writable, so the call fails with WriteApiNotSelectedError.
+   */
+  async function writeApiVersionFor(
+    tenantId: string,
+    proposalId: string,
+    requested: string | undefined,
+  ): Promise<string | undefined> {
+    const proposal = await options.proposalService.getById(tenantId, proposalId);
+    const writable = (await options.adapterConfigService.list(tenantId)).filter(
+      (config) => config.environment === proposal.environment && config.supportsWrite,
+    );
+    if (requested) {
+      return writable.find((config) => config.apiVersion === requested)?.apiVersion;
+    }
+    return (writable.find((config) => config.apiVersion === 'v11') ?? writable[0])?.apiVersion;
+  }
 
   app.get<{ Querystring: ListProposalQuery }>(
     '/tenants/:tenantId/proposals',
@@ -86,17 +111,26 @@ export async function proposalRoutes(
   app.post<{ Body: ResolveProposalBody; Querystring: ContextQuery }>(
     '/tenants/:tenantId/proposals/:proposalId/resolve',
     { preHandler: [authenticate, requireApprover] },
-    async (request) => {
+    async (request, reply) => {
       const { proposalId } = request.params as { proposalId: string };
+      const action = request.body?.action;
+      if (typeof action !== 'string') return reply.badRequest('action is required');
+      const context = toolContextFromRequest(request, request.query);
+      const requested =
+        typeof request.body.writeApiVersion === 'string' ? request.body.writeApiVersion : undefined;
+      const writeApiVersion =
+        action === 'approve_and_apply'
+          ? await writeApiVersionFor(context.tenantId, proposalId, requested)
+          : undefined;
       return resolveProposal(
         requestRoleResolver(options.db, request),
         options.registry,
         options.proposalService,
         options.auditService,
         options.validator,
-        toolContextFromRequest(request, request.query),
+        writeApiVersion ? { ...context, writeApiVersion } : context,
         proposalId,
-        request.body.action,
+        action,
         (id) => tenantRequiresFourEyes(options.db, id),
       );
     },

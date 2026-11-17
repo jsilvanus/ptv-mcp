@@ -1,6 +1,12 @@
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
-import { oidcIdentities, oidcLoginStates, oidcWebHandoffs, users } from '../db/schema/index.js';
+import {
+  oidcIdentities,
+  oidcLoginStates,
+  oidcWebHandoffs,
+  refreshTokens,
+  users,
+} from '../db/schema/index.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
 import type { OidcIdentityClaims } from './oidcClient.js';
 
@@ -103,8 +109,12 @@ export class OidcService {
     if (trustedEmail) {
       const existing = await this.findUserByEmail(trustedEmail);
       if (existing) {
-        await this.link(claims, existing);
-        return existing;
+        if (existing.emailVerifiedAt === null) {
+          await this.claimUnverifiedAccount(claims, existing.id);
+        } else {
+          await this.link(claims, existing.id);
+        }
+        return existing.id;
       }
     }
 
@@ -141,16 +151,48 @@ export class OidcService {
     return userId;
   }
 
-  /** Exact match first, then a single case-insensitive match (users.email is unique case-sensitively). */
-  private async findUserByEmail(email: string): Promise<string | null> {
+  /**
+   * Exact match first, then a single case-insensitive match (users.email is
+   * unique case-sensitively). Returns the account's id and whether its email
+   * was ever verified.
+   */
+  private async findUserByEmail(
+    email: string,
+  ): Promise<{ id: string; emailVerifiedAt: Date | null } | null> {
     const exact = await this.db.query.users.findFirst({ where: eq(users.email, email) });
-    if (exact) return exact.id;
+    if (exact) return { id: exact.id, emailVerifiedAt: exact.emailVerifiedAt };
     const rows = await this.db
-      .select({ id: users.id })
+      .select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt })
       .from(users)
       .where(sql`lower(${users.email}) = lower(${email})`)
       .limit(2);
-    return rows.length === 1 && rows[0] ? rows[0].id : null;
+    const [row] = rows;
+    return rows.length === 1 && row ? row : null;
+  }
+
+  /**
+   * Links an IdP identity to a local account whose email was never verified.
+   * Such an account may have been registered by someone else with an address
+   * that person does not control, so when the IdP-verified owner arrives its
+   * password and sessions are dropped; the owner can set a password again
+   * through password reset. An account that already proved its email is never
+   * touched here (see `resolveUser`).
+   */
+  private async claimUnverifiedAccount(claims: OidcIdentityClaims, userId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({
+          passwordHash: null,
+          ...(claims.emailVerified ? { emailVerifiedAt: this.now() } : {}),
+        })
+        .where(eq(users.id, userId));
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: this.now() })
+        .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+    });
+    await this.link(claims, userId);
   }
 
   private async link(claims: OidcIdentityClaims, userId: string): Promise<void> {

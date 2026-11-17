@@ -18,6 +18,7 @@ import {
 import type { MembershipRoleResolver } from './authorization.js';
 import {
   NotARequestedReviewerError,
+  ProposalAlreadyResolvedError,
   type ProposalRecord,
   type ProposalReviewer,
   type ProposalService,
@@ -29,6 +30,7 @@ import { queueChannelProposal } from './channelProposal.js';
 import { queueConnectionProposal } from './connectionProposal.js';
 import { queueNewOrganizationProposal, queueOrganizationProposal } from './organizationProposal.js';
 import { confirmManualPublish } from './proposalQueue.js';
+import { WriteApiNotSelectedError } from './toolContext.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -182,7 +184,7 @@ function fakeProposalService() {
       async (
         _tenantId: string,
         proposalId: string,
-        status: Exclude<ProposalStatus, 'pending'>,
+        status: Exclude<ProposalStatus, 'pending' | 'applying'>,
         _resolvedBy: string,
         serviceId?: string,
       ) => {
@@ -190,9 +192,55 @@ function fakeProposalService() {
         if (!row) {
           throw new Error('not found');
         }
+        if (row.status !== 'pending') {
+          throw new ProposalAlreadyResolvedError(proposalId, row.status);
+        }
         row.status = status;
         if (serviceId) row.serviceId = serviceId;
         row.resolvedByUserId = ctx.actingUserId;
+        row.resolvedAt = new Date();
+        row.updatedAt = new Date();
+        return row;
+      },
+    ),
+    claimForApply: vi.fn(async (_tenantId: string, proposalId: string, resolvedBy: string) => {
+      const row = rows.find((entry) => entry.id === proposalId);
+      if (!row) throw new Error('not found');
+      if (row.status !== 'pending') {
+        throw new ProposalAlreadyResolvedError(proposalId, row.status);
+      }
+      row.status = 'applying';
+      row.resolvedByUserId = resolvedBy;
+      row.updatedAt = new Date();
+      return row;
+    }),
+    releaseApplyClaim: vi.fn(async (_tenantId: string, proposalId: string) => {
+      const row = rows.find((entry) => entry.id === proposalId);
+      if (!row) throw new Error('not found');
+      if (row.status !== 'applying') {
+        throw new ProposalAlreadyResolvedError(proposalId, row.status);
+      }
+      row.status = 'pending';
+      row.resolvedByUserId = null;
+      row.updatedAt = new Date();
+      return row;
+    }),
+    finishApply: vi.fn(
+      async (
+        _tenantId: string,
+        proposalId: string,
+        status: 'applied' | 'failed',
+        resolvedBy: string,
+        serviceId?: string,
+      ) => {
+        const row = rows.find((entry) => entry.id === proposalId);
+        if (!row) throw new Error('not found');
+        if (row.status !== 'applying') {
+          throw new ProposalAlreadyResolvedError(proposalId, row.status);
+        }
+        row.status = status;
+        if (serviceId) row.serviceId = serviceId;
+        row.resolvedByUserId = resolvedBy;
         row.resolvedAt = new Date();
         row.updatedAt = new Date();
         return row;
@@ -554,7 +602,8 @@ describe('proposalQueue', () => {
           noFourEyes,
         ),
       ).rejects.toThrow(/failed validation/);
-      expect(rows[0]?.status).toBe('failed');
+      // Refused before anything was written to PTV, so it stays pending.
+      expect(rows[0]?.status).toBe('pending');
     });
   });
 
@@ -976,6 +1025,145 @@ describe('proposalQueue', () => {
       await expect(
         commentOnProposal(async () => 'viewer', api, audit, ctx, queued.proposalId, 'Hei'),
       ).rejects.toThrow("requires at least 'contributor' role");
+    });
+  });
+
+  describe('approve_and_apply claims and pre-write errors', () => {
+    /** A registry whose every resolution is the same adapter, so its writes can be spied on. */
+    function registryFor(adapter: InMemoryPtvAdapter): PtvAdapterRegistry {
+      return { resolve: vi.fn(async () => adapter) };
+    }
+    function sharedAdapter(): InMemoryPtvAdapter {
+      return new InMemoryPtvAdapter({
+        services: [{ ...service }],
+        capabilities: v11Capabilities({ environment: 'test', supportsWrite: true }),
+      });
+    }
+
+    it('refuses approve_and_apply on a rejected proposal without writing to PTV', async () => {
+      const adapter = sharedAdapter();
+      const write = vi.spyOn(adapter, 'applyServiceChange');
+      const registry = registryFor(adapter);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'Rejected first' },
+      });
+      await resolveProposal(
+        publisherResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        writeCtx,
+        queued.proposalId,
+        'reject',
+        noFourEyes,
+      );
+
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          'approve_and_apply',
+          noFourEyes,
+        ),
+      ).rejects.toBeInstanceOf(ProposalAlreadyResolvedError);
+
+      expect(write).not.toHaveBeenCalled();
+      expect(rows[0]?.status).toBe('rejected');
+    });
+
+    it('writes once when approve_and_apply is resolved twice, including concurrently', async () => {
+      const adapter = sharedAdapter();
+      const write = vi.spyOn(adapter, 'applyServiceChange');
+      const registry = registryFor(adapter);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'Only once' },
+      });
+      const apply = () =>
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          'approve_and_apply',
+          noFourEyes,
+        );
+
+      const results = await Promise.allSettled([apply(), apply()]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(rows[0]?.status).toBe('applied');
+      await expect(apply()).rejects.toBeInstanceOf(ProposalAlreadyResolvedError);
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the proposal pending when no write API is selected', async () => {
+      const adapter = sharedAdapter();
+      const write = vi.spyOn(adapter, 'applyServiceChange');
+      const registry = registryFor(adapter);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'No write api' },
+      });
+
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          ctx,
+          queued.proposalId,
+          'approve_and_apply',
+          noFourEyes,
+        ),
+      ).rejects.toBeInstanceOf(WriteApiNotSelectedError);
+
+      expect(write).not.toHaveBeenCalled();
+      expect(rows[0]?.status).toBe('pending');
+    });
+
+    it('marks the proposal failed when PTV rejects the write itself', async () => {
+      const adapter = sharedAdapter();
+      vi.spyOn(adapter, 'applyServiceChange').mockRejectedValue(new Error('PTV 500'));
+      const registry = registryFor(adapter);
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'PTV fails' },
+      });
+
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          'approve_and_apply',
+          noFourEyes,
+        ),
+      ).rejects.toThrow('PTV 500');
+
+      expect(rows[0]?.status).toBe('failed');
     });
   });
 });

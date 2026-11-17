@@ -176,6 +176,13 @@
       "when": 1790269000000,
       "tag": "0025_oidc_sign_in",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790270000000,
+      "tag": "0026_proposal_status_applying",
+      "breakpoints": true
     }
   ]
 }

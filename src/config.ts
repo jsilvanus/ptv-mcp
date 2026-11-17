@@ -34,6 +34,12 @@ export interface AppConfig {
    * `/oidc/*` routes.
    */
   oidc?: OidcConfig;
+  /**
+   * `REQUIRE_VERIFIED_EMAIL`: sign-in and adding a member need an email the
+   * owner has verified. Off by default, because there is no real mail
+   * provider yet (LoggingMailer only logs); turn it on once one is configured.
+   */
+  requireVerifiedEmail: boolean;
 }
 
 export interface OidcConfig {
@@ -163,6 +169,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
     mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
     webDevUrl: env.WEB_DEV_URL ?? 'http://127.0.0.1:5173',
+    requireVerifiedEmail: parseBoolean('REQUIRE_VERIFIED_EMAIL', env.REQUIRE_VERIFIED_EMAIL, false),
     ...(oidc ? { oidc } : {}),
   };
 }

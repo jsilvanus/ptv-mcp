@@ -6,6 +6,40 @@ import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
 import { SignJWT, jwtVerify } from 'jose';
 
 const ACCESS_TTL_SECONDS = 3600;
+const MAX_REDIRECT_URIS = 10;
+const MAX_REDIRECT_URI_LENGTH = 2000;
+const MAX_CLIENT_NAME_LENGTH = 200;
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+/** Schemes that could run script or read local files; custom app schemes stay allowed. */
+const REJECTED_REDIRECT_SCHEMES = new Set(['javascript:', 'data:', 'file:', 'vbscript:', 'blob:']);
+
+/**
+ * Why a registered redirect URI is refused, or null when it is acceptable:
+ * https, http only to a loopback host, or a custom app scheme (cursor://, vscode://).
+ */
+export function redirectUriError(value: unknown): string | null {
+  if (typeof value !== 'string') return 'redirect_uris entries must be strings';
+  if (value.length > MAX_REDIRECT_URI_LENGTH) {
+    return `redirect_uris entries must be at most ${MAX_REDIRECT_URI_LENGTH} characters`;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'redirect_uris entries must be absolute URLs';
+  }
+  if (url.hash !== '') return 'redirect_uris entries must not contain a fragment';
+  if (REJECTED_REDIRECT_SCHEMES.has(url.protocol)) {
+    return `redirect_uris entries must not use the ${url.protocol} scheme`;
+  }
+  if (url.protocol === 'https:') return null;
+  if (url.protocol === 'http:') {
+    return LOOPBACK_HOSTS.has(url.hostname)
+      ? null
+      : 'http redirect_uris entries are allowed only for localhost, 127.0.0.1 or [::1]';
+  }
+  return null;
+}
 
 export interface OAuthClientMetadata {
   client_id?: string;
@@ -88,29 +122,41 @@ export class OAuthService {
     this.secretKey = Buffer.from(jwtSecret, 'base64');
   }
 
+  /**
+   * Dynamic client registration. Always mints a new client id: any `client_id`
+   * in the metadata is ignored, and registration never updates an existing
+   * client, so an unauthenticated caller cannot replace another client's
+   * redirect URIs.
+   */
   async registerClient(metadata: OAuthClientMetadata) {
-    if (!Array.isArray(metadata.redirect_uris) || metadata.redirect_uris.length === 0) {
+    const redirectUris = metadata.redirect_uris;
+    if (!Array.isArray(redirectUris) || redirectUris.length === 0) {
       throw new Error('redirect_uris is required');
     }
-    const clientId = metadata.client_id ?? `urn:ptv-mcp:client:${randomUUID()}`;
+    if (redirectUris.length > MAX_REDIRECT_URIS) {
+      throw new Error(`redirect_uris may list at most ${MAX_REDIRECT_URIS} entries`);
+    }
+    for (const uri of redirectUris) {
+      const error = redirectUriError(uri);
+      if (error) throw new Error(error);
+    }
+    const clientName = metadata.client_name
+      ? Array.from(metadata.client_name.trim()).slice(0, MAX_CLIENT_NAME_LENGTH).join('') ||
+        undefined
+      : undefined;
+
+    const clientId = `urn:ptv-mcp:client:${randomUUID()}`;
     await this.db.execute(sql`
       INSERT INTO oauth_clients (client_id, client_name, redirect_uris, grant_types, response_types, token_endpoint_auth_method, application_type)
-      VALUES (${clientId}, ${metadata.client_name ?? null}, ${JSON.stringify(metadata.redirect_uris)}::jsonb,
+      VALUES (${clientId}, ${clientName ?? null}, ${JSON.stringify(redirectUris)}::jsonb,
               ${JSON.stringify(metadata.grant_types ?? ['authorization_code', 'refresh_token'])}::jsonb,
               ${JSON.stringify(metadata.response_types ?? ['code'])}::jsonb,
               ${metadata.token_endpoint_auth_method ?? 'none'}, ${metadata.application_type ?? 'web'})
-      ON CONFLICT (client_id) DO UPDATE SET
-        client_name = EXCLUDED.client_name,
-        redirect_uris = EXCLUDED.redirect_uris,
-        grant_types = EXCLUDED.grant_types,
-        response_types = EXCLUDED.response_types,
-        token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method,
-        application_type = EXCLUDED.application_type
     `);
     return {
       client_id: clientId,
-      client_name: metadata.client_name,
-      redirect_uris: metadata.redirect_uris,
+      client_name: clientName,
+      redirect_uris: redirectUris,
       grant_types: metadata.grant_types ?? ['authorization_code', 'refresh_token'],
       response_types: metadata.response_types ?? ['code'],
       token_endpoint_auth_method: metadata.token_endpoint_auth_method ?? 'none',
@@ -128,6 +174,18 @@ export class OAuthService {
     );
     const row = rows[0];
     return !!row && Array.isArray(row.redirect_uris) && row.redirect_uris.includes(redirectUri);
+  }
+
+  /**
+   * Display info for the sign-in pages. A CIMD client id has no stored name
+   * and is never fetched here, so rendering a page makes no outbound request.
+   */
+  async describeClient(clientId: string): Promise<{ name: string | null }> {
+    if (this.isCimdClientId(clientId)) return { name: null };
+    const rows = await this.db.execute<{ client_name: string | null }>(
+      sql`SELECT client_name FROM oauth_clients WHERE client_id = ${clientId}`,
+    );
+    return { name: rows[0]?.client_name ?? null };
   }
 
   private isCimdClientId(clientId: string): boolean {

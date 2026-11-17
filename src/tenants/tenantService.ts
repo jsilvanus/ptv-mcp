@@ -26,6 +26,14 @@ export class MembershipNotFoundError extends Error {
   }
 }
 
+/** `REQUIRE_VERIFIED_EMAIL`: the account must prove it owns its email before a tenant can add it. */
+export class EmailNotVerifiedForMembershipError extends Error {
+  constructor(email: string) {
+    super(`${email} has not verified their email address yet, so the account cannot be added.`);
+    this.name = 'EmailNotVerifiedForMembershipError';
+  }
+}
+
 export interface TenantMembership {
   tenantId: string;
   tenantName: string;
@@ -72,6 +80,7 @@ export class TenantService {
   constructor(
     private readonly db: Database,
     private readonly auditService: AuditService,
+    private readonly options: { requireVerifiedEmail?: boolean } = {},
   ) {}
 
   /** Creates a tenant and makes `creatingUserId` its first Tenant Admin, atomically. */
@@ -138,6 +147,9 @@ export class TenantService {
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
       throw new UserNotFoundError(email);
+    }
+    if (this.options.requireVerifiedEmail && user.emailVerifiedAt === null) {
+      throw new EmailNotVerifiedForMembershipError(email);
     }
     await withContext(this.db, { tenantId }, async (tx) => {
       await tx

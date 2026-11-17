@@ -34,6 +34,35 @@ export function escapeHtml(value: string): string {
 }
 
 /**
+ * What the sign-in and connection pages show about the requesting client:
+ * its registered name (or, for a CIMD client, the hostname of its client id),
+ * and where the user will be sent back to.
+ */
+export function clientNotice(name: string | null, clientId: string, redirectUri: string): string {
+  let appName = 'an unnamed application';
+  if (name) {
+    appName = name;
+  } else {
+    try {
+      const url = new URL(clientId);
+      if (url.protocol === 'https:') appName = url.hostname;
+    } catch {
+      // Not a URL: keep the generic label.
+    }
+  }
+
+  let destination: string;
+  try {
+    const url = new URL(redirectUri);
+    destination = url.host ? url.host : `${url.protocol} (an app on this device)`;
+  } catch {
+    destination = redirectUri;
+  }
+
+  return `<p>Application: <strong>${escapeHtml(appName)}</strong></p><p>After you continue, you are sent back to <strong>${escapeHtml(destination)}</strong>.</p>`;
+}
+
+/**
  * Validates a pending authorization request's parameters, as the consent
  * form carries them (`encodeAuthorizationRequest`): the same checks
  * `GET /oauth/authorize` makes, apart from `response_type`. Returns an error
@@ -106,6 +135,8 @@ export async function connectionSelectionPage(
   // Users without a membership can still read public PTV data.
   const memberships = await deps.tenantService.listTenantsForUser(userId);
 
+  const client = await deps.oauthService.describeClient(clientId);
+
   const selectionToken = await deps.oauthService.createTenantSelectionToken(userId, {
     clientId,
     redirectUri,
@@ -126,6 +157,7 @@ export async function connectionSelectionPage(
 
   return html(`
         <h1>Choose PTV connection</h1>
+        ${clientNotice(client.name, clientId, redirectUri)}
         <p>Select the organisation, environment, and independently which API version handles reads and writes. You can select NONE for writes.</p>
         <form method="post" action="/oauth/authorize">
           <input type="hidden" name="selection_token" value="${escapeHtml(selectionToken)}">
@@ -222,10 +254,12 @@ export async function mcpOAuthRoutes(
       const sso = options.oidcButtonLabel
         ? `<p><a class="sso" href="/oidc/login?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p><p>or sign in with your ptv-mcp password:</p>`
         : '';
+      const client = await options.oauthService.describeClient(q.client_id ?? '');
 
       return reply.type('text/html').send(
         html(`
       <h1>Sign in to ptv-mcp</h1>
+      ${clientNotice(client.name, q.client_id ?? '', q.redirect_uri ?? '')}
       <p>This authorizes the MCP client to use your ptv-mcp account.</p>
       ${sso}
       <form method="post" action="/oauth/authorize">
