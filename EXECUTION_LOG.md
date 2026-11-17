@@ -2201,3 +2201,77 @@ is set (README, "Single sign-on").
 - Also: the connection-selection page now HTML-escapes tenant names.
 - **Tests**: `src/testing/fakeOidcProvider.ts` (node:http + jose, RS256)
   and `src/routes/oidc.integration.test.ts`; `src/config.test.ts`.
+
+## 2026-11-17 — REST session tokens require audience `ptv-mcp:session`
+
+- **Problem**: `verifyAccessToken` (`src/auth/jwt.ts`, used by the REST
+  `authenticate` guard) accepted any HS256 JWT signed with `JWT_SECRET` that
+  had a `sub`. MCP OAuth access tokens and the `tenant_selection` token share
+  that secret and carry `sub`, so they were accepted as full REST sessions.
+- **Fix**: `signAccessToken` sets audience `SESSION_TOKEN_AUDIENCE`
+  (`ptv-mcp:session`); `verifyAccessToken` requires it via jose's `audience`
+  option. It also refuses payloads carrying `kind` or `client_id`. The MCP
+  side (`src/mcp/oauthService.ts`) is unchanged; its tokens use the resource
+  URL as audience.
+- **Tests**: `src/auth/jwt.test.ts` covers a session token (accepted), an MCP
+  access token and a tenant-selection token (both refused), and a hand-made
+  `sub`-only token with no audience (refused). No other callers hand-build
+  session JWTs; all go through `signAccessToken`.
+
+## 2026-11-17 — OAuth client registration can no longer replace a client
+
+- **Problem**: `POST /oauth/register` is unauthenticated and took `client_id`
+  from the body; `OAuthService.registerClient` upserted on it, so anyone could
+  overwrite an existing client's `redirect_uris`. The sign-in and
+  connection-selection pages also showed neither the client's name nor where
+  the user would be sent back.
+- **Fix**: `registerClient` always mints `urn:ptv-mcp:client:<uuid>`, ignores
+  any body `client_id`, and does a plain INSERT. It validates before inserting:
+  `redirect_uris` non-empty, at most 10 entries, each at most 2000 characters,
+  parseable, without a fragment, and https, http to `localhost`/`127.0.0.1`/`[::1]`
+  only, or a custom app scheme; `javascript:`, `data:`, `file:`, `vbscript:` and
+  `blob:` are refused. `client_name` is trimmed and cut to 200 characters. CIMD
+  client ids are unchanged. `describeClient` returns the stored name (CIMD ids
+  get `null` without any fetch), and `clientNotice` in `oauthRoutes.ts` renders
+  the application name and redirect host on `GET /oauth/authorize` and on the
+  connection-selection page.
+- **Callers**: none relied on sending their own `client_id` or on the upsert.
+  `oidc.integration.test.ts` registers without one and uses the returned id.
+- **Tests**: `src/mcp/oauthClientNotice.test.ts` and
+  `src/mcp/oauthRegistration.test.ts` (unit, no DB);
+  `src/mcp/oauthRegistration.integration.test.ts` (needs PostgreSQL, not run
+  in the session that wrote it).
+
+## 2026-11-17 — Verified email: OIDC link hardening and `REQUIRE_VERIFIED_EMAIL`
+
+- **Problem**: `/auth/register` is open and `users.emailVerifiedAt` was set but never read, yet email decides identity (`TenantService.addMember` and the OIDC link in `OidcService.resolveUser`). Someone could register another person's address with their own password and later share that person's account.
+- **OIDC link** (always on): linking an IdP identity to an existing local account whose `emailVerifiedAt` is null now drops its `passwordHash`, revokes its refresh tokens and, when the IdP says `email_verified`, sets `emailVerifiedAt` (`OidcService.claimUnverifiedAccount`, one transaction, then the link). An already verified account is linked as before.
+- **`REQUIRE_VERIFIED_EMAIL`** (default `false`, `src/config.ts`, `.env.example`, `docker-compose.production.yml`): when true, `AuthService.verifyCredentials` and `assertCanSignIn` refuse an unverified account with `EmailNotVerifiedError` (403), only after the right password. `TenantService.addMember` refuses it with `EmailNotVerifiedForMembershipError` (409). The OIDC callback shows the 403 message. `app.ts` passes the flag to the `AuthService` and to the `TenantService` it builds. Other `TenantService` instances (`mcpServer.ts`, `routes/proposals.ts`, `routes/reviews.ts`, `mcp/token.ts`) are not given the flag, so the membership check applies only to the app's own instance.
+- **Tests**: `src/config.test.ts` (unit); `src/routes/oidc.integration.test.ts`, `src/auth/authService.integration.test.ts` and `src/tenants/tenantService.integration.test.ts` (need PostgreSQL, not run in the session that wrote them).
+
+## 2026-11-17 — Proposal resolution: `applying` claim and pre-write errors
+
+- **Problem**: `resolveProposal` (`src/mcp/proposalQueue.ts`) wrote to PTV before
+  the proposal left `pending`, so `approve_and_apply` on a rejected or applied
+  proposal, or two concurrent calls, could both write. Its catch marked the
+  proposal `failed` for every error except `not_authorized`, including errors
+  raised before any write. The web REST route also never set `writeApiVersion`,
+  so `approve_and_apply` from the web UI always failed with
+  `WriteApiNotSelectedError`.
+- **Fix**: new status `applying` (migration `0026_proposal_status_applying.sql`).
+  `ProposalService.claimForApply` / `releaseApplyClaim` / `finishApply` move the
+  proposal through it. `resolveProposal` requires `pending` before any action,
+  validates the action first, claims before `handler.apply`, and on a pre-write
+  error (`PtvAdapterResolutionError`, `WriteApiNotSelectedError`,
+  `ValidationFailedError`) releases the claim and rethrows; any other error
+  finishes as `failed`. `POST .../proposals/:id/resolve` picks a writable adapter
+  config for the proposal's environment (the body's `writeApiVersion`, else v11,
+  else the first) and passes it as `writeApiVersion`.
+  `errorHandler.ts` maps `InvalidResolveActionError` and `ValidationFailedError`
+  to 400 and `WriteApiNotSelectedError` to 409.
+- **Known gap**: if `finishApply` itself fails after a successful PTV write, the
+  proposal stays `applying` and needs manual repair.
+- **Tests**: `src/mcp/proposalQueue.test.ts` (unit; new `approve_and_apply` claim
+  tests; the invalid-service test now expects `pending`).
+  `src/routes/proposals.integration.test.ts` gained one REST `approve_and_apply`
+  test (needs PostgreSQL, not run in the session that wrote it).

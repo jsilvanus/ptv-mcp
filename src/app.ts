@@ -50,7 +50,10 @@ export interface BuildAppOptions {
     | 'mcpPublicUrl'
     | 'webDevUrl'
     | 'oidc'
-  >;
+  > & {
+    /** Optional so existing callers that build the app without it keep compiling; defaults to false. */
+    requireVerifiedEmail?: boolean;
+  };
   db?: Database;
   mailer?: Mailer;
   adapterFactories?: Record<string, AdapterFactory>;
@@ -67,7 +70,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   const db = options.db ?? createDatabase(config.databaseUrl);
   const mailer = options.mailer ?? new LoggingMailer((message) => app.log.info(message));
-  const authService = new AuthService({ db, jwtSecret: config.jwtSecret, mailer });
+  const requireVerifiedEmail = config.requireVerifiedEmail ?? false;
+  const authService = new AuthService({
+    db,
+    jwtSecret: config.jwtSecret,
+    mailer,
+    requireVerifiedEmail,
+  });
   const oauthService = new OAuthService(
     db,
     config.jwtSecret,
@@ -75,7 +84,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     config.mcpPublicUrl,
   );
   const auditService = new AuditService(db);
-  const tenantService = new TenantService(db, auditService);
+  const tenantService = new TenantService(db, auditService, { requireVerifiedEmail });
   const connectionService = new UserPtvConnectionService(db, config.masterEncryptionKey);
   const tenantEnvironmentService = new TenantEnvironmentService(db, config.masterEncryptionKey);
   const adapterConfigService = new PtvAdapterConfigService(db);
@@ -170,6 +179,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     registry,
     auditService,
     validator,
+    adapterConfigService,
   });
   await app.register(reviewRoutes, { db, jwtSecret: config.jwtSecret, registry, auditService });
   await app.register(contentExportRoutes, {

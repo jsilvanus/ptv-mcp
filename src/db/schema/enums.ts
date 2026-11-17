@@ -25,6 +25,7 @@ export const credentialScopeEnum = pgEnum('credential_scope', ['tenant', 'user']
 
 export const proposalStatusEnum = pgEnum('proposal_status', [
   'pending',
+  'applying',
   'approved',
   'rejected',
   'applied',

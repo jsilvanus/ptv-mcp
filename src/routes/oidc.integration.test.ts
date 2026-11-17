@@ -385,6 +385,58 @@ describe('OIDC sign-in', () => {
     expect(identity?.userId).toBe(userId);
   });
 
+  it('drops the password of an unverified local account when its IdP owner links it', async () => {
+    const instance = await app();
+    const email = `oidc-claim-${randomUUID()}@example.test`;
+    createdEmails.push(email);
+    // Registered through the open endpoint, so nobody has proved the address yet.
+    const registered = await instance.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email, name: 'Registered First', password: 'correct-password' },
+    });
+    expect(registered.statusCode).toBe(201);
+    const before = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(before?.emailVerifiedAt).toBeNull();
+    const session = await authService.login(email, 'correct-password');
+
+    const subject = randomUUID();
+    idp.user = { sub: subject, email, email_verified: true };
+    const res = await webSignIn(instance);
+    expect(res.statusCode).toBe(302);
+
+    const after = await db.query.users.findFirst({ where: eq(users.email, email) });
+    expect(after?.passwordHash).toBeNull();
+    expect(after?.emailVerifiedAt).toBeInstanceOf(Date);
+    const [identity] = await db
+      .select()
+      .from(oidcIdentities)
+      .where(eq(oidcIdentities.subject, subject));
+    expect(identity?.userId).toBe(before?.id);
+
+    // The old password no longer works, and the sessions it opened are revoked.
+    const login = await instance.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email, password: 'correct-password' },
+    });
+    expect(login.statusCode).toBe(401);
+    await expect(authService.refresh(session.refreshToken)).rejects.toThrow(
+      'Invalid or expired refresh token',
+    );
+  });
+
+  it('keeps the password of a verified local account when its IdP owner links it', async () => {
+    const instance = await app();
+    const { userId, email } = await localUser();
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, userId));
+    idp.user = { sub: randomUUID(), email, email_verified: true };
+
+    expect((await webSignIn(instance)).statusCode).toBe(302);
+    const row = await db.query.users.findFirst({ where: eq(users.id, userId) });
+    expect(row?.passwordHash).toBe('x');
+  });
+
   it('reads the email from userinfo when the ID token has none', async () => {
     const instance = await app();
     const { userId, email } = await localUser();

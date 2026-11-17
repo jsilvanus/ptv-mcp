@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
+import { users } from '../db/schema/index.js';
 import { AuditService } from '../audit/auditService.js';
 import {
+  EmailNotVerifiedForMembershipError,
   MembershipNotFoundError,
   SlugAlreadyTakenError,
   TenantService,
@@ -83,6 +86,23 @@ describe('TenantService', () => {
     await expect(
       service.addMember(tenantId, 'nobody@example.test', 'contributor', admin.id),
     ).rejects.toThrow(UserNotFoundError);
+  });
+
+  it('refuses to add a member with an unverified email when REQUIRE_VERIFIED_EMAIL is on', async () => {
+    const strict = new TenantService(db, new AuditService(db), { requireVerifiedEmail: true });
+    const admin = await createUser('Admin');
+    const member = await createUser('Member'); // fixture users start unverified
+    const { tenantId } = await service.createTenant('Test Tenant', `t-${randomUUID()}`, admin.id);
+    fixtures.trackTenant(tenantId);
+
+    await expect(strict.addMember(tenantId, member.email, 'contributor', admin.id)).rejects.toThrow(
+      EmailNotVerifiedForMembershipError,
+    );
+    expect((await service.listMembers(tenantId)).map((m) => m.userId)).not.toContain(member.id);
+
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, member.id));
+    await strict.addMember(tenantId, member.email, 'contributor', admin.id);
+    expect((await service.listMembers(tenantId)).map((m) => m.userId)).toContain(member.id);
   });
 
   it('updates a member role', async () => {

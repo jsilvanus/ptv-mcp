@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
+import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
 import { withContext } from '../db/context.js';
 import { auditEntries } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
@@ -221,6 +222,20 @@ describe('proposal routes', () => {
 
   it('exports an approved proposal with a manual-publishing sheet and confirms it against PTV', async () => {
     const publisher = await createUser('publisher', { requireFourEyes: false });
+    // Writes go through the tenant's API user (tenant-scoped credentials).
+    await new TenantEnvironmentService(db, config.masterEncryptionKey).storeCredentials(
+      publisher.tenantId,
+      'test',
+      'v11',
+      { username: 'api-user', password: 'secret' },
+    );
+    await fixtures.adapterConfigs.upsert(publisher.tenantId, 'test', 'v11', {
+      authMode: 'api_login',
+      credentialScope: 'tenant',
+      supportsRead: true,
+      supportsWrite: true,
+      supportsDraftRead: false,
+    });
     const mcpToken = await fixtures.mcpToken(publisher.userId, publisher.tenantId);
     const propose = async (names: Record<string, string>) => {
       const response = await injectToolCall(app, mcpToken, 'ptv_propose_changes', {
@@ -292,5 +307,58 @@ describe('proposal routes', () => {
     );
     expect(audit.map((entry) => entry.action)).toContain('ConfirmManualPublish');
     expect((await confirm(same)).statusCode).toBe(409);
+  });
+
+  it('applies a queued proposal over REST with approve_and_apply, using the tenant write API', async () => {
+    const publisher = await createUser('publisher', { requireFourEyes: false });
+    // Writes go through the tenant's API user (tenant-scoped credentials).
+    await new TenantEnvironmentService(db, config.masterEncryptionKey).storeCredentials(
+      publisher.tenantId,
+      'test',
+      'v11',
+      { username: 'api-user', password: 'secret' },
+    );
+    await fixtures.adapterConfigs.upsert(publisher.tenantId, 'test', 'v11', {
+      authMode: 'api_login',
+      credentialScope: 'tenant',
+      supportsRead: true,
+      supportsWrite: true,
+      supportsDraftRead: false,
+    });
+    const mcpToken = await fixtures.mcpToken(publisher.userId, publisher.tenantId);
+    const queued = await injectToolCall(app, mcpToken, 'ptv_propose_changes', {
+      serviceId: BASE_SERVICE.id,
+      changes: { names: { fi: 'Route applied' } },
+    });
+    expect(queued.statusCode).toBe(200);
+    const list = await app.inject({
+      method: 'GET',
+      url: `/tenants/${publisher.tenantId}/proposals?status=pending`,
+      headers: { authorization: 'Bearer ' + publisher.token },
+    });
+    const [proposal] = list.json() as Array<{ id: string }>;
+
+    // No writeApiVersion in the body: the route picks the tenant's writable v11 config.
+    const applied = await app.inject({
+      method: 'POST',
+      url: `/tenants/${publisher.tenantId}/proposals/${proposal!.id}/resolve`,
+      headers: { authorization: 'Bearer ' + publisher.token },
+      payload: { action: 'approve_and_apply' },
+    });
+    expect(applied.statusCode).toBe(200);
+    expect((applied.json() as { status: string }).status).toBe('applied');
+
+    // Resolving it again writes nothing and answers 409.
+    const again = await app.inject({
+      method: 'POST',
+      url: `/tenants/${publisher.tenantId}/proposals/${proposal!.id}/resolve`,
+      headers: { authorization: 'Bearer ' + publisher.token },
+      payload: { action: 'approve_and_apply' },
+    });
+    expect(again.statusCode).toBe(409);
+    const writes = await withContext(db, { tenantId: publisher.tenantId }, async (tx) =>
+      tx.select().from(auditEntries).where(eq(auditEntries.action, 'ApplyServiceChange')),
+    );
+    expect(writes).toHaveLength(1);
   });
 });

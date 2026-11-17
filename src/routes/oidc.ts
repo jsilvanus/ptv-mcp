@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { AccountLockedError, type AuthService } from '../auth/authService.js';
+import {
+  AccountLockedError,
+  EmailNotVerifiedError,
+  type AuthService,
+} from '../auth/authService.js';
 import type { OAuthService } from '../mcp/oauthService.js';
 import type { TenantService } from '../tenants/tenantService.js';
 import {
@@ -226,6 +230,10 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
             'Account temporarily locked after too many failed attempts.',
             state.oauthRequest,
           );
+        }
+        if (err instanceof EmailNotVerifiedError) {
+          request.log.warn('OIDC sign-in refused: email not verified');
+          return errorPage(reply, 403, err.message, state.oauthRequest);
         }
         request.log.error({ err: errorSummary(err) }, 'OIDC sign-in failed');
         return errorPage(

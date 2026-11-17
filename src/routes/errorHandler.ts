@@ -1,16 +1,20 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import {
   EmailAlreadyRegisteredError,
+  EmailNotVerifiedError,
   InvalidCredentialsError,
   InvalidOrExpiredTokenError,
 } from '../auth/authService.js';
 import { FourEyesError, NotAuthorizedError } from '../mcp/authorization.js';
+import { ValidationFailedError } from '../mcp/proposalPipeline.js';
 import {
   InvalidCommentError,
   InvalidReviewRequestError,
+  InvalidResolveActionError,
   ManualPublishCheckError,
   ReviewsPendingError,
 } from '../mcp/proposalQueue.js';
+import { WriteApiNotSelectedError } from '../mcp/toolContext.js';
 import {
   NotARequestedReviewerError,
   ProposalAlreadyResolvedError,
@@ -21,6 +25,7 @@ import { PtvAdapterResolutionError } from '../ptv/registry.js';
 import { ReviewCampaignError } from '../reviews/reviewCampaigns.js';
 import { ReviewCampaignNotFoundError, ReviewItemNotFoundError } from '../reviews/reviewService.js';
 import {
+  EmailNotVerifiedForMembershipError,
   MembershipNotFoundError,
   SlugAlreadyTakenError,
   TenantNotFoundError,
@@ -47,6 +52,9 @@ const ERROR_STATUS: ReadonlyArray<readonly [ErrorClass, number | ((err: Error) =
   [ManualPublishCheckError, 409],
   [InvalidCommentError, 400],
   [InvalidReviewRequestError, 400],
+  [InvalidResolveActionError, 400],
+  [ValidationFailedError, 400],
+  [WriteApiNotSelectedError, 409],
   [NotARequestedReviewerError, 403],
   [NotAuthorizedError, 403],
   [FourEyesError, 403],
@@ -68,6 +76,8 @@ const ERROR_STATUS: ReadonlyArray<readonly [ErrorClass, number | ((err: Error) =
   [UserNotFoundError, 404],
   [MembershipNotFoundError, 404],
   [EmailAlreadyRegisteredError, 409],
+  [EmailNotVerifiedError, 403],
+  [EmailNotVerifiedForMembershipError, 409],
   [InvalidCredentialsError, 401],
   [InvalidOrExpiredTokenError, 400],
 ];

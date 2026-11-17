@@ -38,6 +38,16 @@ export class AccountLockedError extends Error {
   }
 }
 
+/** Raised only after the right password (or for a verified-IdP sign-in), so it does not reveal which emails exist. */
+export class EmailNotVerifiedError extends Error {
+  constructor() {
+    super(
+      'Email address is not verified yet. Use the verification link sent to you, or ask the administrator.',
+    );
+    this.name = 'EmailNotVerifiedError';
+  }
+}
+
 export class InvalidOrExpiredTokenError extends Error {
   constructor(kind: string) {
     super(`Invalid or expired ${kind} token`);
@@ -55,6 +65,8 @@ export interface AuthServiceDeps {
   db: Database;
   jwtSecret: string;
   mailer: Mailer;
+  /** `REQUIRE_VERIFIED_EMAIL`: refuse sign-in for accounts whose email is not verified. Default false. */
+  requireVerifiedEmail?: boolean;
   /** Injectable for deterministic tests; defaults to the real clock. */
   now?: () => Date;
 }
@@ -73,6 +85,7 @@ export class AuthService {
   private readonly jwtSecret: string;
   private readonly mailer: Mailer;
   private readonly now: () => Date;
+  private readonly requireVerifiedEmail: boolean;
   private dummyPasswordHash: Promise<string> | undefined;
 
   constructor(deps: AuthServiceDeps) {
@@ -80,6 +93,7 @@ export class AuthService {
     this.jwtSecret = deps.jwtSecret;
     this.mailer = deps.mailer;
     this.now = deps.now ?? (() => new Date());
+    this.requireVerifiedEmail = deps.requireVerifiedEmail ?? false;
   }
 
   /** Computed once and cached — a fixed hash whose only purpose is to make `verifyCredentials()`'s unknown-email path spend the same Argon2id cost as its wrong-password path. */
@@ -194,6 +208,7 @@ export class AuthService {
         .where(eq(users.id, user.id));
     }
 
+    this.assertEmailVerified(user);
     return user.id;
   }
 
@@ -201,6 +216,13 @@ export class AuthService {
   private assertNotLocked(user: { lockedUntil: Date | null }): void {
     if (user.lockedUntil && user.lockedUntil > this.now()) {
       throw new AccountLockedError(user.lockedUntil);
+    }
+  }
+
+  /** With `REQUIRE_VERIFIED_EMAIL`, an account whose email was never verified cannot sign in. */
+  private assertEmailVerified(user: { emailVerifiedAt: Date | null }): void {
+    if (this.requireVerifiedEmail && user.emailVerifiedAt === null) {
+      throw new EmailNotVerifiedError();
     }
   }
 
@@ -214,6 +236,7 @@ export class AuthService {
     const user = await this.db.query.users.findFirst({ where: eq(users.id, userId) });
     if (!user) throw new InvalidCredentialsError();
     this.assertNotLocked(user);
+    this.assertEmailVerified(user);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { resolveReadAdapter } from './toolContext.js';
+import { resolveReadAdapter, WriteApiNotSelectedError } from './toolContext.js';
 import type { QualityReport, ServiceCheckContext } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
@@ -25,7 +25,7 @@ import {
 } from './authorization.js';
 import type { ToolContext } from './toolContext.js';
 import { buildManualPublishSheet, type ManualPublishSheet } from './manualPublish.js';
-import { queueKindProposal } from './proposalPipeline.js';
+import { queueKindProposal, ValidationFailedError } from './proposalPipeline.js';
 import {
   kindHandler,
   proposedServiceContext,
@@ -534,6 +534,10 @@ export async function resolveProposal(
 ): Promise<ProposalDetails> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  requirePending(proposal);
+  if (action !== 'reject' && action !== 'approve_and_export' && action !== 'approve_and_apply') {
+    throw new InvalidResolveActionError(action);
+  }
   const proposalCtx: ToolContext = { ...ctx, environment: proposal.environment };
 
   // Four-eyes: approving your own proposal is refused; rejecting (withdrawing) it is fine.
@@ -589,21 +593,30 @@ export async function resolveProposal(
     return proposalDetails(registry, proposalService, approved, proposalCtx);
   }
 
-  if (action !== 'approve_and_apply') throw new InvalidResolveActionError(action);
+  // Claim the proposal first, so only one resolution can write to PTV.
+  await proposalService.claimForApply(ctx.tenantId, proposalId, ctx.actingUserId);
 
   let outcome: AppliedOutcome;
   try {
     outcome = await handler.apply(deps, proposalCtx, stored());
   } catch (err) {
-    // Not being allowed to write leaves the proposal pending for a Publisher.
-    if (err instanceof PtvAdapterResolutionError && err.reason === 'not_authorized') {
+    // Errors raised before any write was attempted leave the proposal
+    // pending, so it can be resolved again once the cause is fixed.
+    if (
+      err instanceof PtvAdapterResolutionError ||
+      err instanceof WriteApiNotSelectedError ||
+      err instanceof ValidationFailedError
+    ) {
+      await proposalService.releaseApplyClaim(ctx.tenantId, proposalId).catch(() => undefined);
       throw err;
     }
-    await proposalService.markResolved(ctx.tenantId, proposalId, 'failed', ctx.actingUserId);
+    await proposalService
+      .finishApply(ctx.tenantId, proposalId, 'failed', ctx.actingUserId)
+      .catch(() => undefined);
     await record('Failed');
     throw err;
   }
-  const applied = await proposalService.markResolved(
+  const applied = await proposalService.finishApply(
     ctx.tenantId,
     proposalId,
     'applied',

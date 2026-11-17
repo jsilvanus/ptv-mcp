@@ -157,13 +157,62 @@ export class ProposalService {
   async markResolved(
     tenantId: string,
     proposalId: string,
-    status: Exclude<ProposalStatus, 'pending'>,
+    status: Exclude<ProposalStatus, 'pending' | 'applying'>,
     resolvedByUserId: string,
     /** Records the id PTV gave a service created by this proposal. */
     serviceId?: string,
   ): Promise<ProposalRecord> {
     const now = new Date();
     return this.transition(tenantId, proposalId, 'pending', {
+      status,
+      resolvedByUserId,
+      resolvedAt: now,
+      updatedAt: now,
+      ...(serviceId ? { serviceId } : {}),
+    });
+  }
+
+  /**
+   * Claims a pending proposal for writing to PTV: it becomes `applying`, so
+   * no second resolution can also write. Fails if it is not pending.
+   */
+  async claimForApply(
+    tenantId: string,
+    proposalId: string,
+    resolvedByUserId: string,
+  ): Promise<ProposalRecord> {
+    return this.transition(tenantId, proposalId, 'pending', {
+      status: 'applying',
+      resolvedByUserId,
+      updatedAt: new Date(),
+    });
+  }
+
+  /**
+   * Gives back a claim taken by `claimForApply` when nothing was written to
+   * PTV, so the proposal is pending again.
+   */
+  async releaseApplyClaim(tenantId: string, proposalId: string): Promise<ProposalRecord> {
+    return this.transition(tenantId, proposalId, 'applying', {
+      status: 'pending',
+      resolvedByUserId: null,
+      updatedAt: new Date(),
+    });
+  }
+
+  /**
+   * Ends a claim taken by `claimForApply`: `applied` once PTV has the change
+   * (with the id PTV gave a created service), `failed` when the write failed.
+   */
+  async finishApply(
+    tenantId: string,
+    proposalId: string,
+    status: 'applied' | 'failed',
+    resolvedByUserId: string,
+    serviceId?: string,
+  ): Promise<ProposalRecord> {
+    const now = new Date();
+    return this.transition(tenantId, proposalId, 'applying', {
       status,
       resolvedByUserId,
       resolvedAt: now,

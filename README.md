@@ -97,6 +97,13 @@ A temporarily locked account (too many wrong passwords) is refused on the
 OIDC path as well. Who may sign in at all is decided by the IdP (in
 authentik: the application's policy bindings).
 
+Item 2 above links an account that never verified its email (for example one
+registered through the open `/auth/register`, whose address may belong to
+someone else) only after dropping its password and revoking its sessions:
+the IdP-verified owner gets the account and can set a password again
+through password reset. An account whose email was already verified is
+linked as before, password unchanged.
+
 ### authentik
 
 1. *Applications → Providers → Create → OAuth2/OpenID Provider*: client
@@ -121,6 +128,17 @@ PTV content and should not be enabled in routine production operation.
 - Use `docker-compose.production.yml` for production container runtime.
 - Production database is external (`DATABASE_URL`), not bundled in compose.
 - CI/CD image build + publish workflow: `.github/workflows/deploy.yml`.
+
+### Verified email (`REQUIRE_VERIFIED_EMAIL`)
+
+`/auth/register` is open, and until a real mail provider is configured
+(`LoggingMailer` only logs) nothing proves that an address belongs to the
+person who registered it. Keep `REQUIRE_VERIFIED_EMAIL` at its default
+`false` until one is, then set it to `true`: sign-in (password and OIDC)
+refuses an account whose email is not verified, and adding a member to an
+organisation requires a verified account. The password-sign-in refusal is
+only given after the right password, so it does not reveal which emails
+exist.
 
 Common tasks:
 
