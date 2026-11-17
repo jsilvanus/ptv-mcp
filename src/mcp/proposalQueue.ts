@@ -1,4 +1,8 @@
-import { resolveReadAdapter, WriteApiNotSelectedError } from './toolContext.js';
+import {
+  requireProposalInGrantEnvironment,
+  resolveReadAdapter,
+  WriteApiNotSelectedError,
+} from './toolContext.js';
 import type { QualityReport, ServiceCheckContext } from '../quality/contentChecks.js';
 import type { AuditService } from '../audit/auditService.js';
 import type { ChangeValidator } from '../validation/changeValidator.js';
@@ -521,6 +525,29 @@ export async function signOffProposal(
   return reviewers;
 }
 
+/**
+ * Options for resolving or publishing a proposal. The MCP tools set
+ * `enforceGrantEnvironment`: their token names one environment, and a
+ * proposal from another is refused with GrantScopeError rather than
+ * handled in its own environment. The web UI (routes/proposals.ts) leaves
+ * it unset: a login session may act on proposals in any environment the
+ * user has a role for, each in its own environment, as before.
+ */
+export interface ProposalActionOptions {
+  enforceGrantEnvironment?: boolean;
+}
+
+/** Throws GrantScopeError when the MCP grant's environment is not the proposal's. */
+function enforceGrant(
+  options: ProposalActionOptions,
+  ctx: ToolContext,
+  proposal: ProposalRecord,
+): void {
+  if (options.enforceGrantEnvironment) {
+    requireProposalInGrantEnvironment(ctx.environment, proposal.environment);
+  }
+}
+
 export async function resolveProposal(
   resolveRole: MembershipRoleResolver,
   registry: PtvAdapterRegistry,
@@ -531,9 +558,11 @@ export async function resolveProposal(
   proposalId: string,
   action: ResolveProposalAction,
   requireFourEyes: FourEyesResolver,
+  options: ProposalActionOptions = {},
 ): Promise<ProposalDetails> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  enforceGrant(options, ctx, proposal);
   requirePending(proposal);
   if (action !== 'reject' && action !== 'approve_and_export' && action !== 'approve_and_apply') {
     throw new InvalidResolveActionError(action);
@@ -650,9 +679,11 @@ export async function confirmManualPublish(
   ctx: ToolContext,
   proposalId: string,
   ptvId?: string,
+  options: ProposalActionOptions = {},
 ): Promise<ProposalDetails> {
   await requireTenantRole(resolveRole, ctx.tenantId, ctx.actingUserId, 'approver');
   const proposal = await proposalService.getById(ctx.tenantId, proposalId);
+  enforceGrant(options, ctx, proposal);
   if (proposal.status !== 'approved') {
     throw new ManualPublishCheckError(
       `Proposal ${proposalId} is ${proposal.status}; only an approved (exported) proposal is published by hand.`,

@@ -392,6 +392,16 @@ unauthorized-resource-read test now genuinely exercises a URI naming a
 tenant the caller isn't authorized for, rather than one that was silently
 ignored in favor of the caller's own tenant.
 
+**Grant scope enforced (2026-11-17, review finding 10)**: the URI is an
+address, not a grant. `resourceToolContext` now throws `GrantScopeError`
+unless the URI's tenant equals the token's `tenant_id` and its environment
+equals the token's `environment`; a token with no organisation reads no
+organisation resources. Separately, `ptv_resolve_proposal` and
+`ptv_confirm_manual_publish` refuse a proposal from the other environment
+(`enforceGrantEnvironment`). The REST web UI keeps resolving proposals in
+any environment the user has a role for. See
+`src/mcp/grantScope.integration.test.ts`.
+
 ---
 
 ## Phase 8: Proposal queue — Reader proposes, Editor+ reviews and resolves (post-MVP-0) ✅

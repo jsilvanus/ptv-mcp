@@ -33,9 +33,6 @@ under the same numbers. Not being fixed now.
       verify on the test environment.
 - [ ] **9. Service and connection writes are not atomic.** A failure of the
       second PUT leaves PTV with half the change; record which step failed.
-- [ ] **10. OAuth grant scope is not enforced everywhere.** Resolve and manual
-      publish use the proposal's environment; `resourceToolContext` takes the
-      tenant from the resource URI.
 - [ ] **14. Tenant governance gaps.** Any account can create tenants, the last
       Tenant Admin can leave, removed required reviewers block approval, and
       `addMember` reveals which emails have accounts.

@@ -30,7 +30,7 @@ import { queueChannelProposal } from './channelProposal.js';
 import { queueConnectionProposal } from './connectionProposal.js';
 import { queueNewOrganizationProposal, queueOrganizationProposal } from './organizationProposal.js';
 import { confirmManualPublish } from './proposalQueue.js';
-import { WriteApiNotSelectedError } from './toolContext.js';
+import { GrantScopeError, WriteApiNotSelectedError } from './toolContext.js';
 
 const ctx = { tenantId: 'tenant-1', environment: 'test' as const, actingUserId: 'user-1' };
 /** approve_and_apply needs a selected write API before the registry's role check runs. */
@@ -1164,6 +1164,161 @@ describe('proposalQueue', () => {
       ).rejects.toThrow('PTV 500');
 
       expect(rows[0]?.status).toBe('failed');
+    });
+  });
+
+  describe('environment grant', () => {
+    const productionCtx = { ...ctx, environment: 'production' as const };
+    const refusal =
+      'This connection is authorised for test; the proposal belongs to production. Reconnect for that environment.';
+
+    it('resolves a proposal in the environment the connection is authorised for', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(readerResolver, registry, audit, api, ctx, service.id, {
+        names: { fi: 'Same environment' },
+      });
+
+      const resolved = await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+        { enforceGrantEnvironment: true },
+      );
+
+      expect(resolved.status).toBe('approved');
+    });
+
+    it('refuses an MCP resolve of a proposal from another environment and leaves it pending', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        productionCtx,
+        service.id,
+        { names: { fi: 'Production change' } },
+      );
+
+      await expect(
+        resolveProposal(
+          publisherResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          writeCtx,
+          queued.proposalId,
+          'approve_and_apply',
+          noFourEyes,
+          { enforceGrantEnvironment: true },
+        ),
+      ).rejects.toThrow(new GrantScopeError(refusal));
+      await expect(
+        resolveProposal(
+          editorResolver,
+          registry,
+          api,
+          audit,
+          new V11ChangeValidator(),
+          ctx,
+          queued.proposalId,
+          'reject',
+          noFourEyes,
+          { enforceGrantEnvironment: true },
+        ),
+      ).rejects.toBeInstanceOf(GrantScopeError);
+
+      expect(rows[0]?.status).toBe('pending');
+      expect(vi.mocked(registry.resolve)).not.toHaveBeenCalledWith(
+        expect.objectContaining({ environment: 'production', operation: 'write' }),
+      );
+    });
+
+    it('refuses an MCP confirm of an approved proposal from another environment', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { rows, api } = fakeProposalService();
+      const queued = await queueProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        productionCtx,
+        service.id,
+        { names: { fi: 'Exported production change' } },
+      );
+      // Approved for manual publishing by the web UI, which is allowed to.
+      await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        productionCtx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+      );
+
+      await expect(
+        confirmManualPublish(
+          editorResolver,
+          registry,
+          api,
+          audit,
+          ctx,
+          queued.proposalId,
+          undefined,
+          { enforceGrantEnvironment: true },
+        ),
+      ).rejects.toThrow(new GrantScopeError(refusal));
+      expect(rows[0]?.status).toBe('approved');
+    });
+
+    it('still resolves a proposal of another environment without the MCP option (web UI path)', async () => {
+      const registry = buildRegistry();
+      const audit = fakeAuditService();
+      const { api } = fakeProposalService();
+      const queued = await queueProposal(
+        readerResolver,
+        registry,
+        audit,
+        api,
+        productionCtx,
+        service.id,
+        { names: { fi: 'Web UI production change' } },
+      );
+
+      // The REST route passes a context built from its query (test by default)
+      // and no options; the proposal is handled in its own environment.
+      const resolved = await resolveProposal(
+        editorResolver,
+        registry,
+        api,
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        queued.proposalId,
+        'approve_and_export',
+        noFourEyes,
+      );
+
+      expect(resolved.status).toBe('approved');
+      expect(resolved.environment).toBe('production');
+      expect(vi.mocked(registry.resolve)).toHaveBeenCalledWith(
+        expect.objectContaining({ environment: 'production' }),
+      );
     });
   });
 });

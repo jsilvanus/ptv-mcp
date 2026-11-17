@@ -296,19 +296,79 @@ describe('MCP HTTP transport', () => {
     await client.close();
   });
 
-  it('surfaces an unauthorized resource read as a protocol-level error', async () => {
-    const { token } = await registeredUserWithTenant();
+  // Resource handlers (unlike tools) don't catch errors, so anything they
+  // throw propagates out of the SDK's ReadResourceRequestSchema handler and
+  // becomes a JSON-RPC-level error (generic "Internal error", -32603), not
+  // the structured CallToolResult-style error a tool call returns. The
+  // message text is what tells the cases apart.
+
+  it('refuses a resource URI naming another organisation than the token grants', async () => {
+    const { token, tenantId } = await registeredUserWithTenant({ v11: true });
     const otherTenantId = await someoneElsesTenant();
 
-    // Resource handlers (unlike tools) don't catch PtvAdapterResolutionError,
-    // so it propagates out of the SDK's ReadResourceRequestSchema handler and
-    // becomes a JSON-RPC-level error, not a structured CallToolResult-style
-    // error the way the equivalent tool call surfaces it (see the
-    // 'surfaces a not_authorized tool error' test above for the contrast).
-    // Confirmed live: the client receives an `McpError` with the generic
-    // JSON-RPC "Internal error" code (-32603) — there is no equivalent to the
-    // tool-error path's machine-readable `not_authorized` reason string here,
-    // only PtvAdapterResolutionError's human-readable message text.
+    const client = await connectedClient(token);
+    await expect(
+      client.readResource({
+        uri: `ptv://${otherTenantId}/test/services/11111111-2222-3333-4444-555555555555`,
+      }),
+    ).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining(
+        `This connection is authorised for organisation ${tenantId}; the resource belongs to ${otherTenantId}.`,
+      ),
+    });
+    await client.close();
+  });
+
+  it('refuses a resource URI naming another environment than the token grants', async () => {
+    const { token, tenantId } = await registeredUserWithTenant({ v11: true });
+
+    const client = await connectedClient(token);
+    await expect(
+      client.readResource({
+        uri: `ptv://${tenantId}/production/services/11111111-2222-3333-4444-555555555555`,
+      }),
+    ).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining(
+        'This connection is authorised for test; the resource is in production.',
+      ),
+    });
+    await client.close();
+  });
+
+  it('refuses organisation resources on a connection with no organisation', async () => {
+    const { userId } = await registerUser('Public Resource Reader');
+    const token = await oauthService.issueAccessToken(
+      userId,
+      'urn:ptv-mcp:test-client',
+      'mcp',
+      null,
+      'test',
+      'v11',
+      null,
+    );
+    const tenantId = await someoneElsesTenant();
+
+    const client = await connectedClient(token);
+    await expect(
+      client.readResource({
+        uri: `ptv://${tenantId}/test/services/11111111-2222-3333-4444-555555555555`,
+      }),
+    ).rejects.toMatchObject({
+      code: -32603,
+      message: expect.stringContaining('has no organisation (public PTV data only)'),
+    });
+    await client.close();
+  });
+
+  it('surfaces an unauthorized resource read by a user outside the named organisation', async () => {
+    // The grant matches the URI, so the check moves on to the registry, which
+    // re-checks membership before any credential is used.
+    const { userId } = await registerUser();
+    const otherTenantId = await someoneElsesTenant();
+    const token = await fixtures.mcpToken(userId, otherTenantId);
+
     const client = await connectedClient(token);
     await expect(
       client.readResource({
