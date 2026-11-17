@@ -4,8 +4,30 @@ import { loadConfig, loadOidcConfig } from './config.js';
 const base = {
   DATABASE_URL: 'postgres://localhost/test',
   MASTER_ENCRYPTION_KEY: 'key',
-  JWT_SECRET: 'secret',
+  JWT_SECRET: Buffer.alloc(32, 7).toString('base64'),
 };
+
+describe('JWT_SECRET config', () => {
+  it('refuses a secret that decodes to under 32 bytes', () => {
+    expect(() => loadConfig({ ...base, JWT_SECRET: 'secret' })).toThrow('at least 32 bytes');
+    expect(() => loadConfig({ ...base, JWT_SECRET: Buffer.alloc(31).toString('base64') })).toThrow(
+      'at least 32 bytes',
+    );
+  });
+
+  it('accepts 32 bytes', () => {
+    expect(loadConfig({ ...base }).jwtSecret).toBe(base.JWT_SECRET);
+  });
+});
+
+describe('ALLOW_PRIVILEGED_DB_ROLE config', () => {
+  it('defaults to false and reads true', () => {
+    expect(loadConfig({ ...base }).allowPrivilegedDbRole).toBe(false);
+    expect(loadConfig({ ...base, ALLOW_PRIVILEGED_DB_ROLE: 'true' }).allowPrivilegedDbRole).toBe(
+      true,
+    );
+  });
+});
 
 describe('REQUIRE_VERIFIED_EMAIL config', () => {
   it('defaults to false when unset or empty', () => {

@@ -36,13 +36,6 @@ under the same numbers. Not being fixed now.
 - [ ] **10. OAuth grant scope is not enforced everywhere.** Resolve and manual
       publish use the proposal's environment; `resourceToolContext` takes the
       tenant from the resource URI.
-- [ ] **11. OAuth server hardening.** Code exchange race, no refresh-token
-      rotation, client-metadata fetch SSRF gaps, no frame-protection headers.
-- [ ] **12. No rate limits or input validation on auth routes.** Also a weak
-      `JWT_SECRET` is not rejected and the failed-login counter is racy.
-- [ ] **13. Row-level security depends on the database role.** The compose
-      and CI setups connect as a superuser, which bypasses it; check staging
-      and consider refusing to start.
 - [ ] **14. Tenant governance gaps.** Any account can create tenants, the last
       Tenant Admin can leave, removed required reviewers block approval, and
       `addMember` reveals which emails have accounts.

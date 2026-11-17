@@ -13,6 +13,8 @@ export interface AppConfig {
    * different rotation schedules, and a JWT-signing leak shouldn't also expose stored
    * PTV credentials. */
   jwtSecret: string;
+  /** `ALLOW_PRIVILEGED_DB_ROLE`: start in production even though the database role bypasses row-level security. Default false. */
+  allowPrivilegedDbRole: boolean;
   /**
    * v11's per-user OAuth consent flow (docs/ptv-v11-notes.md). Registering a
    * real client with palveluhallinta.suomi.fi is an external, organization-level
@@ -197,6 +199,19 @@ export function loadBreakGlassEmails(env: NodeJS.ProcessEnv): string[] {
   ];
 }
 
+const MIN_JWT_SECRET_BYTES = 32;
+
+/** JWT_SECRET is base64 (see .env.example); a value that decodes to fewer than 32 bytes is a weak signing key. */
+function requireJwtSecret(env: NodeJS.ProcessEnv): string {
+  const value = requireEnv('JWT_SECRET', env);
+  if (Buffer.from(value, 'base64').length < MIN_JWT_SECRET_BYTES) {
+    throw new Error(
+      `JWT_SECRET must be base64 that decodes to at least ${MIN_JWT_SECRET_BYTES} bytes. Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`,
+    );
+  }
+  return value;
+}
+
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
   let value = env[name];
 
@@ -256,7 +271,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel: env.LOG_LEVEL ?? 'info',
     databaseUrl: requireEnv('DATABASE_URL', env),
     masterEncryptionKey: requireEnv('MASTER_ENCRYPTION_KEY', env),
-    jwtSecret: requireEnv('JWT_SECRET', env),
+    jwtSecret: requireJwtSecret(env),
+    allowPrivilegedDbRole: parseBoolean(
+      'ALLOW_PRIVILEGED_DB_ROLE',
+      env.ALLOW_PRIVILEGED_DB_ROLE,
+      false,
+    ),
     ptvV11OAuthClientId: env.PTV_V11_OAUTH_CLIENT_ID ?? '',
     ptvV11OAuthClientSecret: env.PTV_V11_OAUTH_CLIENT_SECRET ?? '',
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import {
   emailVerificationTokens,
@@ -128,11 +128,27 @@ export class AuthService {
     return this.dummyPasswordHash;
   }
 
-  async register(email: string, name: string, password: string): Promise<{ userId: string }> {
+  /**
+   * Case-insensitive account lookup: older rows may hold a mixed-case email
+   * (registration used to store it as typed). An exact match wins when several rows
+   * differ only in case.
+   */
+  private async findUserByEmail(email: string): Promise<typeof users.$inferSelect | undefined> {
+    const normalized = normalizeEmail(email);
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalized}`)
+      .limit(10);
+    return rows.find((row) => row.email === email || row.email === normalized) ?? rows[0];
+  }
+
+  async register(rawEmail: string, name: string, password: string): Promise<{ userId: string }> {
     if (this.authMode === 'oidc') {
       throw new PasswordRegistrationDisabledError();
     }
-    const existing = await this.db.query.users.findFirst({ where: eq(users.email, email) });
+    const email = normalizeEmail(rawEmail);
+    const existing = await this.findUserByEmail(email);
     if (existing) {
       throw new EmailAlreadyRegisteredError();
     }
@@ -211,7 +227,7 @@ export class AuthService {
       throw new InvalidCredentialsError();
     }
 
-    const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
+    const user = await this.findUserByEmail(email);
     if (!user) {
       // Same error as a wrong password — don't reveal whether the email is
       // registered. Also run a real (deliberately slow) Argon2id verify
@@ -233,7 +249,7 @@ export class AuthService {
 
     const valid = await verifyPassword(user.passwordHash, password);
     if (!valid) {
-      await this.recordFailedLogin(user.id, user.failedLoginAttempts);
+      await this.recordFailedLogin(user.id);
       throw new InvalidCredentialsError();
     }
 
@@ -287,15 +303,17 @@ export class AuthService {
     return this.issueSession(userId, undefined, options.oidcIdTokenSealed ?? null);
   }
 
-  private async recordFailedLogin(userId: string, currentAttempts: number): Promise<void> {
-    const attempts = currentAttempts + 1;
-    const lockedUntil =
-      attempts >= LOCKOUT_THRESHOLD ? new Date(this.now().getTime() + LOCKOUT_DURATION_MS) : null;
+  /**
+   * One UPDATE increments the counter and decides the lockout, so parallel
+   * wrong guesses cannot undercount (a read-then-write would lose increments).
+   */
+  private async recordFailedLogin(userId: string): Promise<void> {
+    const lockedUntil = new Date(this.now().getTime() + LOCKOUT_DURATION_MS);
     await this.db
       .update(users)
       .set({
-        failedLoginAttempts: lockedUntil ? 0 : attempts,
-        lockedUntil,
+        failedLoginAttempts: sql`CASE WHEN ${users.failedLoginAttempts} + 1 >= ${LOCKOUT_THRESHOLD} THEN 0 ELSE ${users.failedLoginAttempts} + 1 END`,
+        lockedUntil: sql`CASE WHEN ${users.failedLoginAttempts} + 1 >= ${LOCKOUT_THRESHOLD} THEN ${lockedUntil.toISOString()}::timestamptz ELSE NULL END`,
       })
       .where(eq(users.id, userId));
   }
@@ -401,7 +419,7 @@ export class AuthService {
     if (!this.allowsPasswordSignIn(email)) {
       return;
     }
-    const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
+    const user = await this.findUserByEmail(email);
     if (!user) {
       return;
     }

@@ -217,6 +217,16 @@ organisation requires a verified account. The password-sign-in refusal is
 only given after the right password, so it does not reveal which emails
 exist.
 
+### Database role and row-level security
+
+Tenant isolation has a second layer in Postgres row-level security, and a
+superuser or `BYPASSRLS` role ignores it. At startup the server checks the
+role in `DATABASE_URL` (`pg_roles`): with `NODE_ENV=production` it refuses to
+start when the role is a superuser or has `BYPASSRLS`, otherwise it logs a
+warning. Connect as a plain role in production. `ALLOW_PRIVILEGED_DB_ROLE=true`
+turns the refusal into a warning. The compose and CI setups connect as the
+image's superuser, so they only warn.
+
 Common tasks:
 
 ```bash

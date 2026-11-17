@@ -26,7 +26,9 @@ docker build -t ghcr.io/<owner>/<repo>:<tag> .
 - `PORT=3000`
 - `DATABASE_URL` (external Postgres)
 - `MASTER_ENCRYPTION_KEY`
-- `JWT_SECRET`
+- `JWT_SECRET` (base64, at least 32 bytes decoded)
+- `DATABASE_URL` must use a role that is not a superuser and has no `BYPASSRLS`
+  (else startup is refused; opt out with `ALLOW_PRIVILEGED_DB_ROLE=true`)
 - Optional v11 OAuth client values:
   - `PTV_V11_OAUTH_CLIENT_ID`
   - `PTV_V11_OAUTH_CLIENT_SECRET`

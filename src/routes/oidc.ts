@@ -12,6 +12,7 @@ import {
   decodeAuthorizationRequest,
   escapeHtml,
   html,
+  setFrameProtection,
 } from '../mcp/oauthRoutes.js';
 import type { OidcClient } from '../oidc/oidcClient.js';
 import {
@@ -92,6 +93,14 @@ function backLink(oauthRequest: string | null | undefined): string {
  */
 export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOptions): Promise<void> {
   const limiter = new FixedWindowRateLimiter(options.loginRateLimitPerMinute ?? 30, 60_000);
+
+  // Error pages here are sign-in pages: they must not be framed.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (String(reply.getHeader('content-type') ?? '').startsWith('text/html')) {
+      setFrameProtection(reply);
+    }
+    return payload;
+  });
 
   const cookie = (value: string, maxAge: number) =>
     `${OIDC_STATE_COOKIE}=${value}; Path=/oidc; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
 import { sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
 import { SignJWT, jwtVerify } from 'jose';
+import { fetchPinned } from './safeFetch.js';
 
 const ACCESS_TTL_SECONDS = 3600;
 const MAX_REDIRECT_URIS = 10;
@@ -208,43 +208,25 @@ export class OAuthService {
     const url = new URL(clientId);
     if (!this.isCimdClientId(clientId)) throw new Error('Invalid CIMD client_id');
 
-    const addresses = await lookup(url.hostname, { all: true });
-    if (addresses.length === 0 || addresses.some(({ address }) => this.isPrivateIp(address))) {
-      throw new Error('CIMD client_id resolves to a private address');
-    }
-
     let current = url;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-      const response = await fetch(current, {
-        headers: { accept: 'application/json' },
-        redirect: 'manual',
-        signal: AbortSignal.timeout(5000),
-      });
+      // Resolves, checks and connects to one address, and caps the body while it streams.
+      const response = await fetchPinned(current, { maxBytes: 64 * 1024, timeoutMs: 5000 });
 
       if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location || redirects === 3) throw new Error('Invalid CIMD redirect');
-        const next = new URL(location, current);
+        if (!response.location || redirects === 3) throw new Error('Invalid CIMD redirect');
+        const next = new URL(response.location, current);
         if (!this.isCimdClientId(next.toString())) throw new Error('Invalid CIMD redirect');
-        const nextAddresses = await lookup(next.hostname, { all: true });
-        if (
-          nextAddresses.length === 0 ||
-          nextAddresses.some(({ address }) => this.isPrivateIp(address))
-        ) {
-          throw new Error('CIMD redirect resolves to a private address');
-        }
         current = next;
         continue;
       }
 
-      if (!response.ok) throw new Error('Unable to fetch CIMD document');
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && Number(contentLength) > 64 * 1024)
-        throw new Error('CIMD document is too large');
+      if (response.status < 200 || response.status >= 300)
+        throw new Error('Unable to fetch CIMD document');
 
       let metadata: unknown;
       try {
-        metadata = JSON.parse(await response.text());
+        metadata = JSON.parse(response.body);
       } catch {
         throw new Error('Invalid CIMD document');
       }
@@ -264,38 +246,6 @@ export class OAuthService {
     }
 
     throw new Error('Unable to fetch CIMD document');
-  }
-
-  private isPrivateIp(address: string): boolean {
-    if (address.includes(':')) {
-      const normalized = address.toLowerCase();
-      return (
-        normalized === '::1' ||
-        normalized.startsWith('fc') ||
-        normalized.startsWith('fd') ||
-        normalized.startsWith('fe8') ||
-        normalized.startsWith('fe9') ||
-        normalized.startsWith('fea') ||
-        normalized.startsWith('feb')
-      );
-    }
-
-    const octets = address.split('.').map(Number);
-    if (
-      octets.length !== 4 ||
-      octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
-    )
-      return true;
-    const [a, b] = octets;
-    if (a === undefined || b === undefined) return true;
-    return (
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      a === 0
-    );
   }
 
   async createTenantSelectionToken(userId: string, request: AuthorizationRequest): Promise<string> {
@@ -386,18 +336,26 @@ export class OAuthService {
     ) {
       throw new Error('invalid_grant');
     }
-    await this.db.execute(
-      sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL`,
+    // One guarded UPDATE decides which of two concurrent exchanges wins.
+    const claimed = await this.db.execute<{ id: string }>(
+      sql`UPDATE oauth_authorization_codes SET consumed_at = now() WHERE id = ${row.id}::uuid AND consumed_at IS NULL RETURNING id`,
     );
+    if (claimed.length === 0) throw new Error('invalid_grant');
     this.requireAllowedGrant(row);
-    const refreshToken = generateOpaqueToken();
-    await this.db.execute(sql`
-      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
-      VALUES (${hashToken(refreshToken)}, ${clientId}, ${row.user_id}, ${row.scope}, ${row.tenant_id}, ${row.environment}, ${row.read_api_version}, ${row.read_api_version}, ${row.write_api_version}, now() + interval '30 days')
-    `);
+    const refreshToken = await this.issueRefreshToken(clientId, row);
     return this.tokenResponse(row, clientId, refreshToken);
   }
 
+  private async issueRefreshToken(clientId: string, grant: Grant): Promise<string> {
+    const refreshToken = generateOpaqueToken();
+    await this.db.execute(sql`
+      INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_id, scope, tenant_id, environment, api_version, read_api_version, write_api_version, expires_at)
+      VALUES (${hashToken(refreshToken)}, ${clientId}, ${grant.user_id}, ${grant.scope}, ${grant.tenant_id}, ${grant.environment}, ${grant.read_api_version}, ${grant.read_api_version}, ${grant.write_api_version}, now() + interval '30 days')
+    `);
+    return refreshToken;
+  }
+
+  /** Rotates: the presented refresh token is revoked and a new one is issued with the access token. */
   async refresh(refreshToken: string, clientId: string) {
     const rows = await this.db.execute<
       Grant & {
@@ -417,7 +375,13 @@ export class OAuthService {
       throw new Error('invalid_grant');
     }
     this.requireAllowedGrant(row);
-    return this.tokenResponse(row, clientId);
+    // Only one of two concurrent uses of the same token may revoke it.
+    const revoked = await this.db.execute<{ id: string }>(
+      sql`UPDATE oauth_refresh_tokens SET revoked_at = now() WHERE id = ${row.id}::uuid AND revoked_at IS NULL RETURNING id`,
+    );
+    if (revoked.length === 0) throw new Error('invalid_grant');
+    const newRefreshToken = await this.issueRefreshToken(clientId, row);
+    return this.tokenResponse(row, clientId, newRefreshToken);
   }
 
   private requireAllowedGrant(grant: Grant): void {

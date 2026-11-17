@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { isAllowedWithoutTenant, parseClientMetadata, type OAuthService } from './oauthService.js';
 import type { AuthService } from '../auth/authService.js';
+import { FixedWindowRateLimiter } from '../oidc/rateLimit.js';
+import { rateLimitHook } from '../routes/rateLimitHook.js';
 import type { TenantService } from '../tenants/tenantService.js';
 import type { PtvAdapterConfigService } from '../credentials/ptvAdapterConfigService.js';
 
@@ -24,6 +26,8 @@ export interface McpOAuthRouteOptions {
   oidcButtonLabel?: string;
   /** `AUTH_MODE=oidc`: the password form is shown only as a collapsed break-glass sign-in. */
   ssoOnly?: boolean;
+  /** POST /oauth/authorize attempts per client IP per minute. Default 30. */
+  authorizeRateLimitPerMinute?: number;
 }
 
 export function escapeHtml(value: string): string {
@@ -186,6 +190,12 @@ export async function connectionSelectionPage(
       `);
 }
 
+/** Headers that forbid framing a page. */
+export function setFrameProtection(reply: { header: (name: string, value: string) => unknown }) {
+  reply.header('content-security-policy', "frame-ancestors 'none'");
+  reply.header('x-frame-options', 'DENY');
+}
+
 export function html(body: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>ptv-mcp login</title>
 <style>body{font-family:system-ui;max-width:420px;margin:8rem auto;padding:2rem}input{display:block;width:100%;box-sizing:border-box;margin:.5rem 0 1rem;padding:.7rem}button,a.sso{padding:.7rem 1.2rem}a.sso{display:inline-block;border:1px solid #333;border-radius:4px;color:inherit;text-decoration:none}p.error{color:#b00020}</style>
@@ -196,6 +206,22 @@ export async function mcpOAuthRoutes(
   app: FastifyInstance,
   options: McpOAuthRouteOptions,
 ): Promise<void> {
+  // The sign-in and consent pages must not be framed (clickjacking).
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (String(reply.getHeader('content-type') ?? '').startsWith('text/html')) {
+      setFrameProtection(reply);
+    }
+    return payload;
+  });
+  const authorizeLimit = rateLimitHook(
+    new FixedWindowRateLimiter(options.authorizeRateLimitPerMinute ?? 30, 60_000),
+    (reply) =>
+      reply
+        .code(429)
+        .type('text/html')
+        .send(html('<h1>Too many sign-in attempts</h1><p>Please wait a minute and try again.</p>')),
+  );
+
   app.get('/.well-known/oauth-protected-resource', async (_req, reply) =>
     reply.send({
       resource: options.publicUrl,
@@ -296,7 +322,7 @@ export async function mcpOAuthRoutes(
       write_api_version?: string;
       selection_token?: string;
     };
-  }>('/oauth/authorize', async (request, reply) => {
+  }>('/oauth/authorize', { preHandler: authorizeLimit }, async (request, reply) => {
     // Step 1: authenticate the human, then ask which tenant this OAuth
     // connection should represent. The tenant choice belongs to the OAuth
     // grant, not to the user's identity, so one user can authorize multiple
