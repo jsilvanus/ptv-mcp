@@ -116,6 +116,27 @@ linked as before, password unchanged.
    `OIDC_CLIENT_SECRET` and its *OpenID Configuration Issuer* URL to
    `OIDC_ISSUER`.
 
+### Generic oidc-provider-based providers
+
+Any issuer built on [panva's `oidc-provider`](https://github.com/panva/node-oidc-provider)
+works with the same settings. `src/oidc/oidcProvider.integration.test.ts`
+runs ptv-mcp's sign-in against such a provider in-process, once with a root
+issuer and once with a path-prefixed issuer (`http://127.0.0.1:<port>/idp`,
+no trailing slash), for both the web sign-in and the MCP authorization. The
+provider in that test is configured the way ptv-mcp expects:
+
+- `pkce.required` true, `S256` method
+- `id_token_signed_response_alg: 'RS256'` with an RS256 signing key in `jwks`
+- `token_endpoint_auth_method: 'client_secret_basic'`
+- `conformIdTokenClaims: false`, so the `email`, `profile` and `groups` claims
+  are released in the ID token
+- a `groups` scope, requested with `OIDC_SCOPES="openid email profile groups"`
+- redirect URI `<MCP_PUBLIC_URL>/oidc/callback` on the client
+
+For a path-prefixed issuer, mount the provider under that path in your host
+application the way koa-mount does (strip the prefix for routing, keep the full
+path as `originalUrl`), so discovery advertises endpoints under the same prefix.
+
 ## PTV v12 raw-response debugging
 
 Set `PTV_V12_DEBUG_RAW=true` to print successful v12 API responses to the

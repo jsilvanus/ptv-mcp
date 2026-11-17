@@ -43,9 +43,11 @@
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/node": "^22.10.5",
+    "@types/oidc-provider": "9.13.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",
+    "oidc-provider": "9.13.3",
     "openapi-typescript": "^7.13.0",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
