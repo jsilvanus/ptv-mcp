@@ -25,9 +25,6 @@ suggested fixes are in
 under the same numbers. Not being fixed now.
 
 - [ ] **6. Organisation drafts cannot be read (v11).** Service, channel and connection writes fall back to the public read only on 404. v11 has no `Organization/active` read, so the `Modified` check in `applyOrganizationChange` compares against the published version only and cannot see a draft or modified organisation. Kept as is until PTV exposes such a read or a live check says otherwise (see `docs/ptv-v11-notes.md`, "Organisations").
-- [ ] **10. OAuth grant scope is not enforced everywhere.** Resolve and manual
-      publish use the proposal's environment; `resourceToolContext` takes the
-      tenant from the resource URI.
 - [ ] **14. Tenant governance gaps.** Any account can create tenants, the last
       Tenant Admin can leave, removed required reviewers block approval, and
       `addMember` reveals which emails have accounts.

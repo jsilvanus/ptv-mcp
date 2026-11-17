@@ -24,6 +24,35 @@ export interface ToolContext {
  */
 export type ReadToolContext = Omit<ToolContext, 'tenantId'> & { tenantId?: string };
 
+/**
+ * A call reaches outside what its MCP connection was authorised for: another
+ * environment, or another organisation than the token's `tenant_id` /
+ * `environment` claims name. Refused, never silently switched.
+ */
+export class GrantScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GrantScopeError';
+  }
+}
+
+/**
+ * Refuses a proposal that belongs to another environment than the MCP
+ * connection's grant. Only MCP tool calls pass `enforceGrantEnvironment`
+ * (see proposalQueue.ts); the web UI resolves proposals of any environment
+ * the user has a role for, using its own token.
+ */
+export function requireProposalInGrantEnvironment(
+  grantEnvironment: PtvEnvironment,
+  proposalEnvironment: PtvEnvironment,
+): void {
+  if (proposalEnvironment !== grantEnvironment) {
+    throw new GrantScopeError(
+      `This connection is authorised for ${grantEnvironment}; the proposal belongs to ${proposalEnvironment}. Reconnect for that environment.`,
+    );
+  }
+}
+
 export class WriteApiNotSelectedError extends Error {
   constructor() {
     super(

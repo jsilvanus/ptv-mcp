@@ -170,11 +170,13 @@ via OAuth (`src/mcp/oauthService.ts`, `src/mcp/oauthRoutes.ts`). Both
 tools and resources build their context off the same verified
 `extra.authInfo` — via `toolContext(extra)` for tools (tenant/environment
 come from the OAuth token's claims) and `resourceToolContext(extra,
-uriTenantId, uriEnvironment)` for resources (tenant/environment instead
-come from the resource URI itself, e.g. `ptv://{tenantId}/{environment}/
-services/{id}` — resources have no other per-call channel the way tools'
-arguments schema does). Both still take the acting user and read/write API
-version from the token. Note: MCP **resource** read callbacks intentionally
+uriTenantId, uriEnvironment)` for resources (the URI, e.g. `ptv://{tenantId}/
+{environment}/services/{id}`, must name the organisation and environment the
+token grants, else `GrantScopeError`). Both still take the acting user and
+read/write API version from the token. The MCP proposal tools
+(`ptv_resolve_proposal`, `ptv_confirm_manual_publish`) pass
+`enforceGrantEnvironment`, so a token cannot act on a proposal from the other
+environment; the REST web UI does not, by design. Note: MCP **resource** read callbacks intentionally
 do *not* use the tools' `try/catch → errorResult` convention, because
 `ReadResourceResult` has no `isError` field the way `CallToolResult` does
 (thrown errors become JSON-RPC errors instead) — this is a deliberate

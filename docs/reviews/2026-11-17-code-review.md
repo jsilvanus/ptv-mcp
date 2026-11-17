@@ -2,7 +2,7 @@
 
 Date: 2026-11-17. Reviewed commit: `8ae24a8` (`main`).
 
-> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 7, 11, 12, 13 and 15 (medium) were fixed afterwards. Findings 6, 8 and 9 were fixed in a later change, except that organisation drafts cannot be read in v11, which stays open under 6 (see `docs/ptv-v11-notes.md`). Findings 10 and 14 are open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
+> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 7, 11, 12, 13 and 15 (medium) were fixed afterwards. Finding 10 was fixed after that. Findings 6, 8 and 9 were fixed in a later change, except that organisation drafts cannot be read in v11, which stays open under 6 (see `docs/ptv-v11-notes.md`). Finding 14 is open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
 
 ## Summary
 
@@ -23,7 +23,7 @@ Checks run: `npm run typecheck` and `npm run lint` are clean, and all 455 unit t
 | 7 | Medium | v11 client retries POST and has no timeouts | From code | Fixed |
 | 8 | Medium | Kept connections are resent in read shape | From code and docs | Fixed; live check pending (docs/ptv-v11-notes.md) |
 | 9 | Medium | Service and connection writes are not atomic | From code | Fixed: `PartialWriteError` names the step and what is left |
-| 10 | Medium | OAuth grant scope (tenant, environment) is not enforced everywhere | From code | Open (TODO.md) |
+| 10 | Medium | OAuth grant scope (tenant, environment) is not enforced everywhere | From code | Fixed (2026-11-17) |
 | 11 | Medium | OAuth server hardening gaps | From code | Fixed |
 | 12 | Medium | No rate limits or input validation on auth routes | From code | Fixed |
 | 13 | Medium | Row-level security depends on which database role the app uses | Needs checking on staging | Fixed |
