@@ -77,6 +77,9 @@ the email + password form (password sign-in keeps working).
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | Where the IdP returns the browser after sign-out (RP-initiated logout). Default `<MCP public URL>/login`; register it at the IdP. |
 | `AUTH_MODE` | `both` (default with OIDC) = password and SSO. `oidc` = SSO only (see below). `local` = password only; refused while `OIDC_ISSUER` is set. `oidc` and `both` require `OIDC_ISSUER`. |
 | `OIDC_BREAK_GLASS_EMAILS` | Comma-separated emails that keep password sign-in in `oidc` mode. Empty = no break-glass account. |
+| `OIDC_GROUP_SYNC` | `true` = groups from the IdP grant tenant roles at each SSO sign-in (see "Group sync" below). Default `false`. Needs `OIDC_ISSUER`. |
+| `OIDC_GROUPS_CLAIM` | The claim that lists the user's groups, read from the ID token or else from userinfo. Default `groups`. Used only with `OIDC_GROUP_SYNC=true`. |
+| `OIDC_GROUP_PREFIX` | Prefix of the groups that grant tenant roles; a trailing `/` is added if missing. Default `ptv/`. Used only with `OIDC_GROUP_SYNC=true`. |
 
 ### SSO-only mode (`AUTH_MODE=oidc`)
 
@@ -109,10 +112,42 @@ How an IdP identity finds its ptv-mcp account:
 2. Otherwise an account with the same email (case-insensitive) is linked,
    if the email is verified by the IdP or `OIDC_TRUST_EMAIL=true`.
 3. Otherwise, with `OIDC_CREATE_USERS=true` and a trusted email, a new
-   account is created. Tenant admins still add it to organisations and pick
-   its role; nothing about roles comes from the IdP.
+   account is created. It has no memberships until a tenant admin adds it,
+   or until a group grants one (below).
 4. Otherwise sign-in is refused ("No account for this sign-in; ask the
    administrator.").
+
+### Group sync (`OIDC_GROUP_SYNC=true`)
+
+With group sync on, the groups claim decides the tenant memberships that the
+IdP grants. It is checked at every SSO sign-in, for the account that
+signed in:
+
+| Group | Grants |
+| --- | --- |
+| `<prefix><tenant-slug>` | Viewer in that tenant |
+| `<prefix><tenant-slug>/viewer` | Viewer |
+| `<prefix><tenant-slug>/contributor` | Contributor |
+| `<prefix><tenant-slug>/approver` | Approver |
+| `<prefix><tenant-slug>/publisher` | Publisher |
+
+For example, with the default prefix, the group `ptv/example-parish/publisher`
+grants Publisher in the tenant whose slug is `example-parish`. Several groups
+for one tenant give the highest role. Groups without the prefix are ignored,
+and so are unknown tenant slugs and malformed names. Groups never grant
+Tenant Admin: that role stays a manual decision.
+
+- **Manual rows win.** A membership that a tenant admin set by hand (or
+  changed in the UI) is never changed or removed by a group. Changing a role
+  by hand makes the row manual.
+- **Rows from groups follow the groups.** A group-granted membership whose
+  group is no longer sent is removed at the next SSO sign-in. A user who
+  has no groups claim at all loses all group-granted memberships. Check
+  that the IdP sends the claim (scope or mapper) before you turn this on.
+- **Timing.** Changes apply at the next SSO sign-in. The server does not ask
+  the IdP between sign-ins, so a removed group keeps its access until then.
+- Each change is recorded in the tenant's audit log
+  (`AddGroupMembership`, `UpdateGroupMembership`, `RemoveGroupMembership`).
 
 A temporarily locked account (too many wrong passwords) is refused on the
 OIDC path as well. Who may sign in at all is decided by the IdP (in

@@ -1,5 +1,6 @@
 import * as client from 'openid-client';
 import type { OidcConfig } from '../config.js';
+import { groupsFromClaim } from './groupGrants.js';
 
 /** What the app needs from a verified sign-in: who the IdP says the user is. */
 export interface OidcIdentityClaims {
@@ -15,6 +16,11 @@ export interface OidcIdentityClaims {
    * `id_token_hint` of the RP-initiated logout request.
    */
   idToken?: string;
+  /**
+   * The groups claim (`OIDC_GROUPS_CLAIM`) when group sync is on and the IdP
+   * sent one; undefined when the claim is absent.
+   */
+  groups?: string[];
 }
 
 export interface OidcAuthorizationStart {
@@ -110,20 +116,26 @@ export class OidcClient {
     const claims = tokens.claims();
     if (!claims) throw new Error('The identity provider returned no ID token');
 
+    // The groups claim is read from the ID token, else from userinfo. Userinfo
+    // is also asked for when the email is missing from the ID token.
+    const groupsClaim = this.config.groupSync?.claim;
+    const emailMissing = !stringClaim(claims.email);
+    const groupsMissing = groupsClaim !== undefined && claims[groupsClaim] === undefined;
+
     let source: Record<string, unknown> = claims;
-    if (!stringClaim(claims.email) && tokens.access_token) {
+    if ((emailMissing || groupsMissing) && tokens.access_token) {
       const userInfo = await client.fetchUserInfo(configuration, tokens.access_token, claims.sub);
       source = {
         ...userInfo,
         ...claims,
-        email: userInfo.email,
-        email_verified: userInfo.email_verified,
+        ...(emailMissing ? { email: userInfo.email, email_verified: userInfo.email_verified } : {}),
       };
     }
 
     const email = stringClaim(source.email);
     const name = stringClaim(source.name);
     const preferredUsername = stringClaim(source.preferred_username);
+    const groups = groupsClaim !== undefined ? groupsFromClaim(source[groupsClaim]) : undefined;
     return {
       issuer: claims.iss,
       subject: claims.sub,
@@ -132,6 +144,7 @@ export class OidcClient {
       ...(name ? { name } : {}),
       ...(preferredUsername ? { preferredUsername } : {}),
       ...(tokens.id_token ? { idToken: tokens.id_token } : {}),
+      ...(groups ? { groups } : {}),
     };
   }
 

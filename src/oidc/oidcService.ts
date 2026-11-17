@@ -1,15 +1,22 @@
-import { and, eq, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
+import { withContext } from '../db/context.js';
 import {
+  memberships,
   oidcIdentities,
   oidcLoginStates,
   oidcWebHandoffs,
   refreshTokens,
+  tenants,
   users,
 } from '../db/schema/index.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
+import type { OidcGroupSyncConfig } from '../config.js';
+import type { AuditService } from '../audit/auditService.js';
+import type { MembershipRole } from '../auth/rbac.js';
 import type { OidcIdentityClaims } from './oidcClient.js';
 import { sealIdToken } from './idTokenSeal.js';
+import { parseGroupGrants } from './groupGrants.js';
 
 /** Lifetime of a started sign-in (state row and cookie). */
 export const OIDC_STATE_TTL_SECONDS = 600;
@@ -40,7 +47,18 @@ export interface OidcServiceOptions {
   trustEmail: boolean;
   /** MASTER_ENCRYPTION_KEY: seals the ID token kept for sign-out. */
   masterEncryptionKey: string;
+  /** `OIDC_GROUP_SYNC`: when set, `syncGroupMemberships` grants tenant roles from groups. */
+  groupSync?: OidcGroupSyncConfig;
+  /** Records each membership a group sync changes. */
+  auditService?: AuditService;
   now?: () => Date;
+}
+
+/** One membership a group sync changed, for the audit log. */
+interface GroupMembershipChange {
+  tenantId: string;
+  action: 'AddGroupMembership' | 'UpdateGroupMembership' | 'RemoveGroupMembership';
+  role: MembershipRole;
 }
 
 /**
@@ -217,6 +235,101 @@ export class OidcService {
       .where(
         and(eq(oidcIdentities.issuer, claims.issuer), eq(oidcIdentities.subject, claims.subject)),
       );
+  }
+
+  /**
+   * Makes the IdP-sourced memberships of `userId` match the groups the IdP
+   * sent at this sign-in. Runs only when group sync is on (otherwise a no-op).
+   *
+   * - A tenant granted by a group gets that role, unless the user already has
+   *   a membership there that a tenant admin set by hand: manual rows are left
+   *   alone, in both directions.
+   * - An `oidc` row whose group is gone is removed.
+   * - Tenants are matched by slug; unknown slugs are skipped.
+   * - Access granted here lasts until the next SSO sign-in (no back-channel
+   *   logout is wired up), so a removed group takes effect at that point.
+   *
+   * An absent groups claim counts as no groups. Returns the group names that
+   * named no grant, for the caller to log.
+   */
+  async syncGroupMemberships(
+    userId: string,
+    groups: readonly string[] | undefined,
+  ): Promise<{ ignored: string[] }> {
+    const sync = this.options.groupSync;
+    if (!sync) return { ignored: [] };
+
+    const { grants, ignored } = parseGroupGrants(groups ?? [], sync.prefix);
+    const slugs = [...grants.keys()];
+    const tenantRows =
+      slugs.length > 0
+        ? await this.db
+            .select({ id: tenants.id, slug: tenants.slug })
+            .from(tenants)
+            .where(inArray(tenants.slug, slugs))
+        : [];
+    const tenantIdBySlug = new Map(tenantRows.map((row) => [row.slug, row.id]));
+    const granted = new Map<string, MembershipRole>();
+    for (const [slug, role] of grants) {
+      const tenantId = tenantIdBySlug.get(slug);
+      if (tenantId) granted.set(tenantId, role);
+    }
+
+    const changes: GroupMembershipChange[] = [];
+    // RLS lets this user see and write their own membership rows.
+    await withContext(this.db, { userId }, async (tx) => {
+      const current = await tx
+        .select({
+          tenantId: memberships.tenantId,
+          role: memberships.role,
+          source: memberships.source,
+        })
+        .from(memberships)
+        .where(eq(memberships.userId, userId));
+      const currentByTenant = new Map(current.map((row) => [row.tenantId, row]));
+
+      for (const row of current) {
+        if (row.source === 'oidc' && !granted.has(row.tenantId)) {
+          await tx
+            .delete(memberships)
+            .where(and(eq(memberships.userId, userId), eq(memberships.tenantId, row.tenantId)));
+          changes.push({
+            tenantId: row.tenantId,
+            action: 'RemoveGroupMembership',
+            role: row.role,
+          });
+        }
+      }
+
+      for (const [tenantId, role] of granted) {
+        const existing = currentByTenant.get(tenantId);
+        if (existing?.source === 'manual') continue;
+        if (existing?.role === role) continue;
+        if (existing) {
+          await tx
+            .update(memberships)
+            .set({ role, updatedAt: this.now() })
+            .where(and(eq(memberships.userId, userId), eq(memberships.tenantId, tenantId)));
+          changes.push({ tenantId, action: 'UpdateGroupMembership', role });
+        } else {
+          await tx.insert(memberships).values({ userId, tenantId, role, source: 'oidc' });
+          changes.push({ tenantId, action: 'AddGroupMembership', role });
+        }
+      }
+    });
+
+    for (const change of changes) {
+      await this.options.auditService?.record({
+        tenantId: change.tenantId,
+        userId,
+        action: change.action,
+        resourceType: 'Membership',
+        resourceId: userId,
+        afterState: change.action === 'RemoveGroupMembership' ? undefined : { role: change.role },
+        result: 'Success',
+      });
+    }
+    return { ignored };
   }
 
   /** A one-time code the SPA exchanges for its session (`POST /oidc/session`). */

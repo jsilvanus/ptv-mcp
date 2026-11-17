@@ -183,6 +183,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         createUsers: config.oidc.createUsers,
         trustEmail: config.oidc.trustEmail,
         masterEncryptionKey: config.masterEncryptionKey,
+        ...(config.oidc.groupSync ? { groupSync: config.oidc.groupSync } : {}),
+        auditService,
       }),
       authService,
       oauthService,
