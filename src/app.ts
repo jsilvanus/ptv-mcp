@@ -83,6 +83,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const authService = new AuthService({
     db,
     jwtSecret: config.jwtSecret,
+    masterEncryptionKey: config.masterEncryptionKey,
     mailer,
     requireVerifiedEmail,
     authMode,
@@ -181,6 +182,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       oidcService: new OidcService(db, {
         createUsers: config.oidc.createUsers,
         trustEmail: config.oidc.trustEmail,
+        masterEncryptionKey: config.masterEncryptionKey,
       }),
       authService,
       oauthService,

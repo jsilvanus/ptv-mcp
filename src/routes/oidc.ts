@@ -206,7 +206,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
       }
 
       let userId: string;
-      let idTokenHint: string | undefined;
+      let idToken: string | undefined;
       try {
         // The registered redirect URI with this request's query: behind a
         // reverse proxy request.url has neither the public origin nor any
@@ -218,7 +218,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
           nonce: state.nonce,
           codeVerifier: state.codeVerifier,
         });
-        idTokenHint = claims.idToken;
+        idToken = claims.idToken;
         userId = await options.oidcService.resolveUser(claims);
         await options.authService.assertCanSignIn(userId);
       } catch (err) {
@@ -249,7 +249,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
       }
 
       if (state.purpose === 'web') {
-        const code = await options.oidcService.createWebHandoff(userId, idTokenHint);
+        const code = await options.oidcService.createWebHandoff(userId, idToken);
         return reply.redirect(`/login#oidc=${encodeURIComponent(code)}`);
       }
 
@@ -276,7 +276,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
     try {
       return reply.send(
         await options.authService.createSession(handoff.userId, {
-          oidcIdTokenHint: handoff.idTokenHint,
+          oidcIdTokenSealed: handoff.idTokenSealed,
         }),
       );
     } catch (err) {

@@ -9,6 +9,7 @@ import {
 } from '../db/schema/index.js';
 import { generateOpaqueToken, hashToken } from '../auth/tokens.js';
 import type { OidcIdentityClaims } from './oidcClient.js';
+import { sealIdToken } from './idTokenSeal.js';
 
 /** Lifetime of a started sign-in (state row and cookie). */
 export const OIDC_STATE_TTL_SECONDS = 600;
@@ -37,6 +38,8 @@ export const NO_ACCOUNT_MESSAGE = 'No account for this sign-in; ask the administ
 export interface OidcServiceOptions {
   createUsers: boolean;
   trustEmail: boolean;
+  /** MASTER_ENCRYPTION_KEY: seals the ID token kept for sign-out. */
+  masterEncryptionKey: string;
   now?: () => Date;
 }
 
@@ -217,27 +220,27 @@ export class OidcService {
   }
 
   /** A one-time code the SPA exchanges for its session (`POST /oidc/session`). */
-  /** `idTokenHint` is the IdP's ID token, carried to the session for sign-out. */
-  async createWebHandoff(userId: string, idTokenHint?: string): Promise<string> {
+  /** `idToken` is the IdP's ID token; it is sealed here and carried to the session for sign-out. */
+  async createWebHandoff(userId: string, idToken?: string): Promise<string> {
     const code = generateOpaqueToken();
     await this.db.insert(oidcWebHandoffs).values({
       codeHash: hashToken(code),
       userId,
       expiresAt: new Date(this.now().getTime() + WEB_HANDOFF_TTL_MS),
-      idTokenHint: idTokenHint ?? null,
+      idTokenSealed: idToken ? sealIdToken(this.options.masterEncryptionKey, idToken) : null,
     });
     return code;
   }
 
-  /** Single use; null when unknown or expired. */
+  /** Single use; null when unknown or expired. `idTokenSealed` stays sealed. */
   async consumeWebHandoff(
     code: string,
-  ): Promise<{ userId: string; idTokenHint: string | null } | null> {
+  ): Promise<{ userId: string; idTokenSealed: string | null } | null> {
     const [row] = await this.db
       .delete(oidcWebHandoffs)
       .where(eq(oidcWebHandoffs.codeHash, hashToken(code)))
       .returning();
     if (!row || row.expiresAt < this.now()) return null;
-    return { userId: row.userId, idTokenHint: row.idTokenHint };
+    return { userId: row.userId, idTokenSealed: row.idTokenSealed };
   }
 }

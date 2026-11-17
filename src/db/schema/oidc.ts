@@ -60,6 +60,6 @@ export const oidcWebHandoffs = pgTable('oidc_web_handoffs', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  /** The IdP's ID token, carried to the session that `POST /oidc/session` creates. */
-  idTokenHint: text('id_token_hint'),
+  /** The sealed IdP ID token (src/oidc/idTokenSeal.ts), carried to the session that `POST /oidc/session` creates. */
+  idTokenSealed: text('id_token_sealed'),
 });
