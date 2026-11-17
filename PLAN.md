@@ -94,33 +94,41 @@
 - [x] Proposal queue UI (Editor+), reusing Phase 5's `DiffView`
 - [x] Every step (queue/review/resolve) audited under one `correlationId`; sync point verified in `src/syncPoints/phase8.integration.test.ts`
 
-## Phase 9: `PtvV12Adapter` implementation (post-MVP-0) — in progress, most steps done 🟡
-- [~] Read methods against domain model (`src/ptv/v12/adapter.ts`) — services,
-      channels, organisations (+hierarchy), connections implemented; **`searchServiceCollections`,
-      `searchGeneralDescriptions`, `listCodes` are unimplemented stubs that throw**
-      (see `docs/ptv-v12-notes.md`). Implemented searches also fetch PTV's entire
-      catalogue per content type and filter/paginate client-side rather than using
-      server-side query params — a real scalability gap, not just a style issue.
+## Phase 9: `PtvV12Adapter` implementation (post-MVP-0) — read complete, write gated 🟡
+- [x] Read methods against domain model (`src/ptv/v12/adapter.ts`): services, channels,
+      organisations (+hierarchy), service collections, general descriptions, connections,
+      code lists and ontology terms. Live-verified against the v12 test environment on
+      2026-09-23/24 (see `docs/ptv-v12-notes.md`). Searches use server-side filters where v12
+      has them; organisation name and free-text search remain client-side (v12 has no such
+      filter). `getGeneralDescription` was a `null` stub until the Phase 9 contract run and is
+      now implemented.
 - [x] `x-api-key` auth (tenant-scoped, via `TenantEnvironment`), retry/backoff with
       `Retry-After` support (`src/ptv/v12/client.ts`)
-- [x] Write methods gated off: `applyServiceChange` throws
-      `'PTV v12 write operations are not enabled yet'` — no beta-schema write
-      mapping implemented yet (narrower than originally planned: the beta
-      `Post*/Put*` request bodies are not yet modeled, only the gate is in place)
+- [x] Write methods gated off: `getCapabilities().supportsWrite` is `false`, and every write
+      method throws `'PTV v12 write operations are not enabled yet'` (unit-tested in
+      `src/ptv/v12/contract.test.ts`). No beta-schema write mapping implemented yet (narrower
+      than originally planned: the beta `Post*/Put*` request bodies are not modelled, only the gate)
 - [x] Tenant-admin API-key management UI (`web/src/pages/PtvConnectionsPage.tsx`'s
       v12 section + `src/routes/ptvV12.ts`), not deferred — already live
-- [x] `PtvV12Adapter` wired into `DbPtvAdapterRegistry`'s default factories
-      alongside `PtvV11Adapter` — both adapters coexist in the running system now,
-      not sequenced as "v11 first, v12 later"
-- [ ] Vendor v12 `openapi.json`, generate wire types + Ajv validators — not done;
-      wire types are hand-written in `src/ptv/v12/adapter.ts`/`client.ts`, not
-      generated from the spec
-- [ ] Contract test suite (`src/ptv/testing/contractTests.ts`) run against
-      `PtvV12Adapter` — **not done**; same gap also still open for `PtvV11Adapter`.
-      `src/ptv/v12/adapter.test.ts` only unit-tests wire mapping/hydration, not
-      the full adapter contract
+- [x] `PtvV12Adapter` wired into `DbPtvAdapterRegistry`'s default factories alongside
+      `PtvV11Adapter` — both adapters coexist in the running system now, not sequenced as
+      "v11 first, v12 later"
+- [x] Vendor the v12 OpenAPI document as `docs/ptv-api-documentation.json` (OpenAPI 3.1.1, v12
+      beta 0.1.0), with an extracted wire-contract reference in `docs/ptv-v12-openapi-ref.json`.
+      The adapter was checked against it during the 2026-09-23/24 live verification.
+- [ ] Generate v12 wire types and Ajv validators from the spec — **not done**. The v12 wire
+      types are hand-written (`src/ptv/v12/wireModel.ts` and the mappers). v11's types are
+      generated (`src/ptv/v11/wire-types.ts`, `openapi-typescript`), v12's are not.
+- [x] Contract test suite (`src/ptv/testing/contractTests.ts`) run against `PtvV12Adapter`
+      (`src/ptv/v12/contract.test.ts`) and `PtvV11Adapter` (`src/ptv/v11/contract.test.ts`), each
+      with a fixture `fetch`. These are offline shape/behaviour checks, not a live run. The
+      suite gained an optional `knownGeneralDescriptionId` fixture.
 - [ ] Pilot tenant confirmation — UI and routes are live but no recorded
       confirmation of a real pilot tenant's v12 search traffic
+
+Phases 10 (MVP-1, v12 write in test) and 11 (MVP-2, v12 write in production) remain external
+gates: DVV's v12 write beta (announced for October 2026) and PTV's production timeline. Neither
+has a v12 write endpoint in the vendored spec yet.
 
 **Also landed, not originally planned as part of Phase 9**: independent
 per-connection **read vs. write PTV API version selection** — a user's MCP

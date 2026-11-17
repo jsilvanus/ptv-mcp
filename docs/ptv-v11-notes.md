@@ -78,6 +78,18 @@ verify a write against v11's own view of the entity.
 > Test environment details and organisation ids:
 > [docs/ptv-test-environment.md](ptv-test-environment.md).
 
+## Per-user OAuth path (dormant)
+
+The per-user OAuth consent flow (`src/ptv/v11/auth/oauth.ts`, the
+`/ptv-connections/v11` routes, and `UserPtvConnection`) is dormant. Writes and
+draft reads go through the organisation API user (see the update above), so
+nothing in the deployment needs it. The flow is unit-tested against mocks
+only; it has never been run against a registered PTV client. Its `state` is
+generated but not stored or compared in the callback, and the authorize URL is
+always the production host whatever environment is requested. An expired
+per-user token is treated as no connection. The code is left unchanged; remove
+it or fix these points before anyone relies on it.
+
 ## Live write findings (2026-09-24, test environment)
 
 > Verified through the PTV-MCP connector (propose → `approve_and_apply`,

@@ -32,6 +32,11 @@ export class ConnectionNotFoundError extends Error {
   }
 }
 
+/** A null expiry means PTV did not report one, so the token is not treated as expired. */
+function isExpired(tokenExpiresAt: Date | null): boolean {
+  return tokenExpiresAt !== null && tokenExpiresAt.getTime() <= Date.now();
+}
+
 /**
  * Envelope-encrypted storage for `UserPtvConnection` (Phase 3 Stream B) —
  * v11's per-user OAuth access token (docs/ptv-v11-notes.md). RLS-scoped by
@@ -96,7 +101,9 @@ export class UserPtvConnectionService {
         ),
       }),
     );
-    if (!record || record.revokedAt !== null) {
+    // A revoked or expired token counts as no connection: PTV answers an
+    // expired bearer token with 500 on public reads.
+    if (!record || record.revokedAt !== null || isExpired(record.tokenExpiresAt)) {
       throw new ConnectionNotFoundError();
     }
 

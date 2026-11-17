@@ -25,13 +25,23 @@ describe('ptv v11 API user routes', () => {
   });
 
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
+    // Every PUT test-logs in first; by default PTV accepts the login.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(loginOk())),
+    );
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
     await fixtures.cleanup();
   });
+
+  function loginOk(): Response {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const token = `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+    return new Response(JSON.stringify({ ptvToken: token }), { status: 200 });
+  }
 
   async function adminWithTenant(): Promise<{ token: string; tenantId: string }> {
     const token = await fixtures.webToken(await fixtures.user('Admin'));
@@ -123,6 +133,7 @@ describe('ptv v11 API user routes', () => {
       credentialScope: 'tenant',
       supportsRead: true,
       supportsWrite: true,
+      supportsDraftRead: true,
     });
 
     const list = await app.inject({
@@ -142,15 +153,8 @@ describe('ptv v11 API user routes', () => {
     ]);
     expect(list.body).not.toContain('pw-123');
 
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          ptvToken: `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`,
-        }),
-        { status: 200 },
-      ),
-    );
+    vi.mocked(fetch).mockClear();
+    vi.mocked(fetch).mockResolvedValueOnce(loginOk());
     const test = await app.inject({
       method: 'POST',
       url: `/tenants/${tenantId}/ptv/v11/api-user/test/test`,
@@ -163,7 +167,34 @@ describe('ptv v11 API user routes', () => {
     expect(String(init?.body)).toBe('username=API1%40testi.fi&password=pw-123');
   });
 
-  it('reports a rejected login as 502', async () => {
+  it('rejects credentials PTV refuses with 400 and stores nothing', async () => {
+    const { token, tenantId } = await adminWithTenant();
+    const headers = { authorization: `Bearer ${token}` };
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ message: 'credentails are wrong' }), { status: 401 }),
+      ),
+    );
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/tenants/${tenantId}/ptv/v11/api-user`,
+      headers,
+      payload: { environment: 'test', username: 'u', password: 'wrong-pw' },
+    });
+    expect(put.statusCode).toBe(400);
+    expect(put.body).not.toContain('wrong-pw');
+    expect(put.body).toContain('Nothing was saved');
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/tenants/${tenantId}/ptv/v11/api-user`,
+      headers,
+    });
+    expect(list.json()).toEqual([]);
+    expect(await credentialAuditEntries(tenantId)).toEqual([]);
+  });
+
+  it('reports a rejected login on the test endpoint as 502', async () => {
     const { token, tenantId } = await adminWithTenant();
     const headers = { authorization: `Bearer ${token}` };
     await app.inject({
@@ -172,7 +203,9 @@ describe('ptv v11 API user routes', () => {
       headers,
       payload: { environment: 'test', username: 'u', password: 'wrong' },
     });
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('nope', { status: 400 }));
+    vi.mocked(fetch).mockImplementation(() =>
+      Promise.resolve(new Response('nope', { status: 400 })),
+    );
     const res = await app.inject({
       method: 'POST',
       url: `/tenants/${tenantId}/ptv/v11/api-user/test/test`,

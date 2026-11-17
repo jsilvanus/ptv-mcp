@@ -10,6 +10,7 @@ import { createAuthenticate, createRequireRole } from '../auth/rbac.js';
 import {
   fetchV11ApiToken,
   parseV11ApiUserCredentials,
+  type V11ApiUserCredentials,
   V11ApiLoginError,
 } from '../ptv/v11/auth/apiLogin.js';
 import { isPtvEnvironment } from './context.js';
@@ -33,6 +34,11 @@ export interface PtvV11ApiUserRoutesOptions {
   jwtSecret: string;
   /** Tests inject a fake PTV login endpoint. */
   fetchImpl?: typeof fetch;
+  /**
+   * Test login used before anything is stored. Defaults to the real v11
+   * API login (`fetchV11ApiToken`) against the environment's base URL.
+   */
+  login?: (environment: PtvEnvironment, credentials: V11ApiUserCredentials) => Promise<unknown>;
 }
 
 /**
@@ -78,6 +84,15 @@ export async function ptvV11ApiUserRoutes(
     },
   );
 
+  const login =
+    options.login ??
+    ((environment: PtvEnvironment, credentials: V11ApiUserCredentials) =>
+      fetchV11ApiToken(
+        environment,
+        credentials,
+        options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      ));
+
   app.put<{ Params: { tenantId: string }; Body: ConfigBody }>(
     '/tenants/:tenantId/ptv/v11/api-user',
     { preHandler: [authenticate, requireTenantAdmin] },
@@ -95,23 +110,38 @@ export async function ptvV11ApiUserRoutes(
         return reply.badRequest('organisationId must be a PTV organisation id (UUID)');
       }
 
+      const candidate = {
+        username: username.trim(),
+        password,
+        ...(apiUserOrganisation?.trim() ? { apiUserOrganisation: apiUserOrganisation.trim() } : {}),
+        ...(organisationId ? { organisationId: organisationId.toLowerCase() } : {}),
+      };
+      // Test the credentials against PTV before anything is stored, so a
+      // typo is reported now rather than on the first write.
+      try {
+        await login(environment, candidate);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return reply.badRequest(`${reason.replaceAll(password, '***')}. Nothing was saved.`);
+      }
+
       const previous = parseV11ApiUserCredentials(
         await options.tenantEnvironmentService
           .getDecryptedCredentials(tenantId, environment, 'v11')
           .catch(() => undefined),
       );
-      await options.tenantEnvironmentService.storeCredentials(tenantId, environment, 'v11', {
-        username: username.trim(),
-        password,
-        ...(apiUserOrganisation?.trim() ? { apiUserOrganisation: apiUserOrganisation.trim() } : {}),
-        ...(organisationId ? { organisationId: organisationId.toLowerCase() } : {}),
-      });
+      await options.tenantEnvironmentService.storeCredentials(
+        tenantId,
+        environment,
+        'v11',
+        candidate,
+      );
       await options.adapterConfigService.upsert(tenantId, environment, 'v11', {
         authMode: 'api_login',
         credentialScope: 'tenant',
         supportsRead: true,
         supportsWrite: true,
-        supportsDraftRead: false,
+        supportsDraftRead: true,
       });
       // Who changed which API user; never the password.
       await options.auditService.record({
