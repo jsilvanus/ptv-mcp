@@ -49,9 +49,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout(): Promise<void> {
     const refreshToken = getRefreshToken();
+    let endSessionUrl: string | undefined;
     if (refreshToken) {
       try {
-        await apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) });
+        // 200 with `endSessionUrl` when the session came from SSO and the IdP
+        // offers sign-out; 204 otherwise.
+        const res = await apiFetch<{ endSessionUrl?: string } | undefined>('/auth/logout', {
+          method: 'POST',
+          body: JSON.stringify({ refreshToken }),
+        });
+        endSessionUrl = res?.endSessionUrl;
       } catch {
         // Logging out locally still matters even if the server call fails
         // (e.g. the refresh token had already expired) — never block on it.
@@ -59,6 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     clearSession();
     setIsAuthenticated(false);
+    if (endSessionUrl) {
+      // RP-initiated logout: end the IdP session too; the IdP returns the browser to /login.
+      window.location.assign(endSessionUrl);
+    }
   }
 
   return (

@@ -62,6 +62,11 @@ export interface OidcConfig {
   createUsers: boolean;
   /** Link to an existing account by email even when `email_verified` is not true. */
   trustEmail: boolean;
+  /**
+   * `OIDC_POST_LOGOUT_REDIRECT_URI`: where the IdP sends the browser after
+   * sign-out. Undefined = `<MCP public URL>/login`. Must be registered at the IdP.
+   */
+  postLogoutRedirectUri?: string;
 }
 
 function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
@@ -104,6 +109,25 @@ export function loadOidcConfig(
   }
 
   const clientSecret = env.OIDC_CLIENT_SECRET?.trim();
+
+  const postLogout = env.OIDC_POST_LOGOUT_REDIRECT_URI?.trim();
+  if (postLogout) {
+    let postLogoutUrl: URL;
+    try {
+      postLogoutUrl = new URL(postLogout);
+    } catch {
+      throw new Error(`Invalid OIDC_POST_LOGOUT_REDIRECT_URI: not an absolute URL: ${postLogout}`);
+    }
+    if (postLogoutUrl.protocol !== 'https:' && postLogoutUrl.protocol !== 'http:') {
+      throw new Error(
+        `Invalid OIDC_POST_LOGOUT_REDIRECT_URI: must be an http(s) URL: ${postLogout}`,
+      );
+    }
+    if (nodeEnv === 'production' && postLogoutUrl.protocol !== 'https:') {
+      throw new Error('Invalid OIDC_POST_LOGOUT_REDIRECT_URI: https is required in production');
+    }
+  }
+
   return {
     issuer,
     clientId,
@@ -112,6 +136,7 @@ export function loadOidcConfig(
     buttonLabel: env.OIDC_BUTTON_LABEL?.trim() || 'Sign in with single sign-on',
     createUsers: parseBoolean('OIDC_CREATE_USERS', env.OIDC_CREATE_USERS, false),
     trustEmail: parseBoolean('OIDC_TRUST_EMAIL', env.OIDC_TRUST_EMAIL, false),
+    ...(postLogout ? { postLogoutRedirectUri: postLogout } : {}),
   };
 }
 

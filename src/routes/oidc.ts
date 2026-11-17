@@ -206,6 +206,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
       }
 
       let userId: string;
+      let idToken: string | undefined;
       try {
         // The registered redirect URI with this request's query: behind a
         // reverse proxy request.url has neither the public origin nor any
@@ -217,6 +218,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
           nonce: state.nonce,
           codeVerifier: state.codeVerifier,
         });
+        idToken = claims.idToken;
         userId = await options.oidcService.resolveUser(claims);
         await options.authService.assertCanSignIn(userId);
       } catch (err) {
@@ -247,7 +249,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
       }
 
       if (state.purpose === 'web') {
-        const code = await options.oidcService.createWebHandoff(userId);
+        const code = await options.oidcService.createWebHandoff(userId, idToken);
         return reply.redirect(`/login#oidc=${encodeURIComponent(code)}`);
       }
 
@@ -269,10 +271,14 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
   app.post<{ Body: { code?: unknown } }>('/oidc/session', async (request, reply) => {
     const code = request.body?.code;
     if (typeof code !== 'string' || code === '') return reply.badRequest('code is required');
-    const userId = await options.oidcService.consumeWebHandoff(code);
-    if (!userId) return reply.unauthorized('Invalid or expired sign-in code');
+    const handoff = await options.oidcService.consumeWebHandoff(code);
+    if (!handoff) return reply.unauthorized('Invalid or expired sign-in code');
     try {
-      return reply.send(await options.authService.createSession(userId));
+      return reply.send(
+        await options.authService.createSession(handoff.userId, {
+          oidcIdTokenSealed: handoff.idTokenSealed,
+        }),
+      );
     } catch (err) {
       if (err instanceof AccountLockedError) {
         return reply.code(423).send({ message: err.message });

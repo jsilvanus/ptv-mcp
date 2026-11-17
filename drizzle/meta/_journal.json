@@ -183,6 +183,13 @@
       "when": 1790270000000,
       "tag": "0026_proposal_status_applying",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790270001000,
+      "tag": "0027_oidc_logout_hint",
+      "breakpoints": true
     }
   ]
 }

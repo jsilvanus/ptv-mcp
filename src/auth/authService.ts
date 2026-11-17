@@ -11,6 +11,7 @@ import type { Mailer } from './mailer.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { isPasswordSignInAllowed, normalizeEmail, type AuthMode } from './signInMode.js';
 import { generateOpaqueToken, hashToken } from './tokens.js';
+import { openIdToken } from '../oidc/idTokenSeal.js';
 
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -81,6 +82,8 @@ export interface AuthServiceDeps {
   breakGlassEmails?: readonly string[];
   /** Injectable for deterministic tests; defaults to the real clock. */
   now?: () => Date;
+  /** MASTER_ENCRYPTION_KEY: opens the sealed ID token kept for sign-out. Without it, sign-out is local only. */
+  masterEncryptionKey?: string;
 }
 
 /**
@@ -101,8 +104,10 @@ export class AuthService {
   private readonly authMode: AuthMode;
   private readonly breakGlassEmails: ReadonlySet<string>;
   private dummyPasswordHash: Promise<string> | undefined;
+  private readonly masterEncryptionKey: string | undefined;
 
   constructor(deps: AuthServiceDeps) {
+    this.masterEncryptionKey = deps.masterEncryptionKey;
     this.db = deps.db;
     this.jwtSecret = deps.jwtSecret;
     this.mailer = deps.mailer;
@@ -274,9 +279,12 @@ export class AuthService {
    * The web-UI session `login()` returns, for a user already identified and
    * checked with `assertCanSignIn()` (OIDC web sign-in).
    */
-  async createSession(userId: string): Promise<Session> {
+  async createSession(
+    userId: string,
+    options: { oidcIdTokenSealed?: string | null } = {},
+  ): Promise<Session> {
     await this.assertCanSignIn(userId);
-    return this.issueSession(userId);
+    return this.issueSession(userId, undefined, options.oidcIdTokenSealed ?? null);
   }
 
   private async recordFailedLogin(userId: string, currentAttempts: number): Promise<void> {
@@ -292,7 +300,11 @@ export class AuthService {
       .where(eq(users.id, userId));
   }
 
-  private async issueSession(userId: string, replacesTokenId?: string): Promise<Session> {
+  private async issueSession(
+    userId: string,
+    replacesTokenId?: string,
+    oidcIdTokenSealed: string | null = null,
+  ): Promise<Session> {
     const rawRefreshToken = generateOpaqueToken();
     const [refreshRow] = await this.db
       .insert(refreshTokens)
@@ -300,6 +312,7 @@ export class AuthService {
         userId,
         tokenHash: hashToken(rawRefreshToken),
         expiresAt: new Date(this.now().getTime() + REFRESH_TOKEN_TTL_MS),
+        oidcIdTokenSealed,
       })
       .returning();
     if (!refreshRow) {
@@ -339,7 +352,8 @@ export class AuthService {
       throw new InvalidOrExpiredTokenError('refresh');
     }
 
-    return this.issueSession(record.userId, record.id);
+    // The sign-out hint outlives rotation, so a refreshed session still signs out at the IdP.
+    return this.issueSession(record.userId, record.id, record.oidcIdTokenSealed);
   }
 
   /**
@@ -348,9 +362,12 @@ export class AuthService {
    * belongs to the authenticated caller, so one user can't revoke another
    * user's session by supplying their refresh-token string.
    */
-  async logout(userId: string, rawRefreshToken: string): Promise<void> {
+  async logout(
+    userId: string,
+    rawRefreshToken: string,
+  ): Promise<{ oidcIdTokenHint: string | null }> {
     const tokenHash = hashToken(rawRefreshToken);
-    await this.db
+    const rows = await this.db
       .update(refreshTokens)
       .set({ revokedAt: this.now() })
       .where(
@@ -359,7 +376,17 @@ export class AuthService {
           eq(refreshTokens.userId, userId),
           isNull(refreshTokens.revokedAt),
         ),
-      );
+      )
+      .returning({ sealed: refreshTokens.oidcIdTokenSealed });
+    // Only a session that was revoked just now yields its IdP hint: a stale or foreign token yields none.
+    const sealed = rows[0]?.sealed ?? null;
+    if (!sealed || !this.masterEncryptionKey) return { oidcIdTokenHint: null };
+    try {
+      return { oidcIdTokenHint: openIdToken(this.masterEncryptionKey, sealed) };
+    } catch {
+      // The session is already revoked; an unreadable hint only means sign-out stays local.
+      return { oidcIdTokenHint: null };
+    }
   }
 
   private async revokeAllRefreshTokens(userId: string): Promise<void> {

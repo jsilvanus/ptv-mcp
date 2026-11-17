@@ -101,6 +101,38 @@ describe('OIDC config', () => {
     expect(() => loadOidcConfig(env, 'production')).toThrow('https is required in production');
     expect(loadOidcConfig(env, 'development')?.issuer).toBe('http://127.0.0.1:9000/');
   });
+
+  it('reads OIDC_POST_LOGOUT_REDIRECT_URI and leaves it unset by default', () => {
+    const base = { OIDC_ISSUER: 'https://auth.example.org/', OIDC_CLIENT_ID: 'c' };
+    expect(loadOidcConfig(base, 'production')?.postLogoutRedirectUri).toBeUndefined();
+    expect(
+      loadOidcConfig(
+        { ...base, OIDC_POST_LOGOUT_REDIRECT_URI: ' https://ptv.example.org/login ' },
+        'production',
+      )?.postLogoutRedirectUri,
+    ).toBe('https://ptv.example.org/login');
+  });
+
+  it.each([
+    ['not-a-url', 'not an absolute URL'],
+    ['javascript:alert(1)', 'must be an http(s) URL'],
+  ])('refuses OIDC_POST_LOGOUT_REDIRECT_URI %s', (value, message) => {
+    const env = {
+      OIDC_ISSUER: 'https://auth.example.org/',
+      OIDC_CLIENT_ID: 'c',
+      OIDC_POST_LOGOUT_REDIRECT_URI: value,
+    };
+    expect(() => loadOidcConfig(env, 'development')).toThrow(message);
+  });
+
+  it('requires https for OIDC_POST_LOGOUT_REDIRECT_URI in production', () => {
+    const env = {
+      OIDC_ISSUER: 'https://auth.example.org/',
+      OIDC_CLIENT_ID: 'c',
+      OIDC_POST_LOGOUT_REDIRECT_URI: 'http://ptv.example.org/login',
+    };
+    expect(() => loadOidcConfig(env, 'production')).toThrow('https is required in production');
+  });
 });
 
 describe('AUTH_MODE config', () => {
