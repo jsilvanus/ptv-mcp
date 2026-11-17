@@ -47,6 +47,8 @@ export class V11ApiLoginError extends Error {
   }
 }
 
+/** Abort an API login that gets no answer. */
+const LOGIN_TIMEOUT_MS = 30_000;
 /** Used when a token carries no readable `exp` claim. */
 const FALLBACK_TOKEN_LIFETIME_MS = 30 * 60 * 1000;
 /** Refresh this long before expiry so a token never lapses mid-request. */
@@ -122,6 +124,7 @@ export async function fetchV11ApiToken(
           Accept: 'application/json',
         },
         body: attempt.form ? new URLSearchParams(fields).toString() : JSON.stringify(fields),
+        signal: AbortSignal.timeout(LOGIN_TIMEOUT_MS),
       });
     } catch (err) {
       failures.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);

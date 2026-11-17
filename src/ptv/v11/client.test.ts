@@ -43,3 +43,68 @@ describe('PtvV11Client error surfacing', () => {
     expect((error as Error).message).not.toContain('secret-token');
   });
 });
+
+describe('PtvV11Client retries and timeouts', () => {
+  const provider = { getToken: async () => 't', invalidate: () => {} };
+
+  it('does not retry a POST that got a 5xx', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return new Response('boom', { status: 503 });
+    }) as typeof fetch;
+    const client = new PtvV11Client({
+      environment: 'test',
+      fetchImpl,
+      writeTokenProvider: provider,
+    });
+    await expect(client.post('/api/v11/Service', {})).rejects.toBeInstanceOf(PtvV11ApiError);
+    expect(calls).toBe(1);
+  });
+
+  it('does not retry a POST after a network error', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      throw new Error('socket hang up');
+    }) as typeof fetch;
+    const client = new PtvV11Client({
+      environment: 'test',
+      fetchImpl,
+      writeTokenProvider: provider,
+    });
+    await expect(client.post('/api/v11/Service', {})).rejects.toThrow('socket hang up');
+    expect(calls).toBe(1);
+  });
+
+  it('still retries a PUT on 503', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return calls === 1
+        ? new Response('boom', { status: 503, headers: { 'Retry-After': '0' } })
+        : new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    const client = new PtvV11Client({
+      environment: 'test',
+      fetchImpl,
+      writeTokenProvider: provider,
+    });
+    await client.put('/api/v11/Service/x', {});
+    expect(calls).toBe(2);
+  });
+
+  it('passes an abort signal that fires after timeoutMs', async () => {
+    const fetchImpl = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as typeof fetch;
+    const client = new PtvV11Client({
+      environment: 'test',
+      fetchImpl,
+      maxRetries: 0,
+      timeoutMs: 20,
+    });
+    await expect(client.get('/api/v11/Service/x')).rejects.toThrow('aborted');
+  });
+});

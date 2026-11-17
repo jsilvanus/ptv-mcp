@@ -449,7 +449,7 @@ export class PtvV11Adapter implements PtvAdapter {
     // The PUT has to resend required fields the change doesn't touch (see
     // writeMapping.ts), so it's built on top of PTV's current record.
     // Built on the latest version, so a PUT never reverts a newer draft.
-    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
+    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId, true);
     if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
     if (current.publishingStatus === 'Modified') {
       throw new V11ModifiedVersionLockedError(proposal.serviceId);
@@ -494,6 +494,7 @@ export class PtvV11Adapter implements PtvAdapter {
     const current = await this.getLatestOrNull<V11ServiceChannelWire>(
       'ServiceChannel',
       proposal.channelId,
+      true,
     );
     if (!current) throw new Error(`PTV service channel ${proposal.channelId} not found`);
     if (current.publishingStatus === 'Modified') {
@@ -529,7 +530,7 @@ export class PtvV11Adapter implements PtvAdapter {
     proposal: ConnectionChangeProposal,
   ): Promise<ApplyConnectionChangeResult> {
     this.requireWrite();
-    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId);
+    const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId, true);
     if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
     await this.client.put(
       `/api/v11/Connection/serviceId/${proposal.serviceId}`,
@@ -644,16 +645,21 @@ export class PtvV11Adapter implements PtvAdapter {
    * the public, published-only `{type}/{id}`. If the restricted read fails
    * for any reason (including a 404, in case it only covers the API user's
    * own organisation), the public read decides, so a broken API-user login
-   * never breaks published reads.
+   * never breaks published reads. With `forWrite`, only a 404 falls back and
+   * any other failure is thrown.
    */
   private async getLatestOrNull<T>(
     type: 'Service' | 'ServiceChannel',
     id: PtvContentId,
+    forWrite = false,
   ): Promise<T | null> {
     if (this.client.canAuthenticate) {
       try {
         return await this.client.getRestricted<T>(`/api/v11/${type}/active/${id}`);
-      } catch {
+      } catch (err) {
+        // A write must never be built on the older published version because
+        // the restricted read failed: only a 404 may fall back.
+        if (forWrite && !isNotFound(err)) throw err;
         // Fall through to the public read.
       }
     }

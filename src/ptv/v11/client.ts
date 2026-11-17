@@ -25,6 +25,8 @@ export interface V11ClientOptions {
   writeTokenProvider?: WriteTokenProvider;
   fetchImpl?: typeof fetch;
   maxRetries?: number;
+  /** Per-attempt timeout in ms. Default 30 000. */
+  timeoutMs?: number;
 }
 
 export interface WriteTokenProvider {
@@ -57,6 +59,7 @@ export class PtvV11Client {
   private readonly writeTokenProvider: WriteTokenProvider | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
+  private readonly timeoutMs: number;
 
   constructor(options: V11ClientOptions) {
     this.baseUrl = V11_BASE_URLS[options.environment];
@@ -64,6 +67,7 @@ export class PtvV11Client {
     this.writeTokenProvider = options.writeTokenProvider;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.maxRetries = options.maxRetries ?? 3;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   async get<T>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
@@ -118,13 +122,19 @@ export class PtvV11Client {
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
 
+    // A lost POST response may still have created the item, so a POST is
+    // never retried on 429/5xx or network errors.
+    const maxRetries = method === 'POST' ? 0 : this.maxRetries;
     let lastError: unknown;
     let reauthenticated = false;
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Outside the try: a failed login is not a transient network error.
       if (tokenProvider) headers.Authorization = `Bearer ${await tokenProvider.getToken()}`;
       try {
-        const response = await this.fetchImpl(url, init);
+        const response = await this.fetchImpl(url, {
+          ...init,
+          signal: AbortSignal.timeout(this.timeoutMs),
+        });
 
         if (response.ok) {
           if (response.status === 204) return undefined as T;
@@ -138,7 +148,7 @@ export class PtvV11Client {
           continue;
         }
 
-        if (!isRetryable(response.status) || attempt === this.maxRetries) {
+        if (!isRetryable(response.status) || attempt === maxRetries) {
           const text = await response.text().catch(() => '');
           throw new PtvV11ApiError(
             describeFailure(method, path, response.status, text),
@@ -151,7 +161,7 @@ export class PtvV11Client {
       } catch (err) {
         lastError = err;
         if (err instanceof PtvV11ApiError) throw err;
-        if (attempt === this.maxRetries) break;
+        if (attempt === maxRetries) break;
         await sleep(retryDelayMs(attempt, null));
       }
     }
