@@ -6,7 +6,7 @@ import { buildApp } from '../app.js';
 import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
-import { auditEntries } from '../db/schema/index.js';
+import { auditEntries, users } from '../db/schema/index.js';
 import { IntegrationFixtures } from '../testing/integrationFixtures.js';
 
 describe('tenant routes', () => {
@@ -122,7 +122,10 @@ describe('tenant routes', () => {
       headers: { authorization: `Bearer ${admin.token}` },
       payload: { email: newMember.email, role: 'approver' },
     });
-    expect(addRes.statusCode).toBe(204);
+    expect(addRes.statusCode).toBe(200);
+    expect(addRes.json()).toEqual({
+      message: 'If an account with that email exists and is eligible, it has been added.',
+    });
 
     const membersRes = await app.inject({
       method: 'GET',
@@ -231,5 +234,112 @@ describe('tenant routes', () => {
       headers: { authorization: `Bearer ${admin.token}` },
     });
     expect(membersRes.json()).toHaveLength(1);
+  });
+
+  it('answers 403 to tenant creation when ALLOW_TENANT_CREATION is off, and creates nothing', async () => {
+    const user = await createUserWithToken();
+    const closed = await buildApp({
+      config: { ...config, logLevel: 'silent', allowTenantCreation: false },
+      db,
+    });
+    try {
+      const slug = `closed-${randomUUID()}`;
+      const res = await closed.inject({
+        method: 'POST',
+        url: '/tenants',
+        headers: { authorization: `Bearer ${user.token}` },
+        payload: { name: 'Closed', slug },
+      });
+      expect(res.statusCode).toBe(403);
+      const listed = await app.inject({
+        method: 'GET',
+        url: '/tenants',
+        headers: { authorization: `Bearer ${user.token}` },
+      });
+      expect(listed.json()).toEqual([]);
+    } finally {
+      await closed.close();
+    }
+  });
+
+  it('answers the same to adding an unknown, an unverified or an eligible email', async () => {
+    const admin = await createUserWithToken();
+    const unverified = await createUserWithToken();
+    const verified = await createUserWithToken();
+    await db.update(users).set({ emailVerifiedAt: new Date() }).where(eq(users.id, verified.id));
+    const strict = await buildApp({
+      config: { ...config, logLevel: 'silent', requireVerifiedEmail: true },
+      db,
+    });
+    try {
+      const createRes = await strict.inject({
+        method: 'POST',
+        url: '/tenants',
+        headers: { authorization: `Bearer ${admin.token}` },
+        payload: { name: 'Probe', slug: `probe-${randomUUID()}` },
+      });
+      const { tenantId } = createRes.json() as { tenantId: string };
+      fixtures.trackTenant(tenantId);
+
+      const answers = [];
+      for (const email of [
+        `unknown-${randomUUID()}@example.test`,
+        unverified.email,
+        verified.email,
+      ]) {
+        const res = await strict.inject({
+          method: 'POST',
+          url: `/tenants/${tenantId}/members`,
+          headers: { authorization: `Bearer ${admin.token}` },
+          payload: { email, role: 'contributor' },
+        });
+        answers.push({ status: res.statusCode, body: res.json() });
+      }
+
+      expect(answers[0]).toEqual(answers[1]);
+      expect(answers[1]).toEqual(answers[2]);
+      expect(answers[0]!.status).toBe(200);
+      // Only the eligible account was added.
+      const members = await strict.inject({
+        method: 'GET',
+        url: `/tenants/${tenantId}/members`,
+        headers: { authorization: `Bearer ${admin.token}` },
+      });
+      expect((members.json() as Array<{ userId: string }>).map((m) => m.userId).sort()).toEqual(
+        [admin.id, verified.id].sort(),
+      );
+    } finally {
+      await strict.close();
+    }
+  });
+
+  it('refuses to remove or demote the last Tenant Admin with 409', async () => {
+    const admin = await createUserWithToken();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/tenants',
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: 'Last Admin', slug: `last-${randomUUID()}` },
+    });
+    const { tenantId } = createRes.json() as { tenantId: string };
+    fixtures.trackTenant(tenantId);
+    const expected = 'The tenant must keep at least one Tenant Admin';
+
+    const demote = await app.inject({
+      method: 'PATCH',
+      url: `/tenants/${tenantId}/members/${admin.id}`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { role: 'viewer' },
+    });
+    expect(demote.statusCode).toBe(409);
+    expect(demote.json().message).toContain(expected);
+
+    const remove = await app.inject({
+      method: 'DELETE',
+      url: `/tenants/${tenantId}/members/${admin.id}`,
+      headers: { authorization: `Bearer ${admin.token}` },
+    });
+    expect(remove.statusCode).toBe(409);
+    expect(remove.json().message).toContain(expected);
   });
 });

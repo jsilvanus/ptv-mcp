@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
@@ -6,7 +6,7 @@ import { loadConfig } from '../config.js';
 import { createDatabase, type Database } from '../db/client.js';
 import { TenantEnvironmentService } from '../credentials/tenantEnvironmentService.js';
 import { withContext } from '../db/context.js';
-import { auditEntries } from '../db/schema/index.js';
+import { auditEntries, memberships } from '../db/schema/index.js';
 import type { MembershipRole } from '../auth/rbac.js';
 import { inMemoryV11Factory, validService } from '../ptv/testing/fixtures.js';
 import { IntegrationFixtures } from '../testing/integrationFixtures.js';
@@ -357,8 +357,68 @@ describe('proposal routes', () => {
     });
     expect(again.statusCode).toBe(409);
     const writes = await withContext(db, { tenantId: publisher.tenantId }, async (tx) =>
-      tx.select().from(auditEntries).where(eq(auditEntries.action, 'ApplyServiceChange')),
+      tx
+        .select()
+        .from(auditEntries)
+        .where(
+          and(
+            eq(auditEntries.tenantId, publisher.tenantId),
+            eq(auditEntries.action, 'ApplyServiceChange'),
+          ),
+        ),
     );
     expect(writes).toHaveLength(1);
+  });
+
+  it('does not let a required reviewer who has left the tenant block approval', async () => {
+    const publisher = await createUser('publisher', { requireFourEyes: false });
+    const reviewerId = await fixtures.user('Departed reviewer');
+    await fixtures.addMembership(publisher.tenantId, reviewerId, 'contributor');
+    const mcpToken = await fixtures.mcpToken(publisher.userId, publisher.tenantId);
+    const queued = await injectToolCall(app, mcpToken, 'ptv_propose_changes', {
+      serviceId: BASE_SERVICE.id,
+      changes: { names: { fi: 'Reviewer gate' } },
+    });
+    expect(queued.statusCode).toBe(200);
+    const list = await app.inject({
+      method: 'GET',
+      url: `/tenants/${publisher.tenantId}/proposals?status=pending`,
+      headers: { authorization: 'Bearer ' + publisher.token },
+    });
+    const proposalId = (list.json() as Array<{ id: string }>)[0]!.id;
+    const addReviewer = await app.inject({
+      method: 'POST',
+      url: `/tenants/${publisher.tenantId}/proposals/${proposalId}/reviewers`,
+      headers: { authorization: 'Bearer ' + publisher.token },
+      payload: { reviewers: [`${reviewerId}@example.test`] },
+    });
+    expect(addReviewer.statusCode).toBe(201);
+    const exportUrl = `/tenants/${publisher.tenantId}/proposals/${proposalId}/resolve`;
+    const exportPayload = { action: 'approve_and_export' };
+    const blocked = await app.inject({
+      method: 'POST',
+      url: exportUrl,
+      headers: { authorization: 'Bearer ' + publisher.token },
+      payload: exportPayload,
+    });
+    expect(blocked.statusCode).toBe(409);
+
+    // The reviewer's membership goes without the row being dropped (as a
+    // direct DB change would): the gate must still ignore them.
+    await withContext(db, { tenantId: publisher.tenantId }, (tx) =>
+      tx
+        .delete(memberships)
+        .where(
+          and(eq(memberships.tenantId, publisher.tenantId), eq(memberships.userId, reviewerId)),
+        ),
+    );
+    const approved = await app.inject({
+      method: 'POST',
+      url: exportUrl,
+      headers: { authorization: 'Bearer ' + publisher.token },
+      payload: exportPayload,
+    });
+    expect(approved.statusCode).toBe(200);
+    expect((approved.json() as { status: string }).status).toBe('approved');
   });
 });

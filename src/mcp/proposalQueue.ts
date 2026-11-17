@@ -552,9 +552,11 @@ export async function resolveProposal(
   }
 
   if (action !== 'reject') {
-    const waiting = (await proposalService.listReviewers(ctx.tenantId, proposalId)).filter(
-      (reviewer) => reviewer.decision !== 'approved',
-    );
+    // Only current members block approval: a reviewer who left the tenant
+    // no longer counts, even if a row for them survived their removal.
+    const waiting = (
+      await proposalService.listReviewers(ctx.tenantId, proposalId, { membersOnly: true })
+    ).filter((reviewer) => reviewer.decision !== 'approved');
     if (waiting.length > 0) throw new ReviewsPendingError(waiting);
   }
 

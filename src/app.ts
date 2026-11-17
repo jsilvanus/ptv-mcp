@@ -57,6 +57,8 @@ export interface BuildAppOptions {
     /** Optional, as `requireVerifiedEmail`: defaults to `both` with OIDC configured, else `local`. */
     authMode?: AuthMode;
     breakGlassEmails?: string[];
+    /** Optional, as `requireVerifiedEmail`: defaults to true (`ALLOW_TENANT_CREATION`). */
+    allowTenantCreation?: boolean;
   };
   db?: Database;
   mailer?: Mailer;
@@ -154,7 +156,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         }
       : {}),
   });
-  await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });
+  await app.register(tenantRoutes, {
+    tenantService,
+    jwtSecret: config.jwtSecret,
+    db,
+    allowTenantCreation: config.allowTenantCreation ?? true,
+  });
   await app.register(ptvConnectionRoutes, {
     connectionService,
     tenantService,

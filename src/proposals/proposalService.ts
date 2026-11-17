@@ -1,7 +1,8 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { withContext } from '../db/context.js';
 import {
+  memberships,
   proposalComments,
   proposalKindEnum,
   proposalReviewers,
@@ -346,8 +347,16 @@ export class ProposalService {
     return this.listReviewers(tenantId, proposalId);
   }
 
-  /** In request order, with each reviewer's display name. */
-  async listReviewers(tenantId: string, proposalId: string): Promise<ProposalReviewer[]> {
+  /**
+   * In request order, with each reviewer's display name. `membersOnly` keeps
+   * only reviewers who are still members of the tenant (the approval gate
+   * uses it, so a reviewer who left cannot block approval).
+   */
+  async listReviewers(
+    tenantId: string,
+    proposalId: string,
+    options: { membersOnly?: boolean } = {},
+  ): Promise<ProposalReviewer[]> {
     return withContext(this.db, { tenantId }, async (tx) =>
       tx
         .select({
@@ -365,6 +374,15 @@ export class ProposalService {
           and(
             eq(proposalReviewers.tenantId, tenantId),
             eq(proposalReviewers.proposalId, proposalId),
+            options.membersOnly
+              ? inArray(
+                  proposalReviewers.userId,
+                  tx
+                    .select({ userId: memberships.userId })
+                    .from(memberships)
+                    .where(eq(memberships.tenantId, tenantId)),
+                )
+              : undefined,
           ),
         )
         .orderBy(asc(proposalReviewers.requestedAt), asc(users.name)),

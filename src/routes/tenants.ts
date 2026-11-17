@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/client.js';
-import type { TenantService } from '../tenants/tenantService.js';
+import {
+  EmailNotVerifiedForMembershipError,
+  UserNotFoundError,
+  type TenantService,
+} from '../tenants/tenantService.js';
 import {
   createAuthenticate,
   createRequireRole,
@@ -12,7 +16,17 @@ export interface TenantRoutesOptions {
   tenantService: TenantService;
   jwtSecret: string;
   db: Database;
+  /** `ALLOW_TENANT_CREATION`; defaults to true. When false `POST /tenants` answers 403. */
+  allowTenantCreation?: boolean;
 }
+
+/**
+ * The answer to `POST /tenants/:tenantId/members` whatever the outcome for the
+ * email: added, unknown, or not verified. Identical wording and status, so the
+ * response does not reveal which addresses have accounts.
+ */
+export const ADD_MEMBER_NEUTRAL_MESSAGE =
+  'If an account with that email exists and is eligible, it has been added.';
 
 interface CreateTenantBody {
   name: string;
@@ -37,6 +51,7 @@ export async function tenantRoutes(
   options: TenantRoutesOptions,
 ): Promise<void> {
   const { tenantService, db } = options;
+  const allowTenantCreation = options.allowTenantCreation ?? true;
   const authenticate = createAuthenticate(options.jwtSecret);
   const requireTenantAdmin = createRequireRole(db, 'tenant_admin');
   const requireViewer = createRequireRole(db, 'viewer');
@@ -45,6 +60,11 @@ export async function tenantRoutes(
     '/tenants',
     { preHandler: authenticate },
     async (request, reply) => {
+      if (!allowTenantCreation) {
+        return reply.forbidden(
+          'Tenant creation is disabled on this server. Ask an operator to create the tenant.',
+        );
+      }
       const { name, slug } = request.body;
       if (!name || !slug) {
         return reply.badRequest('name and slug are required');
@@ -77,8 +97,19 @@ export async function tenantRoutes(
         return reply.badRequest('email and role are required');
       }
       if (!isMembershipRole(role)) return reply.badRequest(INVALID_ROLE_MESSAGE);
-      await tenantService.addMember(tenantId, email, role, request.userId!);
-      return reply.code(204).send();
+      try {
+        await tenantService.addMember(tenantId, email, role, request.userId!);
+      } catch (error) {
+        // Swallowed on purpose: unknown and unverified accounts get the same answer as a
+        // successful add. The service has already audited the refusal as NotApplied.
+        if (
+          !(error instanceof UserNotFoundError) &&
+          !(error instanceof EmailNotVerifiedForMembershipError)
+        ) {
+          throw error;
+        }
+      }
+      return reply.code(200).send({ message: ADD_MEMBER_NEUTRAL_MESSAGE });
     },
   );
 

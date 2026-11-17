@@ -24,6 +24,7 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "mcp:token": "tsx src/mcp/token.ts",
+    "tenant:create": "tsx src/tenants/createTenant.ts",
     "db:status": "tsx src/db/status.ts"
   },
   "dependencies": {

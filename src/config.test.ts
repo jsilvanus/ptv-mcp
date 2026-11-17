@@ -196,3 +196,20 @@ describe('AUTH_MODE config', () => {
     ).toEqual(['admin@example.test', 'ops@example.test']);
   });
 });
+
+describe('ALLOW_TENANT_CREATION config', () => {
+  it('defaults to true, so POST /tenants keeps working unchanged', () => {
+    expect(loadConfig({ ...base }).allowTenantCreation).toBe(true);
+  });
+
+  it('reads false and true', () => {
+    expect(loadConfig({ ...base, ALLOW_TENANT_CREATION: 'false' }).allowTenantCreation).toBe(false);
+    expect(loadConfig({ ...base, ALLOW_TENANT_CREATION: 'true' }).allowTenantCreation).toBe(true);
+  });
+
+  it('refuses a value that is neither true nor false', () => {
+    expect(() => loadConfig({ ...base, ALLOW_TENANT_CREATION: 'no' })).toThrow(
+      'Invalid ALLOW_TENANT_CREATION',
+    );
+  });
+});

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
@@ -383,7 +383,12 @@ describe('review campaign routes and tools', () => {
       tx
         .select({ action: auditEntries.action })
         .from(auditEntries)
-        .where(eq(auditEntries.correlationId, campaign.correlationId)),
+        .where(
+          and(
+            eq(auditEntries.tenantId, tenantId),
+            eq(auditEntries.correlationId, campaign.correlationId),
+          ),
+        ),
     );
     expect(audit.map((entry) => entry.action)).toEqual(
       expect.arrayContaining([
@@ -551,7 +556,7 @@ describe('review campaign routes and tools', () => {
       tx
         .select({ result: auditEntries.result, afterState: auditEntries.afterState })
         .from(auditEntries)
-        .where(eq(auditEntries.action, 'CreateChannel')),
+        .where(and(eq(auditEntries.tenantId, tenantId), eq(auditEntries.action, 'CreateChannel'))),
     );
     expect(writes).toEqual([
       {

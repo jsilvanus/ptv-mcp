@@ -2,7 +2,7 @@
 
 Date: 2026-11-17. Reviewed commit: `8ae24a8` (`main`).
 
-> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 7, 11, 12, 13 and 15 (medium) were fixed afterwards, and 6 partly (service, channel and connection writes fall back to the public read only on 404). Findings 6 (rest), 8, 9, 10 and 14 are open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
+> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 7, 11, 12, 13, 14 and 15 (medium) were fixed afterwards, and 6 partly (service, channel and connection writes fall back to the public read only on 404). Finding 14 (tenant governance) is fixed: the last Tenant Admin is protected, removed reviewers no longer block approval, `addMember` answers the same for every email, and `ALLOW_TENANT_CREATION` can turn off `POST /tenants`. Findings 6 (rest), 8, 9 and 10 are open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
 
 ## Summary
 
@@ -27,7 +27,7 @@ Checks run: `npm run typecheck` and `npm run lint` are clean, and all 455 unit t
 | 11 | Medium | OAuth server hardening gaps | From code | Fixed |
 | 12 | Medium | No rate limits or input validation on auth routes | From code | Fixed |
 | 13 | Medium | Row-level security depends on which database role the app uses | Needs checking on staging | Fixed |
-| 14 | Medium | Tenant governance gaps | From code | Open (TODO.md) |
+| 14 | Medium | Tenant governance gaps | From code | Fixed |
 | 15 | Medium | Dependency advisories | `npm audit` | Fixed |
 
 ## High severity
