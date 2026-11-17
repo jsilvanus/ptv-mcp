@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { PartialWriteError } from '../adapter.js';
 import { PtvV11Adapter } from './adapter.js';
 import type { V11ApiTokenCache } from './auth/apiLogin.js';
 import type { V11ServiceWire } from './wireModel.js';
+import { V11ModifiedVersionLockedError } from './mappers/common.js';
 
 const SERVICE_ID = 'c67da57e-ea12-4c90-bd53-1fa5f82e26af';
 
@@ -378,6 +380,152 @@ describe('PtvV11Adapter.applyConnectionChange', () => {
         { serviceChannelId: 'b' },
       ],
     });
+  });
+});
+
+describe('PtvV11Adapter.applyServiceChange partial writes', () => {
+  const current = serviceWire({ serviceChannels: [{ serviceChannel: { id: 'a' } }] });
+  const badRequest = () =>
+    Response.json({ PublishingStatus: ['Connection rejected by PTV'] }, { status: 400 });
+
+  it('throws PartialWriteError when the connections PUT fails after the service PUT', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Service/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: badRequest,
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    const error = await adapter
+      .applyServiceChange({
+        serviceId: SERVICE_ID,
+        changes: { names: { fi: 'Uusi' }, serviceChannelIds: ['a', 'b'] },
+      })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(PartialWriteError);
+    const partial = error as PartialWriteError;
+    expect(partial).toMatchObject({
+      entityId: SERVICE_ID,
+      completedSteps: ['service'],
+      failedStep: 'connections',
+    });
+    expect(partial.remaining).toBe(
+      `set the channel connections of service ${SERVICE_ID} to exactly these channels: a, b`,
+    );
+    expect(partial.causeMessage).toMatch(/Connection rejected by PTV/);
+    expect(partial.cause).toBeDefined();
+    expect(partial.message).toMatch(/service saved, connections failed/);
+    expect(partial.message).toMatch(/To finish by hand in PTV: set the channel connections/);
+    // Both PUTs were attempted, the service one first.
+    expect(calls.filter((call) => call.method === 'PUT').map((call) => call.path)).toEqual([
+      `/api/v11/Service/${SERVICE_ID}`,
+      `/api/v11/Connection/serviceId/${SERVICE_ID}`,
+    ]);
+  });
+
+  it('asks for the connections to be removed by hand when none should remain', async () => {
+    const { fetchImpl } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Service/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: badRequest,
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    const error = await adapter
+      .applyServiceChange({ serviceId: SERVICE_ID, changes: { serviceChannelIds: [] } })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(PartialWriteError);
+    expect((error as PartialWriteError).remaining).toBe(
+      `remove all channel connections of service ${SERVICE_ID}`,
+    );
+  });
+
+  it('keeps the plain error when the service PUT itself fails (nothing was written)', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Service/${SERVICE_ID}`]: badRequest,
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    const error = await adapter
+      .applyServiceChange({
+        serviceId: SERVICE_ID,
+        changes: { names: { fi: 'Uusi' }, serviceChannelIds: ['a'] },
+      })
+      .catch((err: unknown) => err);
+
+    expect(error).not.toBeInstanceOf(PartialWriteError);
+    expect(error).toBeInstanceOf(Error);
+    expect(calls.some((call) => call.path.startsWith('/api/v11/Connection'))).toBe(false);
+  });
+});
+
+describe('PtvV11Adapter.applyConnectionChange Modified lock', () => {
+  const current = serviceWire({
+    serviceChannels: [{ serviceChannel: { id: 'a' }, serviceChargeType: 'FreeOfCharge' }],
+  });
+  const change = {
+    serviceId: SERVICE_ID,
+    channelId: 'a',
+    changes: { descriptions: { fi: 'Vastaanotto' } },
+  };
+
+  it('refuses to PUT a connection when the latest service version is Modified', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () =>
+        Response.json({ ...current, publishingStatus: 'Modified' }),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: () => Response.json({}),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    await expect(adapter.applyConnectionChange(change)).rejects.toBeInstanceOf(
+      V11ModifiedVersionLockedError,
+    );
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false);
+  });
+
+  it('does not build the connection PUT on the published version when the restricted read fails', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET /api/v11/Service/active/${SERVICE_ID}`]: () => new Response('no', { status: 403 }),
+      [`GET /api/v11/Service/${SERVICE_ID}`]: () => Response.json(current),
+      [`PUT /api/v11/Connection/serviceId/${SERVICE_ID}`]: () => Response.json({}),
+    });
+    const adapter = new PtvV11Adapter({
+      environment: 'test',
+      apiUser,
+      apiTokenCache: tokenCache,
+      canWrite: true,
+      fetchImpl,
+    });
+
+    await expect(adapter.applyConnectionChange(change)).rejects.toThrow();
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false);
   });
 });
 

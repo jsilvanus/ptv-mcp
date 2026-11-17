@@ -164,14 +164,39 @@ were both verified.
 
 Connection extra info (liitoksen lisätiedot) is edited through the same
 PUT (`connection_update` proposals, `src/ptv/v11/connectionDetails.ts`):
-every other connection is resent as read, the changed one in the In shape.
-GET and In differ: GET lists fax numbers among typed `phoneNumbers`, In
-takes them as `faxNumbers`; contact addresses are `type: 'Postal'` with sub
-type Street, PostOfficeBox or Abroad; descriptions are typed
-`Description` and `ChargeTypeAdditionalInfo` (max 500 each). An emptied
-field is cleared with its delete flag (`deleteServiceChargeType`,
+every other connection is resent in the In shape too (review finding 8):
+each kept connection is read, mapped to the domain and back, so fax numbers
+go to `faxNumbers` and contact addresses carry `type: 'Postal'`. A kept
+connection with no extra info is still sent as its id alone, the shape that
+was verified live. GET and In differ: GET lists fax numbers among typed
+`phoneNumbers`, In takes them as `faxNumbers`; contact addresses are
+`type: 'Postal'` with sub type Street, PostOfficeBox or Abroad; descriptions
+are typed `Description` and `ChargeTypeAdditionalInfo` (max 500 each). An
+emptied field is cleared with its delete flag (`deleteServiceChargeType`,
 `deleteAllDescriptions`, `deleteAllServiceHours`, and
-`contactDetails.deleteAll*`). Not yet verified live.
+`contactDetails.deleteAll*`). Not yet verified live: the In shape for kept
+connections, and the delete flags on a connection that has some extra info.
+
+Checklist for the test environment (none of it has been run against PTV):
+
+- [ ] Read a service whose connections include a fax number and a contact
+  address; change one unrelated connection; read back. The fax number and
+  the address are unchanged, and the fax is still a fax.
+- [ ] Add a channel to such a service; the existing connections keep their
+  charge type, descriptions, hours and contact details.
+- [ ] Remove a channel from such a service; the others keep the same data.
+- [ ] Change one connection's extra info (`connection_update`) on a
+  connection that has a fax and an address; the rest of the connection is
+  as before.
+- [ ] Check that a connection with no extra info, sent as `{serviceChannelId}`,
+  is accepted next to connections with extra info.
+- [ ] Check that the delete flags sent for empty fields on a connection with
+  some extra info (`deleteAllAddresses`, `deleteAllFaxNumbers`, ...) are
+  accepted and clear nothing else.
+- [ ] Force a failure of the connection PUT after a service PUT (for example
+  by a channel the test organisation may not connect); check that the error
+  names the step that failed and what to finish by hand, and that the audit
+  entry's `steps` says the same.
 
 ### Organisations (`PUT /api/v11/Organization/{id}`, `POST /api/v11/Organization`)
 
@@ -188,6 +213,16 @@ service locations) or Other. The POST requires `organizationType`,
 `Organization/active/{id}` read, so a draft sub-organisation can't be read
 back until it is published. To verify live: whether the PUT needs
 `organizationType` or the area resent, and archiving (`Deleted`).
+
+The `Modified` lock on organisation writes compares against the published
+version only: the write reads `GET /Organization/{id}`, which does not
+return a draft or a modified version. A draft or Modified organisation can
+therefore not be seen, and the lock check can only fire if the public read
+itself reports `Modified`, which it does not today. Until PTV exposes an
+organisation draft read, the adapter cannot tell whether PTV holds an
+unpublished version of an organisation, and a PUT made while it does may be
+refused by PTV or built on the older published data. Verify live whether
+`PUT /Organization/{id}` is refused when an unpublished version exists.
 
 ### Service POST (`POST /api/v11/Service`)
 

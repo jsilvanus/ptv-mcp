@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PtvAdapter } from '../ptv/adapter.js';
+import { PartialWriteError, type PtvAdapter } from '../ptv/adapter.js';
 import type { PtvAdapterRegistry, PtvAdapterResolutionRequest } from '../ptv/registry.js';
 import { InMemoryPtvAdapter } from '../ptv/testing/inMemoryAdapter.js';
 import { v11Capabilities, validService } from '../ptv/testing/fixtures.js';
@@ -184,5 +184,70 @@ describe('applyChanges', () => {
 
     const applyEntry = audit.recordCalls.find((c) => c.action === 'ApplyServiceChange');
     expect(applyEntry?.result).toBe('Failed');
+  });
+});
+
+describe('applyChanges partial writes', () => {
+  const partial = () =>
+    new PartialWriteError({
+      entityId: 'svc-1',
+      completedSteps: ['service'],
+      failedStep: 'connections',
+      remaining: 'set the channel connections of service svc-1 to exactly these channels: ch-2',
+      cause: new Error('PTV rejected the connections'),
+    });
+
+  it('records the steps in the Failed audit entry and re-throws the partial error', async () => {
+    const adapter = buildAdapter(true);
+    vi.spyOn(adapter, 'applyServiceChange').mockRejectedValue(partial());
+    const audit = fakeAuditService();
+
+    const error = await applyChanges(
+      fakeEditorResolver,
+      fakeRegistry(adapter),
+      audit,
+      new V11ChangeValidator(),
+      ctx,
+      'svc-1',
+      { names: { fi: 'Uusi nimi' } },
+    ).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(PartialWriteError);
+    const failed = audit.recordCalls.find((c) => c.action === 'ApplyServiceChange');
+    expect(failed).toMatchObject({ result: 'Failed', resourceId: 'svc-1' });
+    expect(failed?.beforeState).toEqual(expect.objectContaining({ names: expect.anything() }));
+    expect(failed?.afterState).toEqual({
+      proposed: expect.objectContaining({ id: 'svc-1' }),
+      steps: {
+        completed: ['service'],
+        failed: 'connections',
+        error: 'PTV rejected the connections',
+        remaining: 'set the channel connections of service svc-1 to exactly these channels: ch-2',
+      },
+    });
+    expect(audit.recordCalls.some((c) => c.result === 'Success')).toBe(false);
+  });
+
+  it('keeps the plain Failed entry, without steps, for a failure before any step', async () => {
+    const adapter = buildAdapter(true);
+    vi.spyOn(adapter, 'applyServiceChange').mockRejectedValue(new Error('PTV is down'));
+    const audit = fakeAuditService();
+
+    await expect(
+      applyChanges(
+        fakeEditorResolver,
+        fakeRegistry(adapter),
+        audit,
+        new V11ChangeValidator(),
+        ctx,
+        'svc-1',
+        {},
+      ),
+    ).rejects.toThrow('PTV is down');
+
+    const failed = audit.recordCalls.find((c) => c.action === 'ApplyServiceChange');
+    expect(failed?.result).toBe('Failed');
+    // An update's failure keeps the existing shape: no after state, no steps.
+    expect(failed?.afterState).toBeNull();
   });
 });

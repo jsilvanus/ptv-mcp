@@ -16,7 +16,7 @@ import type {
   PtvEnvironment,
   ServiceChangeProposal,
 } from '../adapter.js';
-import { OntologySearchUnsupportedError } from '../adapter.js';
+import { OntologySearchUnsupportedError, PartialWriteError } from '../adapter.js';
 import type {
   CodeListEntry,
   Connection,
@@ -464,7 +464,22 @@ export class PtvV11Adapter implements PtvAdapter {
       body,
     );
     if (proposal.changes.serviceChannelIds !== undefined) {
-      await this.applyServiceConnections(current, proposal.changes.serviceChannelIds);
+      const desired = proposal.changes.serviceChannelIds;
+      try {
+        await this.applyServiceConnections(current, desired);
+      } catch (err) {
+        // The service PUT is already in PTV; only the connections are left.
+        throw new PartialWriteError({
+          entityId: proposal.serviceId,
+          completedSteps: ['service'],
+          failedStep: 'connections',
+          remaining: desired.length
+            ? `set the channel connections of service ${proposal.serviceId} to exactly ` +
+              `these channels: ${desired.join(', ')}`
+            : `remove all channel connections of service ${proposal.serviceId}`,
+          cause: err,
+        });
+      }
     }
     return {
       serviceId: updated.id,
@@ -532,6 +547,11 @@ export class PtvV11Adapter implements PtvAdapter {
     this.requireWrite();
     const current = await this.getLatestOrNull<V11ServiceWire>('Service', proposal.serviceId, true);
     if (!current) throw new Error(`PTV service ${proposal.serviceId} not found`);
+    // Same lock as applyServiceChange: the connection PUT is refused for a
+    // service whose latest version is Modified, so fail before calling PTV.
+    if (current.publishingStatus === 'Modified') {
+      throw new V11ModifiedVersionLockedError(proposal.serviceId);
+    }
     await this.client.put(
       `/api/v11/Connection/serviceId/${proposal.serviceId}`,
       planConnectionDetails(current, proposal.channelId, proposal.changes),
@@ -547,6 +567,12 @@ export class PtvV11Adapter implements PtvAdapter {
     proposal: OrganizationChangeProposal,
   ): Promise<ApplyOrganizationChangeResult> {
     this.requireWrite();
+    // Known limitation (review finding 6): v11 has no Organization/active read,
+    // so this reads the published version only (`GET /Organization/{id}`), and
+    // a draft or Modified organisation cannot be seen here. The status check
+    // below therefore only fires if the public read itself reports Modified,
+    // which it does not today. Kept so it works if PTV ever returns that
+    // status; see docs/ptv-v11-notes.md ("Organisations") and TODO.md.
     const current = await this.getOrNull<V11OrganizationWire>(
       `/api/v11/Organization/${proposal.organizationId}`,
     );

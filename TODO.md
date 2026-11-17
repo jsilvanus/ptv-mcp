@@ -24,15 +24,7 @@ suggested fixes are in
 [`docs/reviews/2026-11-17-code-review.md`](docs/reviews/2026-11-17-code-review.md)
 under the same numbers. Not being fixed now.
 
-- [ ] **6. v11 writes can be built on a stale published version (partly
-      fixed).** Service, channel and connection writes now fall back to the
-      public read only on 404. Still open: organisations have no `/active`
-      read; `applyConnectionChange` has no `Modified` check.
-- [ ] **8. Kept connections are resent in read shape.** `relationToWrite`
-      (`src/ptv/v11/connectionWrite.ts`) can lose fax numbers and addresses;
-      verify on the test environment.
-- [ ] **9. Service and connection writes are not atomic.** A failure of the
-      second PUT leaves PTV with half the change; record which step failed.
+- [ ] **6. Organisation drafts cannot be read (v11).** Service, channel and connection writes fall back to the public read only on 404. v11 has no `Organization/active` read, so the `Modified` check in `applyOrganizationChange` compares against the published version only and cannot see a draft or modified organisation. Kept as is until PTV exposes such a read or a live check says otherwise (see `docs/ptv-v11-notes.md`, "Organisations").
 - [ ] **10. OAuth grant scope is not enforced everywhere.** Resolve and manual
       publish use the proposal's environment; `resourceToolContext` takes the
       tenant from the resource URI.

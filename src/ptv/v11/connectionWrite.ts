@@ -42,16 +42,19 @@ export function planServiceConnections(
   };
 }
 
+/**
+ * A kept connection in the In shape. The read shape differs (fax numbers
+ * sit among `phoneNumbers`, addresses lack `type: 'Postal'`), so the read
+ * is mapped to the domain and back, as the edited connection is. A
+ * connection without any extra info is sent as its id alone, the shape
+ * that was verified live, rather than with a delete flag for every field.
+ */
 function relationToWrite(relation: V11ServiceChannelRelation): Record<string, unknown> {
-  const description = (relation.description ?? []).filter((item) => !!item.value);
+  const details = connectionDetailsToDomain(relation);
+  if (Object.keys(details).length === 0) return { serviceChannelId: relation.serviceChannel.id };
   return {
     serviceChannelId: relation.serviceChannel.id,
-    ...(relation.serviceChargeType ? { serviceChargeType: relation.serviceChargeType } : {}),
-    ...(description.length > 0 ? { description } : {}),
-    ...(relation.serviceHours && relation.serviceHours.length > 0
-      ? { serviceHours: relation.serviceHours }
-      : {}),
-    ...(relation.contactDetails ? { contactDetails: relation.contactDetails } : {}),
+    ...connectionDetailsToWire(details),
   };
 }
 
