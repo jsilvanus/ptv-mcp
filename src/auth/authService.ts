@@ -9,6 +9,7 @@ import {
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from './jwt.js';
 import type { Mailer } from './mailer.js';
 import { hashPassword, verifyPassword } from './password.js';
+import { isPasswordSignInAllowed, normalizeEmail, type AuthMode } from './signInMode.js';
 import { generateOpaqueToken, hashToken } from './tokens.js';
 
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -28,6 +29,14 @@ export class InvalidCredentialsError extends Error {
   constructor() {
     super('Invalid email or password');
     this.name = 'InvalidCredentialsError';
+  }
+}
+
+/** `AUTH_MODE=oidc`: accounts are created by single sign-on only. */
+export class PasswordRegistrationDisabledError extends Error {
+  constructor() {
+    super('Self-registration is disabled. Sign in with single sign-on instead.');
+    this.name = 'PasswordRegistrationDisabledError';
   }
 }
 
@@ -67,6 +76,9 @@ export interface AuthServiceDeps {
   mailer: Mailer;
   /** `REQUIRE_VERIFIED_EMAIL`: refuse sign-in for accounts whose email is not verified. Default false. */
   requireVerifiedEmail?: boolean;
+  /** `AUTH_MODE`. In `oidc`, passwords are checked only for `breakGlassEmails`. Default `local`. */
+  authMode?: AuthMode;
+  breakGlassEmails?: readonly string[];
   /** Injectable for deterministic tests; defaults to the real clock. */
   now?: () => Date;
 }
@@ -86,6 +98,8 @@ export class AuthService {
   private readonly mailer: Mailer;
   private readonly now: () => Date;
   private readonly requireVerifiedEmail: boolean;
+  private readonly authMode: AuthMode;
+  private readonly breakGlassEmails: ReadonlySet<string>;
   private dummyPasswordHash: Promise<string> | undefined;
 
   constructor(deps: AuthServiceDeps) {
@@ -94,6 +108,13 @@ export class AuthService {
     this.mailer = deps.mailer;
     this.now = deps.now ?? (() => new Date());
     this.requireVerifiedEmail = deps.requireVerifiedEmail ?? false;
+    this.authMode = deps.authMode ?? 'local';
+    this.breakGlassEmails = new Set((deps.breakGlassEmails ?? []).map(normalizeEmail));
+  }
+
+  /** Whether `email` may sign in with a password under the configured `AUTH_MODE`. */
+  allowsPasswordSignIn(email: string): boolean {
+    return isPasswordSignInAllowed(this.authMode, this.breakGlassEmails, email);
   }
 
   /** Computed once and cached — a fixed hash whose only purpose is to make `verifyCredentials()`'s unknown-email path spend the same Argon2id cost as its wrong-password path. */
@@ -103,6 +124,9 @@ export class AuthService {
   }
 
   async register(email: string, name: string, password: string): Promise<{ userId: string }> {
+    if (this.authMode === 'oidc') {
+      throw new PasswordRegistrationDisabledError();
+    }
     const existing = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (existing) {
       throw new EmailAlreadyRegisteredError();
@@ -175,6 +199,13 @@ export class AuthService {
    * an unused 30-day session nobody can revoke.
    */
   async verifyCredentials(email: string, password: string): Promise<string> {
+    if (!this.allowsPasswordSignIn(email)) {
+      // SSO-only mode: same answer and cost as a wrong password, so the
+      // refusal does not reveal whether the account exists.
+      await verifyPassword(await this.getDummyPasswordHash(), password);
+      throw new InvalidCredentialsError();
+    }
+
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
       // Same error as a wrong password — don't reveal whether the email is
@@ -340,6 +371,9 @@ export class AuthService {
 
   /** Always succeeds from the caller's point of view — never reveals whether `email` is registered. */
   async requestPasswordReset(email: string): Promise<void> {
+    if (!this.allowsPasswordSignIn(email)) {
+      return;
+    }
     const user = await this.db.query.users.findFirst({ where: eq(users.email, email) });
     if (!user) {
       return;

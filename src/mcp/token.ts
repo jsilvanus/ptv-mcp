@@ -14,6 +14,8 @@ const auth = new AuthService({
   db,
   jwtSecret: config.jwtSecret,
   mailer: new LoggingMailer(() => undefined),
+  authMode: config.authMode,
+  breakGlassEmails: config.breakGlassEmails,
 });
 const tenantService = new TenantService(db, new AuditService(db));
 // issuer/resource must match src/app.ts's own OAuthService construction

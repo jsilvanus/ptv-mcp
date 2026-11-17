@@ -102,3 +102,43 @@ describe('OIDC config', () => {
     expect(loadOidcConfig(env, 'development')?.issuer).toBe('http://127.0.0.1:9000/');
   });
 });
+
+describe('AUTH_MODE config', () => {
+  const oidcEnv = { OIDC_ISSUER: 'https://idp.example.test/', OIDC_CLIENT_ID: 'ptv-mcp' };
+
+  it('defaults to local without OIDC and to both with OIDC', () => {
+    expect(loadConfig({ ...base }).authMode).toBe('local');
+    expect(loadConfig({ ...base, ...oidcEnv }).authMode).toBe('both');
+  });
+
+  it('accepts oidc with OIDC configured, ignoring case and spaces', () => {
+    expect(loadConfig({ ...base, ...oidcEnv, AUTH_MODE: ' OIDC ' }).authMode).toBe('oidc');
+  });
+
+  it('refuses an unknown mode', () => {
+    expect(() => loadConfig({ ...base, ...oidcEnv, AUTH_MODE: 'sso' })).toThrow(
+      'Invalid AUTH_MODE',
+    );
+  });
+
+  it('refuses oidc or both without OIDC_ISSUER', () => {
+    expect(() => loadConfig({ ...base, AUTH_MODE: 'oidc' })).toThrow('OIDC_ISSUER must be set');
+    expect(() => loadConfig({ ...base, AUTH_MODE: 'both' })).toThrow('OIDC_ISSUER must be set');
+  });
+
+  it('refuses local while OIDC is configured', () => {
+    expect(() => loadConfig({ ...base, ...oidcEnv, AUTH_MODE: 'local' })).toThrow(
+      'Invalid AUTH_MODE=local',
+    );
+  });
+
+  it('parses break-glass emails: lowercased, trimmed, de-duplicated', () => {
+    expect(loadConfig({ ...base }).breakGlassEmails).toEqual([]);
+    expect(
+      loadConfig({
+        ...base,
+        OIDC_BREAK_GLASS_EMAILS: ' Admin@Example.test, ops@example.test ,admin@example.TEST,,',
+      }).breakGlassEmails,
+    ).toEqual(['admin@example.test', 'ops@example.test']);
+  });
+});

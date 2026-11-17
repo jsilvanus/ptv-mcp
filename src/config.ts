@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { AUTH_MODES, normalizeEmail, type AuthMode } from './auth/signInMode.js';
 
 export interface AppConfig {
   nodeEnv: 'development' | 'test' | 'production';
@@ -40,6 +41,14 @@ export interface AppConfig {
    * provider yet (LoggingMailer only logs); turn it on once one is configured.
    */
   requireVerifiedEmail: boolean;
+  /**
+   * `AUTH_MODE`: how people may sign in. `oidc` = single sign-on only, with
+   * password sign-in kept for `breakGlassEmails`. Defaults to `both` when OIDC
+   * is configured, else `local`.
+   */
+  authMode: AuthMode;
+  /** `OIDC_BREAK_GLASS_EMAILS`, lowercased. Only used when `authMode` is `oidc`. */
+  breakGlassEmails: string[];
 }
 
 export interface OidcConfig {
@@ -106,6 +115,36 @@ export function loadOidcConfig(
   };
 }
 
+/** `AUTH_MODE`. Throws when it conflicts with whether OIDC is configured. */
+export function loadAuthMode(env: NodeJS.ProcessEnv, oidc: OidcConfig | undefined): AuthMode {
+  const raw = env.AUTH_MODE?.trim().toLowerCase();
+  if (!raw) return oidc ? 'both' : 'local';
+  if (!(AUTH_MODES as readonly string[]).includes(raw)) {
+    throw new Error(`Invalid AUTH_MODE: expected one of ${AUTH_MODES.join(', ')}, got ${raw}`);
+  }
+  const mode = raw as AuthMode;
+  if (mode === 'local' && oidc) {
+    throw new Error('Invalid AUTH_MODE=local: OIDC_ISSUER is set; use both or oidc');
+  }
+  if (mode !== 'local' && !oidc) {
+    throw new Error(`Invalid AUTH_MODE=${mode}: OIDC_ISSUER must be set`);
+  }
+  return mode;
+}
+
+/** `OIDC_BREAK_GLASS_EMAILS`: comma-separated; empty when unset. */
+export function loadBreakGlassEmails(env: NodeJS.ProcessEnv): string[] {
+  const raw = env.OIDC_BREAK_GLASS_EMAILS ?? '';
+  return [
+    ...new Set(
+      raw
+        .split(',')
+        .map(normalizeEmail)
+        .filter((email) => email.length > 0),
+    ),
+  ];
+}
+
 function requireEnv(name: string, env: NodeJS.ProcessEnv): string {
   let value = env[name];
 
@@ -154,6 +193,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const oidc = loadOidcConfig(env, nodeEnv);
+  const authMode = loadAuthMode(env, oidc);
+  const breakGlassEmails = loadBreakGlassEmails(env);
 
   return {
     nodeEnv,
@@ -170,6 +211,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
     webDevUrl: env.WEB_DEV_URL ?? 'http://127.0.0.1:5173',
     requireVerifiedEmail: parseBoolean('REQUIRE_VERIFIED_EMAIL', env.REQUIRE_VERIFIED_EMAIL, false),
+    authMode,
+    breakGlassEmails,
     ...(oidc ? { oidc } : {}),
   };
 }

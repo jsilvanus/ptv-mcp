@@ -32,6 +32,8 @@ export interface OidcRoutesOptions {
   tenantService: TenantService;
   publicUrl: string;
   buttonLabel: string;
+  /** `AUTH_MODE=oidc`: the web UI hides its password form except for break-glass accounts. */
+  ssoOnly?: boolean;
   /** Secure cookie flag. */
   secureCookies: boolean;
   /** Per-IP limit on `/oidc/login` starts per minute (default 30). */
@@ -112,7 +114,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
   }
 
   app.get('/oidc/config', async (_request, reply) =>
-    reply.send({ buttonLabel: options.buttonLabel }),
+    reply.send({ buttonLabel: options.buttonLabel, ssoOnly: options.ssoOnly === true }),
   );
 
   app.get<{ Querystring: { oauth?: string } }>('/oidc/login', async (request, reply) => {

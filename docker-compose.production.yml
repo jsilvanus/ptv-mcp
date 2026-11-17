@@ -22,6 +22,8 @@ services:
       OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-}
       OIDC_CREATE_USERS: ${OIDC_CREATE_USERS:-}
       OIDC_TRUST_EMAIL: ${OIDC_TRUST_EMAIL:-}
+      AUTH_MODE: ${AUTH_MODE:-}
+      OIDC_BREAK_GLASS_EMAILS: ${OIDC_BREAK_GLASS_EMAILS:-}
     ports:
       - '3000:3000'
     healthcheck:

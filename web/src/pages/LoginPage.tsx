@@ -3,25 +3,31 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { ApiError } from '../api/client';
 
-/**
- * The single sign-on button's label, or null when the server has no OIDC
- * configured (then `/oidc/config` is a 404 and no button is shown).
- */
-function useOidcButtonLabel(): string | null {
-  const [label, setLabel] = useState<string | null>(null);
+interface OidcConfigState {
+  /** The single sign-on button's label, or null when OIDC is off (`/oidc/config` is then a 404). */
+  buttonLabel: string | null;
+  /** `AUTH_MODE=oidc`: the password form is for break-glass accounts only. */
+  ssoOnly: boolean;
+}
+
+function useOidcConfig(): OidcConfigState {
+  const [config, setConfig] = useState<OidcConfigState>({ buttonLabel: null, ssoOnly: false });
   useEffect(() => {
     let cancelled = false;
     fetch('/oidc/config')
-      .then(async (res) => (res.ok ? ((await res.json()) as { buttonLabel?: unknown }) : null))
-      .then((config) => {
-        if (!cancelled && typeof config?.buttonLabel === 'string') setLabel(config.buttonLabel);
+      .then(async (res) =>
+        res.ok ? ((await res.json()) as { buttonLabel?: unknown; ssoOnly?: unknown }) : null,
+      )
+      .then((body) => {
+        if (cancelled || typeof body?.buttonLabel !== 'string') return;
+        setConfig({ buttonLabel: body.buttonLabel, ssoOnly: body.ssoOnly === true });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
-  return label;
+  return config;
 }
 
 function readOidcCode(): string | null {
@@ -45,7 +51,7 @@ export function LoginPage() {
   const [oidcCode] = useState(readOidcCode);
   const oidcExchanged = useRef(false);
   const [submitting, setSubmitting] = useState(oidcCode !== null);
-  const oidcButtonLabel = useOidcButtonLabel();
+  const { buttonLabel: oidcButtonLabel, ssoOnly } = useOidcConfig();
 
   useEffect(() => {
     if (!oidcCode || oidcExchanged.current) return;
@@ -81,6 +87,41 @@ export function LoginPage() {
     }
   }
 
+  const passwordForm = (
+    <form onSubmit={handleSubmit}>
+      <p>
+        <label htmlFor="email">Email</label>
+        <br />
+        <input
+          id="email"
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          style={{ width: '100%' }}
+        />
+      </p>
+      <p>
+        <label htmlFor="password">Password</label>
+        <br />
+        <input
+          id="password"
+          type="password"
+          required
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ width: '100%' }}
+        />
+      </p>
+      {error && <p className="error">{error}</p>}
+      <button type="submit" className="primary" disabled={submitting}>
+        {submitting ? 'Logging in…' : 'Log in'}
+      </button>
+    </form>
+  );
+
   return (
     <div className="card" style={{ maxWidth: 360, margin: '80px auto' }}>
       <h1>Log in</h1>
@@ -91,41 +132,19 @@ export function LoginPage() {
           </a>
         </p>
       )}
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="email">Email</label>
-          <br />
-          <input
-            id="email"
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: '100%' }}
-          />
+      {ssoOnly ? (
+        <details>
+          <summary className="muted">Break-glass sign-in (administrators only)</summary>
+          {passwordForm}
+        </details>
+      ) : (
+        passwordForm
+      )}
+      {!ssoOnly && (
+        <p className="muted">
+          No account? <Link to="/register">Register</Link>
         </p>
-        <p>
-          <label htmlFor="password">Password</label>
-          <br />
-          <input
-            id="password"
-            type="password"
-            required
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%' }}
-          />
-        </p>
-        {error && <p className="error">{error}</p>}
-        <button type="submit" className="primary" disabled={submitting}>
-          {submitting ? 'Logging in…' : 'Log in'}
-        </button>
-      </form>
-      <p className="muted">
-        No account? <Link to="/register">Register</Link>
-      </p>
+      )}
     </div>
   );
 }

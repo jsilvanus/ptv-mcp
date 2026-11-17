@@ -22,6 +22,8 @@ export interface McpOAuthRouteOptions {
   adapterConfigService: PtvAdapterConfigService;
   /** Set when OIDC sign-in is configured: the sign-in page then shows an SSO button with this label. */
   oidcButtonLabel?: string;
+  /** `AUTH_MODE=oidc`: the password form is shown only as a collapsed break-glass sign-in. */
+  ssoOnly?: boolean;
 }
 
 export function escapeHtml(value: string): string {
@@ -252,8 +254,23 @@ export async function mcpOAuthRoutes(
 
       const oauth = encodeAuthorizationRequest(q);
       const sso = options.oidcButtonLabel
-        ? `<p><a class="sso" href="/oidc/login?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p><p>or sign in with your ptv-mcp password:</p>`
+        ? `<p><a class="sso" href="/oidc/login?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p>`
         : '';
+      const passwordIntro =
+        options.oidcButtonLabel && !options.ssoOnly
+          ? '<p>or sign in with your ptv-mcp password:</p>'
+          : '';
+      const passwordForm = `
+      <form method="post" action="/oauth/authorize">
+        <input type="hidden" name="oauth" value="${oauth}">
+        <label>Email</label><input name="email" type="email" autocomplete="username" required>
+        <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in and authorize</button>
+      </form>`;
+      const passwordSection =
+        options.ssoOnly && options.oidcButtonLabel
+          ? `<details><summary>Break-glass sign-in (administrators only)</summary>${passwordForm}</details>`
+          : `${passwordIntro}${passwordForm}`;
       const client = await options.oauthService.describeClient(q.client_id ?? '');
 
       return reply.type('text/html').send(
@@ -262,12 +279,7 @@ export async function mcpOAuthRoutes(
       ${clientNotice(client.name, q.client_id ?? '', q.redirect_uri ?? '')}
       <p>This authorizes the MCP client to use your ptv-mcp account.</p>
       ${sso}
-      <form method="post" action="/oauth/authorize">
-        <input type="hidden" name="oauth" value="${oauth}">
-        <label>Email</label><input name="email" type="email" autocomplete="username" required>
-        <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
-        <button type="submit">Sign in and authorize</button>
-      </form>
+      ${passwordSection}
     `),
       );
     },

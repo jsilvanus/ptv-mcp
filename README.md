@@ -74,6 +74,26 @@ the email + password form (password sign-in keeps working).
 | `OIDC_BUTTON_LABEL` | Button text. Default `Sign in with single sign-on`. |
 | `OIDC_CREATE_USERS` | `true` = create a ptv-mcp account (no password, no memberships) for an IdP user who has none. Default `false`. Only created from a trusted email (see below). |
 | `OIDC_TRUST_EMAIL` | `true` = link to an existing account by email even when the IdP does not say `email_verified: true`. Default `false`. |
+| `AUTH_MODE` | `both` (default with OIDC) = password and SSO. `oidc` = SSO only (see below). `local` = password only; refused while `OIDC_ISSUER` is set. `oidc` and `both` require `OIDC_ISSUER`. |
+| `OIDC_BREAK_GLASS_EMAILS` | Comma-separated emails that keep password sign-in in `oidc` mode. Empty = no break-glass account. |
+
+### SSO-only mode (`AUTH_MODE=oidc`)
+
+With `AUTH_MODE=oidc`, sign-in goes through the IdP only:
+
+- The web UI login page and the MCP authorization page show the SSO button. The
+  password form is hidden behind a "Break-glass sign-in" section.
+- Password sign-in (`POST /auth/login`, the MCP password form, and the token
+  helper) is accepted only for emails in `OIDC_BREAK_GLASS_EMAILS`. Any other
+  account gets the same "Invalid email or password" answer whatever password is
+  sent.
+- `POST /auth/register` returns 403 (accounts come from SSO, see
+  `OIDC_CREATE_USERS`), and password reset mails are sent only to break-glass
+  accounts.
+
+Keep at least one break-glass administrator with a password before you switch
+on `oidc`, and list it in `OIDC_BREAK_GLASS_EMAILS`. Otherwise an IdP outage
+locks everyone out. Startup logs a warning when the list is empty.
 
 The redirect URI is `<MCP_PUBLIC_URL>/oidc/callback`, one for both the web
 UI and MCP sign-ins, so `MCP_PUBLIC_URL` must be the public URL the browser
