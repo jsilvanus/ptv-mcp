@@ -217,23 +217,27 @@ export class OidcService {
   }
 
   /** A one-time code the SPA exchanges for its session (`POST /oidc/session`). */
-  async createWebHandoff(userId: string): Promise<string> {
+  /** `idTokenHint` is the IdP's ID token, carried to the session for sign-out. */
+  async createWebHandoff(userId: string, idTokenHint?: string): Promise<string> {
     const code = generateOpaqueToken();
     await this.db.insert(oidcWebHandoffs).values({
       codeHash: hashToken(code),
       userId,
       expiresAt: new Date(this.now().getTime() + WEB_HANDOFF_TTL_MS),
+      idTokenHint: idTokenHint ?? null,
     });
     return code;
   }
 
   /** Single use; null when unknown or expired. */
-  async consumeWebHandoff(code: string): Promise<string | null> {
+  async consumeWebHandoff(
+    code: string,
+  ): Promise<{ userId: string; idTokenHint: string | null } | null> {
     const [row] = await this.db
       .delete(oidcWebHandoffs)
       .where(eq(oidcWebHandoffs.codeHash, hashToken(code)))
       .returning();
     if (!row || row.expiresAt < this.now()) return null;
-    return row.userId;
+    return { userId: row.userId, idTokenHint: row.idTokenHint };
   }
 }

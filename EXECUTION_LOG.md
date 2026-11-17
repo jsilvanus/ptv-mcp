@@ -2285,3 +2285,12 @@ is set (README, "Single sign-on").
 - **Decision**: in `oidc` mode the password form is not removed. It stays for break-glass accounts behind a collapsed section, since the plan keeps break-glass admins. The reading is recorded here so a reviewer can correct it.
 - **Known gap**: break-glass passwords are not rotated or audited by this change. Sign-ins are not written to the audit log (password sign-ins never were).
 - **Tests**: `src/config.test.ts` (AUTH_MODE and break-glass parsing), `src/auth/signInMode.test.ts` (unit), `src/auth/ssoOnly.integration.test.ts` (service and HTTP, needs PostgreSQL), `src/routes/oidc.integration.test.ts` (config body now includes `ssoOnly`).
+
+## 2026-11-17 — Provider sign-out (RP-initiated logout, phase D of the sign-in plan)
+
+- **Change**: signing out of a session that came from an OIDC web sign-in also ends the IdP session. `POST /auth/logout` returns `200 { endSessionUrl }` when the revoked refresh token carries an ID token hint and the IdP advertises an `end_session_endpoint`; otherwise `204` as before. The SPA (`web/src/auth/AuthContext.tsx`) clears local state, then navigates to `endSessionUrl`.
+- **Hint storage**: the IdP's raw ID token is kept in `refresh_tokens.oidc_id_token_hint` (migration `0027_oidc_logout_hint.sql`, hand-written like 0025; drizzle's snapshot is not maintained for these). It is carried through `oidc_web_handoffs.id_token_hint` into the session at `POST /oidc/session`, and copied on refresh-token rotation. Password sessions have no hint and sign out locally only.
+- **Post-logout redirect**: `OIDC_POST_LOGOUT_REDIRECT_URI` (optional; default `<MCP public URL>/login`). It must be registered as a post-logout redirect URI at the IdP.
+- **Failure handling**: if discovery fails or the IdP has no end-session endpoint, sign-out stays local and the response is 204. A stale refresh token (already revoked or expired) yields no hint, so its IdP session is not ended. That is a known gap.
+- **Decision**: the ID token is stored as plain text, because `id_token_hint` needs the value. It carries identity claims, not an API bearer credential. A reviewer may want it encrypted with the envelope key.
+- **Tests**: `src/config.test.ts` (new env var parsing); `src/oidc/oidcProvider.integration.test.ts` (sign-out returns the provider's end-session URL with a hint for the signed-in subject, for root and path-prefixed issuers, and a second sign-out returns 204).

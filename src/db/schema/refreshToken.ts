@@ -24,4 +24,10 @@ export const refreshTokens = pgTable('refresh_tokens', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
   replacedByTokenId: uuid('replaced_by_token_id'),
+  /**
+   * The IdP's ID token from an OIDC web sign-in, kept so sign-out can send it
+   * as `id_token_hint` to the provider's end-session endpoint. Null for
+   * password sign-ins. Carried over on rotation (see AuthService.refresh).
+   */
+  oidcIdTokenHint: text('oidc_id_token_hint'),
 });

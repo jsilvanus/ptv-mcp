@@ -453,4 +453,52 @@ describe.each([
 
     await db.delete(users).where(eq(users.email, email));
   });
+
+  it('ends the provider session on sign-out with the ID token as id_token_hint', async () => {
+    const instance = await app();
+    const { userId } = await localUser();
+    const subject = randomUUID();
+    await db.insert(oidcIdentities).values({ issuer: idp.issuer, subject, userId });
+    idp.setUser({ sub: subject, email: 'someone-else@example.test', email_verified: true });
+
+    const { callbackPath, cookie } = await signInAtIdp(instance);
+    const res = await callback(instance, callbackPath, cookie);
+    const session = await instance.inject({
+      method: 'POST',
+      url: '/oidc/session',
+      payload: { code: handoffCode(res.headers.location) },
+    });
+    const { accessToken, refreshToken } = session.json() as {
+      accessToken: string;
+      refreshToken: string;
+    };
+
+    const logout = await instance.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { refreshToken },
+    });
+    expect(logout.statusCode).toBe(200);
+    const { endSessionUrl } = logout.json() as { endSessionUrl: string };
+    const end = new URL(endSessionUrl);
+    expect(end.origin).toBe(new URL(idp.issuer).origin);
+    expect(end.pathname.startsWith(`${prefix}/`)).toBe(true);
+    expect(end.searchParams.get('post_logout_redirect_uri')).toBe(
+      `${config.mcpPublicUrl.replace(/\/+$/, '')}/login`,
+    );
+    const idToken = end.searchParams.get('id_token_hint');
+    expect(idToken).toBeTruthy();
+    const payload = JSON.parse(Buffer.from(idToken!.split('.')[1]!, 'base64url').toString());
+    expect(payload.sub).toBe(subject);
+
+    // The refresh token is revoked, so a second sign-out has no IdP hint left.
+    const again = await instance.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { refreshToken },
+    });
+    expect(again.statusCode).toBe(204);
+  });
 });

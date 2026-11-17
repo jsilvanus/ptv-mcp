@@ -10,6 +10,11 @@ export interface OidcIdentityClaims {
   emailVerified: boolean;
   name?: string;
   preferredUsername?: string;
+  /**
+   * The raw ID token of this sign-in. Kept for sign-out: it is the
+   * `id_token_hint` of the RP-initiated logout request.
+   */
+  idToken?: string;
 }
 
 export interface OidcAuthorizationStart {
@@ -42,6 +47,8 @@ export class OidcClient {
     private readonly config: OidcConfig,
     /** `<public URL>/oidc/callback`. */
     readonly redirectUri: string,
+    /** Where the IdP sends the browser after sign-out. */
+    readonly postLogoutRedirectUri: string,
   ) {}
 
   private discover(): Promise<client.Configuration> {
@@ -124,6 +131,21 @@ export class OidcClient {
       emailVerified: source.email_verified === true,
       ...(name ? { name } : {}),
       ...(preferredUsername ? { preferredUsername } : {}),
+      ...(tokens.id_token ? { idToken: tokens.id_token } : {}),
     };
+  }
+
+  /**
+   * The IdP's RP-initiated logout URL for a sign-in (`id_token_hint` and this
+   * app's post-logout redirect). Null when the IdP advertises no end-session
+   * endpoint. Throws when discovery fails; the caller decides what that means.
+   */
+  async endSessionUrl(idTokenHint: string): Promise<URL | null> {
+    const configuration = await this.discover();
+    if (!configuration.serverMetadata().end_session_endpoint) return null;
+    return client.buildEndSessionUrl(configuration, {
+      id_token_hint: idTokenHint,
+      post_logout_redirect_uri: this.postLogoutRedirectUri,
+    });
   }
 }

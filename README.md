@@ -74,6 +74,7 @@ the email + password form (password sign-in keeps working).
 | `OIDC_BUTTON_LABEL` | Button text. Default `Sign in with single sign-on`. |
 | `OIDC_CREATE_USERS` | `true` = create a ptv-mcp account (no password, no memberships) for an IdP user who has none. Default `false`. Only created from a trusted email (see below). |
 | `OIDC_TRUST_EMAIL` | `true` = link to an existing account by email even when the IdP does not say `email_verified: true`. Default `false`. |
+| `OIDC_POST_LOGOUT_REDIRECT_URI` | Where the IdP returns the browser after sign-out (RP-initiated logout). Default `<MCP public URL>/login`; register it at the IdP. |
 | `AUTH_MODE` | `both` (default with OIDC) = password and SSO. `oidc` = SSO only (see below). `local` = password only; refused while `OIDC_ISSUER` is set. `oidc` and `both` require `OIDC_ISSUER`. |
 | `OIDC_BREAK_GLASS_EMAILS` | Comma-separated emails that keep password sign-in in `oidc` mode. Empty = no break-glass account. |
 

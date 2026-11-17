@@ -136,7 +136,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     webDevUrl: config.webDevUrl ?? 'http://127.0.0.1:5173',
   });
   await app.register(healthRoutes);
-  await app.register(authRoutes, { authService, jwtSecret: config.jwtSecret });
+  const oidcClient = config.oidc
+    ? new OidcClient(
+        config.oidc,
+        `${config.mcpPublicUrl.replace(/\/+$/, '')}/oidc/callback`,
+        config.oidc.postLogoutRedirectUri ?? `${config.mcpPublicUrl.replace(/\/+$/, '')}/login`,
+      )
+    : undefined;
+  await app.register(authRoutes, {
+    authService,
+    jwtSecret: config.jwtSecret,
+    ...(oidcClient
+      ? {
+          endSessionUrl: (idTokenHint: string) =>
+            oidcClient.endSessionUrl(idTokenHint).then((url) => url?.toString() ?? null),
+        }
+      : {}),
+  });
   await app.register(tenantRoutes, { tenantService, jwtSecret: config.jwtSecret, db });
   await app.register(ptvConnectionRoutes, {
     connectionService,
@@ -159,12 +175,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     ...(config.oidc ? { oidcButtonLabel: config.oidc.buttonLabel } : {}),
     ssoOnly: authMode === 'oidc',
   });
-  if (config.oidc) {
+  if (oidcClient && config.oidc) {
     await app.register(oidcRoutes, {
-      oidcClient: new OidcClient(
-        config.oidc,
-        `${config.mcpPublicUrl.replace(/\/+$/, '')}/oidc/callback`,
-      ),
+      oidcClient: oidcClient!,
       oidcService: new OidcService(db, {
         createUsers: config.oidc.createUsers,
         trustEmail: config.oidc.trustEmail,

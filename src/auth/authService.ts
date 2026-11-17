@@ -274,9 +274,12 @@ export class AuthService {
    * The web-UI session `login()` returns, for a user already identified and
    * checked with `assertCanSignIn()` (OIDC web sign-in).
    */
-  async createSession(userId: string): Promise<Session> {
+  async createSession(
+    userId: string,
+    options: { oidcIdTokenHint?: string | null } = {},
+  ): Promise<Session> {
     await this.assertCanSignIn(userId);
-    return this.issueSession(userId);
+    return this.issueSession(userId, undefined, options.oidcIdTokenHint ?? null);
   }
 
   private async recordFailedLogin(userId: string, currentAttempts: number): Promise<void> {
@@ -292,7 +295,11 @@ export class AuthService {
       .where(eq(users.id, userId));
   }
 
-  private async issueSession(userId: string, replacesTokenId?: string): Promise<Session> {
+  private async issueSession(
+    userId: string,
+    replacesTokenId?: string,
+    oidcIdTokenHint: string | null = null,
+  ): Promise<Session> {
     const rawRefreshToken = generateOpaqueToken();
     const [refreshRow] = await this.db
       .insert(refreshTokens)
@@ -300,6 +307,7 @@ export class AuthService {
         userId,
         tokenHash: hashToken(rawRefreshToken),
         expiresAt: new Date(this.now().getTime() + REFRESH_TOKEN_TTL_MS),
+        oidcIdTokenHint,
       })
       .returning();
     if (!refreshRow) {
@@ -339,7 +347,8 @@ export class AuthService {
       throw new InvalidOrExpiredTokenError('refresh');
     }
 
-    return this.issueSession(record.userId, record.id);
+    // The sign-out hint outlives rotation, so a refreshed session still signs out at the IdP.
+    return this.issueSession(record.userId, record.id, record.oidcIdTokenHint);
   }
 
   /**
@@ -348,9 +357,12 @@ export class AuthService {
    * belongs to the authenticated caller, so one user can't revoke another
    * user's session by supplying their refresh-token string.
    */
-  async logout(userId: string, rawRefreshToken: string): Promise<void> {
+  async logout(
+    userId: string,
+    rawRefreshToken: string,
+  ): Promise<{ oidcIdTokenHint: string | null }> {
     const tokenHash = hashToken(rawRefreshToken);
-    await this.db
+    const rows = await this.db
       .update(refreshTokens)
       .set({ revokedAt: this.now() })
       .where(
@@ -359,7 +371,10 @@ export class AuthService {
           eq(refreshTokens.userId, userId),
           isNull(refreshTokens.revokedAt),
         ),
-      );
+      )
+      .returning({ oidcIdTokenHint: refreshTokens.oidcIdTokenHint });
+    // Only a session that was revoked just now yields its IdP hint: a stale or foreign token yields none.
+    return { oidcIdTokenHint: rows[0]?.oidcIdTokenHint ?? null };
   }
 
   private async revokeAllRefreshTokens(userId: string): Promise<void> {

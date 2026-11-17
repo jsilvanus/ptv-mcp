@@ -8,6 +8,11 @@ import {
 import { createAuthenticate } from '../auth/rbac.js';
 
 export interface AuthRoutesOptions {
+  /**
+   * Builds the IdP's sign-out URL for an OIDC session's ID token. Present only
+   * with OIDC configured. Null or a throw means: sign out locally only.
+   */
+  endSessionUrl?: (idTokenHint: string) => Promise<string | null>;
   authService: AuthService;
   jwtSecret: string;
 }
@@ -99,7 +104,18 @@ export async function authRoutes(app: FastifyInstance, options: AuthRoutesOption
     '/auth/logout',
     { preHandler: authenticate },
     async (request, reply) => {
-      await authService.logout(request.userId!, request.body.refreshToken);
+      const { oidcIdTokenHint } = await authService.logout(
+        request.userId!,
+        request.body.refreshToken,
+      );
+      const endSessionUrl =
+        oidcIdTokenHint && options.endSessionUrl
+          ? await options.endSessionUrl(oidcIdTokenHint).catch((err: unknown) => {
+              request.log.warn({ err }, 'OIDC end-session URL unavailable; signed out locally');
+              return null;
+            })
+          : null;
+      if (endSessionUrl) return reply.code(200).send({ endSessionUrl });
       return reply.code(204).send();
     },
   );
