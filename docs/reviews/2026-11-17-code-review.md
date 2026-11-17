@@ -2,7 +2,7 @@
 
 Date: 2026-11-17. Reviewed commit: `8ae24a8` (`main`).
 
-> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 6 to 15 (medium) are open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
+> **Status (2026-11-17):** findings 1 to 5 (high) were fixed in PR #79. Findings 7, 11, 12, 13 and 15 (medium) were fixed afterwards, and 6 partly (service, channel and connection writes fall back to the public read only on 404). Findings 6 (rest), 8, 9, 10 and 14 are open and tracked in [`TODO.md`](../../TODO.md). The text below is the review as written; the "Fix plans" section describes what PR #79 implemented.
 
 ## Summary
 
@@ -19,16 +19,16 @@ Checks run: `npm run typecheck` and `npm run lint` are clean, and all 455 unit t
 | 3 | High | Web UI "Approve + apply" always fails and burns the proposal | From code | Fixed in PR #79 |
 | 4 | High | Email is used as identity but never verified | From code | Fixed in PR #79 |
 | 5 | High | Anyone can overwrite a registered OAuth client | From code | Fixed in PR #79 |
-| 6 | Medium | v11 writes can be built on a stale published version | From code | Open (TODO.md) |
-| 7 | Medium | v11 client retries POST and has no timeouts | From code | Open (TODO.md) |
+| 6 | Medium | v11 writes can be built on a stale published version | From code | Partly fixed (TODO.md) |
+| 7 | Medium | v11 client retries POST and has no timeouts | From code | Fixed |
 | 8 | Medium | Kept connections are resent in read shape | From code and docs | Open (TODO.md) |
 | 9 | Medium | Service and connection writes are not atomic | From code | Open (TODO.md) |
 | 10 | Medium | OAuth grant scope (tenant, environment) is not enforced everywhere | From code | Open (TODO.md) |
-| 11 | Medium | OAuth server hardening gaps | From code | Open (TODO.md) |
-| 12 | Medium | No rate limits or input validation on auth routes | From code | Open (TODO.md) |
-| 13 | Medium | Row-level security depends on which database role the app uses | Needs checking on staging | Open (TODO.md) |
+| 11 | Medium | OAuth server hardening gaps | From code | Fixed |
+| 12 | Medium | No rate limits or input validation on auth routes | From code | Fixed |
+| 13 | Medium | Row-level security depends on which database role the app uses | Needs checking on staging | Fixed |
 | 14 | Medium | Tenant governance gaps | From code | Open (TODO.md) |
-| 15 | Medium | Dependency advisories | `npm audit` | Open (TODO.md) |
+| 15 | Medium | Dependency advisories | `npm audit` | Fixed |
 
 ## High severity
 
