@@ -1,10 +1,12 @@
-import { access, stat } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
 
 export interface WebUiRoutesOptions {
   nodeEnv: 'development' | 'test' | 'production';
+  /** Public path prefix, empty for a root installation. Traefik strips it before forwarding. */
+  domainPath?: string;
 }
 
 const API_PREFIXES = ['auth', 'tenants', 'ptv-connections', 'health', 'mcp', 'oidc'];
@@ -41,21 +43,29 @@ export async function webUiRoutes(
     return;
   }
 
+  const indexTemplate = await readFile(resolve(webDistRoot, 'index.html'), 'utf8');
+  const baseHref = options.domainPath ? `${options.domainPath}/` : '/';
+  const sendIndex = (_request: unknown, reply: {
+    type: (value: string) => { header: (name: string, value: string) => { send: (body: string) => unknown } };
+  }) =>
+    reply
+      .type('text/html; charset=utf-8')
+      .header('cache-control', 'no-cache')
+      .send(indexTemplate.replace(/<base data-app-base href="[^"]*"\\s*\\/?\s*>/, `<base data-app-base href="${baseHref}" />`));
+
   await app.register(fastifyStatic, {
     root: webDistRoot,
     wildcard: false,
     index: false,
   });
 
-  app.get('/', async (_request, reply) =>
-    reply.type('text/html; charset=utf-8').sendFile('index.html'),
-  );
+  app.get('/', sendIndex);
 
   app.get('/*', async (request, reply) => {
     const wildcard = (request.params as { '*': string | undefined })['*'] ?? '';
     const path = wildcard.replace(/^\/+/, '');
     if (path === '') {
-      return reply.type('text/html; charset=utf-8').sendFile('index.html');
+      return sendIndex(request, reply);
     }
 
     if (API_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
@@ -66,6 +76,6 @@ export async function webUiRoutes(
       return reply.sendFile(path);
     }
 
-    return reply.type('text/html; charset=utf-8').sendFile('index.html');
+    return sendIndex(request, reply);
   });
 }
