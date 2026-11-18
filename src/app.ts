@@ -49,10 +49,11 @@ export interface BuildAppOptions {
     | 'ptvV11OAuthClientSecret'
     | 'ptvV11OAuthRedirectUri'
     | 'mcpPublicUrl'
-    | 'domainPath'
     | 'webDevUrl'
     | 'oidc'
   > & {
+    /** Optional public URL path prefix; defaults to the root installation. */
+    domainPath?: string;
     /** Optional so existing callers that build the app without it keep compiling; defaults to false. */
     requireVerifiedEmail?: boolean;
     /** Optional, as `requireVerifiedEmail`: defaults to `both` with OIDC configured, else `local`. */
