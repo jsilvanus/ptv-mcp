@@ -7,7 +7,7 @@
 # Deploy flow: copy deploy/docker-compose.yml to DEPLOY_PATH, provision the app's
 # role and database on the shared Postgres (riksunsrk/infra), write a chmod 600 .env,
 # pull, `up -d` (the one-shot `migrate` service runs first), then wait for the
-# container healthcheck and verify https://<DOMAIN>/health.
+# container healthcheck and verify https://<DOMAIN><DOMAIN_PATH>/health.
 #
 # Required GitHub Environment `production` secrets:
 #   SSH_PRIVATE_KEY, GHCR_TOKEN (read:packages), DB_PASSWORD (app DB role password),
@@ -18,7 +18,7 @@
 # Required `production` variables: VM_HOST, VM_USER, DEPLOY_PATH (app directory on
 # the VPS), DEPLOY_DB_PATH (riksunsrk/infra database directory), APP_NAME (use
 # ptv_mcp, which gives role ptv_mcp_user and database ptv_mcp_db; no hyphen), DOMAIN
-# Optional `production` variables: VM_SSH_PORT (default 22), GHCR_USER (default the
+# Optional `production` variables: DOMAIN_PATH (default `/`, or e.g. `/ptv-mcp`), VM_SSH_PORT (default 22), GHCR_USER (default the
 # triggering actor; must own GHCR_TOKEN), LOG_LEVEL, REQUIRE_VERIFIED_EMAIL,
 # PTV_V11_OAUTH_CLIENT_ID, PTV_V11_OAUTH_REDIRECT_URI, AUTH_MODE, OIDC_ISSUER,
 # OIDC_CLIENT_ID, OIDC_SCOPES, OIDC_BUTTON_LABEL, OIDC_CREATE_USERS, OIDC_TRUST_EMAIL,
@@ -167,6 +167,7 @@ jobs:
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
           APP_NAME: ${{ vars.APP_NAME }}
           DOMAIN: ${{ vars.DOMAIN }}
+          DOMAIN_PATH: ${{ vars.DOMAIN_PATH }}
           GHCR_USER: ${{ vars.GHCR_USER || github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           MASTER_ENCRYPTION_KEY: ${{ secrets.MASTER_ENCRYPTION_KEY }}
@@ -194,10 +195,27 @@ jobs:
           username: ${{ vars.VM_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ vars.VM_SSH_PORT || 22 }}
-          envs: DEPLOY_PATH,APP_NAME,DOMAIN,GHCR_USER,GHCR_TOKEN,IMAGE_TAG,DB_PASSWORD_URLENC,MASTER_ENCRYPTION_KEY,JWT_SECRET,LOG_LEVEL,REQUIRE_VERIFIED_EMAIL,PTV_V11_OAUTH_CLIENT_ID,PTV_V11_OAUTH_CLIENT_SECRET,PTV_V11_OAUTH_REDIRECT_URI,AUTH_MODE,OIDC_ISSUER,OIDC_CLIENT_ID,OIDC_CLIENT_SECRET,OIDC_SCOPES,OIDC_BUTTON_LABEL,OIDC_CREATE_USERS,OIDC_TRUST_EMAIL,OIDC_POST_LOGOUT_REDIRECT_URI,OIDC_BREAK_GLASS_EMAILS,OIDC_GROUP_SYNC,OIDC_GROUPS_CLAIM,OIDC_GROUP_PREFIX
+          envs: DEPLOY_PATH,APP_NAME,DOMAIN,DOMAIN_PATH,GHCR_USER,GHCR_TOKEN,IMAGE_TAG,DB_PASSWORD_URLENC,MASTER_ENCRYPTION_KEY,JWT_SECRET,LOG_LEVEL,REQUIRE_VERIFIED_EMAIL,PTV_V11_OAUTH_CLIENT_ID,PTV_V11_OAUTH_CLIENT_SECRET,PTV_V11_OAUTH_REDIRECT_URI,AUTH_MODE,OIDC_ISSUER,OIDC_CLIENT_ID,OIDC_CLIENT_SECRET,OIDC_SCOPES,OIDC_BUTTON_LABEL,OIDC_CREATE_USERS,OIDC_TRUST_EMAIL,OIDC_POST_LOGOUT_REDIRECT_URI,OIDC_BREAK_GLASS_EMAILS,OIDC_GROUP_SYNC,OIDC_GROUPS_CLAIM,OIDC_GROUP_PREFIX
           script: |
             set -eu
             cd "$DEPLOY_PATH"
+
+            # Empty and "/" mean root. Normalize and reject unsafe path fragments.
+            DOMAIN_PATH="$(DOMAIN_PATH="${DOMAIN_PATH:-/}" node -e '
+              const raw = process.env.DOMAIN_PATH;
+              if (raw === "/") { process.stdout.write("/"); process.exit(0); }
+              if (!raw.startsWith("/") || raw.startsWith("//") || /[?#\\\\\\s]/.test(raw) ||
+                  raw.includes("//") || /%2f|%5c/i.test(raw)) {
+                throw new Error("DOMAIN_PATH must be / or a safe absolute path such as /ptv-mcp");
+              }
+              const path = raw.replace(/\\/+$/, "");
+              if (path.split("/").some((part) => !part || part === "." || part === "..")) {
+                throw new Error("DOMAIN_PATH contains an empty, dot or dot-dot segment");
+              }
+              process.stdout.write(path);
+            ')"
+            PUBLIC_PATH=""
+            [ "$DOMAIN_PATH" = "/" ] || PUBLIC_PATH="$DOMAIN_PATH"
 
             # Single-quoted KEY='value' lines: compose reads them literally (no $ expansion).
             # A value containing a single quote would break that, so refuse it.
@@ -212,7 +230,8 @@ jobs:
               w DATABASE_URL "postgres://${APP_NAME}_user:${DB_PASSWORD_URLENC}@pg.shared.local:5432/${APP_NAME}_db"
               w IMAGE_TAG "$IMAGE_TAG"
               w DOMAIN "$DOMAIN"
-              w MCP_PUBLIC_URL "https://$DOMAIN"
+              w DOMAIN_PATH "$DOMAIN_PATH"
+              w MCP_PUBLIC_URL "https://$DOMAIN$PUBLIC_PATH"
               w NODE_ENV production
               w HOST 0.0.0.0
               w PORT 3000
@@ -282,14 +301,19 @@ jobs:
       - name: Verify public endpoint through Traefik
         env:
           DOMAIN: ${{ vars.DOMAIN }}
+          DOMAIN_PATH: ${{ vars.DOMAIN_PATH }}
         run: |
+          DOMAIN_PATH="${DOMAIN_PATH:-/}"
+          PUBLIC_PATH=""
+          [ "$DOMAIN_PATH" = "/" ] || PUBLIC_PATH="${DOMAIN_PATH%/}"
+          HEALTH_URL="https://${DOMAIN}${PUBLIC_PATH}/health"
           for i in $(seq 1 12); do
-            if curl -fsS --max-time 10 "https://${DOMAIN}/health"; then
+            if curl -fsS --max-time 10 "$HEALTH_URL"; then
               echo
               exit 0
             fi
-            echo "attempt $i: https://${DOMAIN}/health not ready yet"
+            echo "attempt $i: $HEALTH_URL not ready yet"
             sleep 5
           done
-          echo "https://${DOMAIN}/health did not respond with 2xx" >&2
+          echo "$HEALTH_URL did not respond with 2xx" >&2
           exit 1
