@@ -440,7 +440,9 @@ export async function mcpOAuthRoutes(
         request.body.password,
       );
 
-      return reply.type('text/html').send(await connectionSelectionPage(options, userId, q, options.publicUrl));
+      return reply
+        .type('text/html')
+        .send(await connectionSelectionPage(options, userId, q, options.publicUrl));
     } catch (err) {
       request.log.error({ err }, 'OAuth authorization failed');
       return reply
