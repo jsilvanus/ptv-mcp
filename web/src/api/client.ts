@@ -1,3 +1,5 @@
+import { appPath } from './basePath';
+
 const ACCESS_TOKEN_KEY = 'ptv_mcp_access_token';
 const REFRESH_TOKEN_KEY = 'ptv_mcp_refresh_token';
 
@@ -84,7 +86,7 @@ async function doRefreshAccessToken(): Promise<void> {
   if (!refreshToken) {
     throw new ApiError(401, 'Not logged in');
   }
-  const res = await fetch('/auth/refresh', {
+  const res = await fetch(appPath('/auth/refresh'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
@@ -121,7 +123,7 @@ async function authedFetch(
     headers.set('authorization', `Bearer ${token}`);
   }
 
-  const res = await fetch(path, { ...options, headers });
+  const res = await fetch(appPath(path), { ...options, headers });
 
   if (res.status === 401 && allowRefresh && getRefreshToken()) {
     await refreshAccessToken();
