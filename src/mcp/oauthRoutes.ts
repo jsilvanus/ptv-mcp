@@ -116,6 +116,12 @@ export function decodeAuthorizationRequest(encoded: string): Record<string, stri
   }
 }
 
+/** Join an application-local path to the public URL, preserving a deployment prefix. */
+export function publicPath(publicUrl: string, path: string): string {
+  const basePath = new URL(publicUrl).pathname.replace(/\/+$/, '');
+  return `${basePath}${path.startsWith('/') ? path : `/${path}`}` || '/';
+}
+
 export interface ConnectionSelectionDeps {
   oauthService: OAuthService;
   tenantService: TenantService;
@@ -131,6 +137,7 @@ export async function connectionSelectionPage(
   deps: ConnectionSelectionDeps,
   userId: string,
   q: Record<string, string>,
+  publicUrl = 'http://localhost',
 ): Promise<string> {
   const clientId = q.client_id;
   const redirectUri = q.redirect_uri;
@@ -165,7 +172,7 @@ export async function connectionSelectionPage(
         <h1>Choose PTV connection</h1>
         ${clientNotice(client.name, clientId, redirectUri)}
         <p>Select the organisation, environment, and independently which API version handles reads and writes. You can select NONE for writes.</p>
-        <form method="post" action="/oauth/authorize">
+        <form method="post" action="${escapeHtml(publicPath(publicUrl, '/oauth/authorize'))}">
           <input type="hidden" name="selection_token" value="${escapeHtml(selectionToken)}">
           <label>Organisation</label>
           <select name="tenant_id" id="tenant_id">${tenantOptions}</select>
@@ -280,14 +287,14 @@ export async function mcpOAuthRoutes(
 
       const oauth = encodeAuthorizationRequest(q);
       const sso = options.oidcButtonLabel
-        ? `<p><a class="sso" href="/oidc/login?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p>`
+        ? `<p><a class="sso" href="${escapeHtml(publicPath(options.publicUrl, '/oidc/login'))}?oauth=${oauth}">${escapeHtml(options.oidcButtonLabel)}</a></p>`
         : '';
       const passwordIntro =
         options.oidcButtonLabel && !options.ssoOnly
           ? '<p>or sign in with your ptv-mcp password:</p>'
           : '';
       const passwordForm = `
-      <form method="post" action="/oauth/authorize">
+      <form method="post" action="${escapeHtml(publicPath(options.publicUrl, '/oauth/authorize'))}">
         <input type="hidden" name="oauth" value="${oauth}">
         <label>Email</label><input name="email" type="email" autocomplete="username" required>
         <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
@@ -433,7 +440,7 @@ export async function mcpOAuthRoutes(
         request.body.password,
       );
 
-      return reply.type('text/html').send(await connectionSelectionPage(options, userId, q));
+      return reply.type('text/html').send(await connectionSelectionPage(options, userId, q, options.publicUrl));
     } catch (err) {
       request.log.error({ err }, 'OAuth authorization failed');
       return reply
