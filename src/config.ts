@@ -110,9 +110,7 @@ export function normalizeDomainPath(value: string | undefined): string {
     normalized = normalized.slice(0, -1);
   }
   if (
-    normalized
-      .split('/')
-      .some((segment) => segment === '' || segment === '.' || segment === '..')
+    normalized.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
   ) {
     throw new Error('Invalid DOMAIN_PATH: empty, dot and dot-dot path segments are not allowed');
   }
