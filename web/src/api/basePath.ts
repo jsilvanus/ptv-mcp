@@ -10,11 +10,13 @@ function basePath(): string {
 
 /** Build an application-local URL that respects the runtime deployment prefix. */
 export function appPath(path: string): string {
-  if (/^https?:\\/\\//i.test(path)) return path;
-  return `${basePath()}${path.replace(/^\\/+/, '')}`;
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  const relativePath = path.startsWith('/') ? path.slice(1) : path;
+  return `${basePath()}${relativePath}`;
 }
 
 /** React Router expects a basename without a trailing slash (except for root). */
 export function routerBasename(): string {
-  return basePath().replace(/\\/+$/, '') || '/';
+  const path = basePath();
+  return path === '/' ? '/' : path.slice(0, -1);
 }
