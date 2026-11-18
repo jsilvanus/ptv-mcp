@@ -204,11 +204,12 @@ jobs:
             DOMAIN_PATH="$(DOMAIN_PATH="${DOMAIN_PATH:-/}" node -e '
               const raw = process.env.DOMAIN_PATH;
               if (raw === "/") { process.stdout.write("/"); process.exit(0); }
-              if (!raw.startsWith("/") || raw.startsWith("//") || /[?#\\\\\\s]/.test(raw) ||
-                  raw.includes("//") || /%2f|%5c/i.test(raw)) {
+              if (!raw.startsWith("/") || raw.startsWith("//") || /[?#\\s]/.test(raw) ||
+                  raw.includes("\\\\") || raw.includes("//") || /%2f|%5c/i.test(raw)) {
                 throw new Error("DOMAIN_PATH must be / or a safe absolute path such as /ptv-mcp");
               }
-              const path = raw.replace(/\\/+$/, "");
+              let path = raw;
+              while (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
               if (path.split("/").some((part) => !part || part === "." || part === "..")) {
                 throw new Error("DOMAIN_PATH contains an empty, dot or dot-dot segment");
               }
