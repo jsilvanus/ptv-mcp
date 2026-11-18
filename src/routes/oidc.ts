@@ -103,7 +103,8 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
     return payload;
   });
 
-  const cookiePath = `${new URL(options.publicUrl).pathname.replace(/\/+$/, '')}/oidc` || '/oidc';
+  const cookiePath = `${new URL(options.publicUrl).pathname.replace(/\/+$/, '')}/oidc` ||
+    '/oidc';
   const cookie = (value: string, maxAge: number) =>
     `${OIDC_STATE_COOKIE}=${value}; Path=${cookiePath}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +
     (options.secureCookies ? '; Secure' : '');
@@ -265,7 +266,9 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
 
       if (state.purpose === 'web') {
         const code = await options.oidcService.createWebHandoff(userId, idToken);
-        return reply.redirect(`${publicPath(options.publicUrl, '/login')}#oidc=${encodeURIComponent(code)}`);
+        return reply.redirect(
+          `${publicPath(options.publicUrl, '/login')}#oidc=${encodeURIComponent(code)}`,
+        );
       }
 
       // purpose 'oauth': continue exactly where a password sign-in on
