@@ -62,7 +62,7 @@ export function registerSpaNavigation(app: FastifyInstance, options: SpaNavigati
     }
     const baseHref = options.domainPath ? `${options.domainPath}/` : '/';
     const page = html.replace(
-      /<base data-app-base href="[^"]*"\\s*\\/?\s*>/,
+      /<base data-app-base[^>]*>/,
       `<base data-app-base href="${baseHref}" />`,
     );
     return reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').send(page);
