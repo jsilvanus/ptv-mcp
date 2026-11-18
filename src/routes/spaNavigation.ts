@@ -23,6 +23,8 @@ export interface SpaNavigationOptions {
   nodeEnv: 'development' | 'test' | 'production';
   /** Development: the Vite dev server whose index.html to serve. */
   webDevUrl: string;
+  /** Public path prefix, empty for a root installation. */
+  domainPath?: string;
 }
 
 /**
@@ -58,6 +60,11 @@ export function registerSpaNavigation(app: FastifyInstance, options: SpaNavigati
       request.log.warn({ err }, 'web UI index not available for page load');
       return;
     }
-    return reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').send(html);
+    const baseHref = options.domainPath ? `${options.domainPath}/` : '/';
+    const page = html.replace(
+      /<base data-app-base[^>]*>/,
+      `<base data-app-base href="${baseHref}" />`,
+    );
+    return reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache').send(page);
   });
 }

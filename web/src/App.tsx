@@ -1,4 +1,5 @@
 import { Navigate, Route, BrowserRouter, Routes } from 'react-router-dom';
+import { routerBasename } from './api/basePath';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import { TenantProvider, useTenants } from './tenants/TenantContext';
 import { Layout } from './components/Layout';
@@ -35,7 +36,7 @@ function CurrentTenantRedirect({ suffix }: { suffix: string }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename()}>
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

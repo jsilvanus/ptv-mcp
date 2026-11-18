@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { ApiError } from '../api/client';
+import { appPath } from '../api/basePath';
 
 interface OidcConfigState {
   /** The single sign-on button's label, or null when OIDC is off (`/oidc/config` is then a 404). */
@@ -14,7 +15,7 @@ function useOidcConfig(): OidcConfigState {
   const [config, setConfig] = useState<OidcConfigState>({ buttonLabel: null, ssoOnly: false });
   useEffect(() => {
     let cancelled = false;
-    fetch('/oidc/config')
+    fetch(appPath('/oidc/config'))
       .then(async (res) =>
         res.ok ? ((await res.json()) as { buttonLabel?: unknown; ssoOnly?: unknown }) : null,
       )
@@ -127,7 +128,7 @@ export function LoginPage() {
       <h1>Log in</h1>
       {oidcButtonLabel && (
         <p>
-          <a className="button primary" href="/oidc/login">
+          <a className="button primary" href={appPath('/oidc/login')}>
             {oidcButtonLabel}
           </a>
         </p>

@@ -52,6 +52,8 @@ export interface BuildAppOptions {
     | 'webDevUrl'
     | 'oidc'
   > & {
+    /** Optional public URL path prefix; defaults to the root installation. */
+    domainPath?: string;
     /** Optional so existing callers that build the app without it keep compiling; defaults to false. */
     requireVerifiedEmail?: boolean;
     /** Optional, as `requireVerifiedEmail`: defaults to `both` with OIDC configured, else `local`. */
@@ -137,6 +139,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerSpaNavigation(app, {
     nodeEnv: config.nodeEnv,
     webDevUrl: config.webDevUrl ?? 'http://127.0.0.1:5173',
+    domainPath: config.domainPath ?? '',
   });
   await app.register(healthRoutes);
   const oidcClient = config.oidc
@@ -239,7 +242,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     db,
     jwtSecret: config.jwtSecret,
   });
-  await app.register(webUiRoutes, { nodeEnv: config.nodeEnv });
+  await app.register(webUiRoutes, {
+    nodeEnv: config.nodeEnv,
+    domainPath: config.domainPath ?? '',
+  });
 
   return app;
 }
