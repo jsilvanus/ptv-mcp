@@ -1,11 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig, loadOidcConfig } from './config.js';
+import { loadConfig, loadOidcConfig, normalizeDomainPath } from './config.js';
 
 const base = {
   DATABASE_URL: 'postgres://localhost/test',
   MASTER_ENCRYPTION_KEY: 'key',
   JWT_SECRET: Buffer.alloc(32, 7).toString('base64'),
 };
+
+describe('DOMAIN_PATH config', () => {
+  it('defaults to root for an unset, empty or slash value', () => {
+    expect(loadConfig({ ...base }).domainPath).toBe('');
+    expect(loadConfig({ ...base, DOMAIN_PATH: '' }).domainPath).toBe('');
+    expect(loadConfig({ ...base, DOMAIN_PATH: '/' }).domainPath).toBe('');
+  });
+
+  it('normalizes a non-root prefix and a trailing slash', () => {
+    expect(normalizeDomainPath('/ptv-mcp')).toBe('/ptv-mcp');
+    expect(normalizeDomainPath('/ptv-mcp/')).toBe('/ptv-mcp');
+    expect(loadConfig({ ...base, DOMAIN_PATH: '/ptv-mcp' }).domainPath).toBe('/ptv-mcp');
+  });
+
+  it.each(['ptv-mcp', '//ptv-mcp', '/ptv//mcp', '/ptv/../mcp', '/ptv?x=1', '/ptv#m', '/ptv\\mcp'])(
+    'rejects unsafe path %s',
+    (value) => {
+      expect(() => normalizeDomainPath(value)).toThrow('Invalid DOMAIN_PATH');
+    },
+  );
+});
 
 describe('JWT_SECRET config', () => {
   it('refuses a secret that decodes to under 32 bytes', () => {
