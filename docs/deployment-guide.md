@@ -84,7 +84,7 @@ docker compose -f docker-compose.production.yml up -d
 - `GET /health` returns 200
 - Login works in web UI
 - Tenant-scoped API calls work with expected RBAC
-- MCP tools are reachable on `/mcp`
+- MCP tools are reachable on `/mcp` (or `${DOMAIN_PATH}/mcp` when installed under a path prefix).
 
 ## 6) Staged `PtvV11Adapter` write rollout
 
