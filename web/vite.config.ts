@@ -21,6 +21,9 @@ const spaOrApi: ProxyOptions = {
 // without CORS during `vite dev`; in dev a reverse proxy can send everything to Vite. Production
 // serves this build from Fastify (`src/routes/webUi.ts`) out of `web/dist`.
 export default defineConfig({
+  // Relative build assets are resolved against the runtime-injected <base> element,
+  // allowing one image to be deployed at / or under DOMAIN_PATH.
+  base: './',
   plugins: [react()],
   server: {
     host: '127.0.0.1',
