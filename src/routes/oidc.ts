@@ -103,8 +103,8 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
     return payload;
   });
 
-  const cookiePath = `${new URL(options.publicUrl).pathname.replace(/\/+$/, '')}/oidc` ||
-    '/oidc';
+  const publicBasePath = new URL(options.publicUrl).pathname.replace(/\/+$/, '');
+  const cookiePath = `${publicBasePath}/oidc`;
   const cookie = (value: string, maxAge: number) =>
     `${OIDC_STATE_COOKIE}=${value}; Path=${cookiePath}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +
     (options.secureCookies ? '; Secure' : '');
