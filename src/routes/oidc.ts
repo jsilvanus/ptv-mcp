@@ -13,6 +13,7 @@ import {
   escapeHtml,
   html,
   setFrameProtection,
+  publicPath,
 } from '../mcp/oauthRoutes.js';
 import type { OidcClient } from '../oidc/oidcClient.js';
 import {
@@ -71,13 +72,13 @@ function errorSummary(err: unknown): Record<string, unknown> {
 }
 
 /** Where an error page links back to: the MCP sign-in page for a pending authorization, else the web UI login. */
-function backLink(oauthRequest: string | null | undefined): string {
+function backLink(oauthRequest: string | null | undefined, publicUrl: string): string {
   const q = oauthRequest ? decodeAuthorizationRequest(oauthRequest) : null;
   if (q?.client_id) {
     const params = new URLSearchParams({ response_type: 'code', ...q });
-    return `/oauth/authorize?${params.toString()}`;
+    return publicPath(publicUrl, `/oauth/authorize?${params.toString()}`);
   }
-  return '/login';
+  return publicPath(publicUrl, '/login');
 }
 
 /**
@@ -102,8 +103,9 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
     return payload;
   });
 
+  const cookiePath = `${new URL(options.publicUrl).pathname.replace(/\/+$/, '')}/oidc` || '/oidc';
   const cookie = (value: string, maxAge: number) =>
-    `${OIDC_STATE_COOKIE}=${value}; Path=/oidc; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +
+    `${OIDC_STATE_COOKIE}=${value}; Path=${cookiePath}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}` +
     (options.secureCookies ? '; Secure' : '');
 
   function errorPage(
@@ -117,7 +119,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
       .type('text/html')
       .send(
         html(
-          `<h1>Sign-in failed</h1><p class="error">${escapeHtml(message)}</p><p><a href="${escapeHtml(backLink(oauthRequest))}">Back to sign-in</a></p>`,
+          `<h1>Sign-in failed</h1><p class="error">${escapeHtml(message)}</p><p><a href="${escapeHtml(backLink(oauthRequest, options.publicUrl))}">Back to sign-in</a></p>`,
         ),
       );
   }
@@ -263,7 +265,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
 
       if (state.purpose === 'web') {
         const code = await options.oidcService.createWebHandoff(userId, idToken);
-        return reply.redirect(`/login#oidc=${encodeURIComponent(code)}`);
+        return reply.redirect(`${publicPath(options.publicUrl, '/login')}#oidc=${encodeURIComponent(code)}`);
       }
 
       // purpose 'oauth': continue exactly where a password sign-in on
@@ -277,7 +279,7 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
         request.log.warn({ reason: invalid }, 'OIDC sign-in: pending authorization is invalid');
         return errorPage(reply, 400, 'The authorization request is no longer valid.');
       }
-      return reply.type('text/html').send(await connectionSelectionPage(options, userId, pending));
+      return reply.type('text/html').send(await connectionSelectionPage(options, userId, pending, options.publicUrl));
     },
   );
 
