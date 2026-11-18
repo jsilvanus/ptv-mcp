@@ -1,7 +1,7 @@
 import { access, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export interface WebUiRoutesOptions {
   nodeEnv: 'development' | 'test' | 'production';
@@ -45,13 +45,16 @@ export async function webUiRoutes(
 
   const indexTemplate = await readFile(resolve(webDistRoot, 'index.html'), 'utf8');
   const baseHref = options.domainPath ? `${options.domainPath}/` : '/';
-  const sendIndex = (_request: unknown, reply: {
-    type: (value: string) => { header: (name: string, value: string) => { send: (body: string) => unknown } };
-  }) =>
+  const sendIndex = (_request: FastifyRequest, reply: FastifyReply) =>
     reply
       .type('text/html; charset=utf-8')
       .header('cache-control', 'no-cache')
-      .send(indexTemplate.replace(/<base data-app-base href="[^"]*"\\s*\\/?\s*>/, `<base data-app-base href="${baseHref}" />`));
+      .send(
+        indexTemplate.replace(
+          /<base data-app-base[^>]*>/,
+          `<base data-app-base href="${baseHref}" />`,
+        ),
+      );
 
   await app.register(fastifyStatic, {
     root: webDistRoot,
