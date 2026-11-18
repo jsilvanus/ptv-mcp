@@ -33,6 +33,7 @@ docker build -t ghcr.io/<owner>/<repo>:<tag> .
   - `PTV_V11_OAUTH_CLIENT_ID`
   - `PTV_V11_OAUTH_CLIENT_SECRET`
   - `PTV_V11_OAUTH_REDIRECT_URI`
+- `DOMAIN_PATH`: optional public path prefix. Unset or `/` installs at the domain root; `/ptv-mcp` installs under that path. Traefik strips the prefix before forwarding, while the UI, OAuth and MCP public URLs retain it.
 - `MCP_PUBLIC_URL`: the public URL (MCP OAuth issuer, and the base of the
   OIDC redirect URI `<MCP_PUBLIC_URL>/oidc/callback`)
 - `ALLOW_TENANT_CREATION`: default `true`, so any signed-in account can create
@@ -111,7 +112,7 @@ the image and `deploy/docker-compose.yml`.
 
 The deploy job copies `deploy/docker-compose.yml` to `DEPLOY_PATH`, provisions the app's
 role and database, writes a `chmod 600` `.env`, pulls, runs `docker compose up -d`, waits
-for the container healthcheck, and checks `https://<DOMAIN>/health`.
+for the container healthcheck, and checks `https://<DOMAIN><DOMAIN_PATH>/health` (`DOMAIN_PATH` is omitted for root installs).
 
 ### Migrations
 
@@ -133,14 +134,14 @@ Secrets (required unless noted):
 Variables:
 
 - required: `VM_HOST`, `VM_USER`, `DEPLOY_PATH` (app directory on the VPS),
-  `DEPLOY_DB_PATH` (the `riksunsrk/infra` database directory), `APP_NAME` (e.g. `ptv-mcp`,
-  which gives role `ptv-mcp_user` and database `ptv-mcp_db`), `DOMAIN`
-- optional: `VM_SSH_PORT` (default 22), `GHCR_USER` (default: the triggering actor; must
+  `DEPLOY_DB_PATH` (the `riksunsrk/infra` database directory), `APP_NAME` (e.g. `ptv_mcp`,
+  which gives role `ptv_mcp_user` and database `ptv_mcp_db`), `DOMAIN`
+- optional: `DOMAIN_PATH` (default `/`; e.g. `/ptv-mcp`), `VM_SSH_PORT` (default 22), `GHCR_USER` (default: the triggering actor; must
   own `GHCR_TOKEN`), `LOG_LEVEL`, and the optional auth variables (`AUTH_MODE`,
   `OIDC_*`, `REQUIRE_VERIFIED_EMAIL`, `PTV_V11_OAUTH_CLIENT_ID`,
   `PTV_V11_OAUTH_REDIRECT_URI`); see the workflow header for the full list
 
-`MCP_PUBLIC_URL` is set to `https://<DOMAIN>` automatically. `NODE_ENV=production`,
+`MCP_PUBLIC_URL` is set to `https://<DOMAIN><DOMAIN_PATH>` automatically, omitting the path when `DOMAIN_PATH` is `/` or unset. `NODE_ENV=production`,
 `HOST=0.0.0.0`, and `PORT=3000` are fixed in the `.env`.
 
 ### First-time cluster step: the `ptv_mcp_app` role
