@@ -282,7 +282,9 @@ export async function oidcRoutes(app: FastifyInstance, options: OidcRoutesOption
         request.log.warn({ reason: invalid }, 'OIDC sign-in: pending authorization is invalid');
         return errorPage(reply, 400, 'The authorization request is no longer valid.');
       }
-      return reply.type('text/html').send(await connectionSelectionPage(options, userId, pending, options.publicUrl));
+      return reply
+        .type('text/html')
+        .send(await connectionSelectionPage(options, userId, pending, options.publicUrl));
     },
   );
 
