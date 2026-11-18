@@ -16,6 +16,7 @@ x-app-env: &app-env
   MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:?set MASTER_ENCRYPTION_KEY}
   JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
   MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?set MCP_PUBLIC_URL (https://<domain>)}
+  DOMAIN_PATH: ${DOMAIN_PATH:-/}
   ALLOW_PRIVILEGED_DB_ROLE: ${ALLOW_PRIVILEGED_DB_ROLE:-}
   # Production default: tenants are created by an operator (see docs/deployment-guide.md).
   ALLOW_TENANT_CREATION: ${ALLOW_TENANT_CREATION:-false}
@@ -65,7 +66,9 @@ services:
     labels:
       traefik.enable: 'true'
       traefik.docker.network: traefik-public
-      traefik.http.routers.ptv-mcp.rule: Host(`${DOMAIN:?set DOMAIN}`)
+      traefik.http.routers.ptv-mcp.rule: Host(`${DOMAIN:?set DOMAIN}`) && PathPrefix(`${DOMAIN_PATH:-/}`)
+      traefik.http.routers.ptv-mcp.middlewares: ptv-mcp-strip
+      traefik.http.middlewares.ptv-mcp-strip.stripprefix.prefixes: ${DOMAIN_PATH:-/}
       traefik.http.routers.ptv-mcp.entrypoints: websecure
       traefik.http.routers.ptv-mcp.tls.certresolver: letsencrypt
       traefik.http.services.ptv-mcp.loadbalancer.server.port: '3000'
