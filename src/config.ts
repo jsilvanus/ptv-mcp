@@ -26,6 +26,8 @@ export interface AppConfig {
   ptvV11OAuthClientSecret: string;
   ptvV11OAuthRedirectUri: string;
   mcpPublicUrl: string;
+  /** Optional public URL path prefix; empty means the root installation. */
+  domainPath: string;
   /**
    * Development: the Vite dev server (web/), whose index.html the API serves
    * for browser page loads under /tenants and /ptv-connections.
@@ -87,6 +89,29 @@ export interface OidcGroupSyncConfig {
   claim: string;
   /** `OIDC_GROUP_PREFIX`, always ending in `/`: group names are `<prefix><tenant-slug>[/<role>]`. */
   prefix: string;
+}
+
+/** Normalize DOMAIN_PATH. Empty and "/" both mean a root installation. */
+export function normalizeDomainPath(value: string | undefined): string {
+  const path = value?.trim() ?? '';
+  if (path === '' || path === '/') return '';
+  if (
+    !path.startsWith('/') ||
+    path.startsWith('//') ||
+    /[?#\\\\\\s]/.test(path) ||
+    path.includes('//') ||
+    /%2f|%5c/i.test(path)
+  ) {
+    throw new Error('Invalid DOMAIN_PATH: use / or an absolute URL path such as /ptv-mcp');
+  }
+  const normalized = path.replace(/\\/+$/, '');
+  if (
+    normalized === '' ||
+    normalized.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new Error('Invalid DOMAIN_PATH: empty, dot and dot-dot path segments are not allowed');
+  }
+  return normalized;
 }
 
 function parseBoolean(name: string, value: string | undefined, fallback: boolean): boolean {
@@ -287,6 +312,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ptvV11OAuthClientSecret: env.PTV_V11_OAUTH_CLIENT_SECRET ?? '',
     ptvV11OAuthRedirectUri: env.PTV_V11_OAUTH_REDIRECT_URI ?? '',
     mcpPublicUrl: env.MCP_PUBLIC_URL ?? `http://localhost:${port}`,
+    domainPath: normalizeDomainPath(env.DOMAIN_PATH),
     webDevUrl: env.WEB_DEV_URL ?? 'http://127.0.0.1:5173',
     requireVerifiedEmail: parseBoolean('REQUIRE_VERIFIED_EMAIL', env.REQUIRE_VERIFIED_EMAIL, false),
     authMode,
