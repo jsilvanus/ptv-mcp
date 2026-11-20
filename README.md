@@ -77,9 +77,11 @@ the email + password form (password sign-in keeps working).
 | `OIDC_POST_LOGOUT_REDIRECT_URI` | Where the IdP returns the browser after sign-out (RP-initiated logout). Default `<MCP public URL>/login`; register it at the IdP. |
 | `AUTH_MODE` | `both` (default with OIDC) = password and SSO. `oidc` = SSO only (see below). `local` = password only; refused while `OIDC_ISSUER` is set. `oidc` and `both` require `OIDC_ISSUER`. |
 | `OIDC_BREAK_GLASS_EMAILS` | Comma-separated emails that keep password sign-in in `oidc` mode. Empty = no break-glass account. |
-| `OIDC_GROUP_SYNC` | `true` = groups from the IdP grant tenant roles at each SSO sign-in (see "Group sync" below). Default `false`. Needs `OIDC_ISSUER`. |
+| `OIDC_GROUP_SYNC` | `true` = groups from the IdP grant tenant roles at each SSO sign-in (see "Group sync" below). Default `false` (automatically enabled if `OIDC_GROUP_ROLE_MAP` is set). Needs `OIDC_ISSUER`. |
 | `OIDC_GROUPS_CLAIM` | The claim that lists the user's groups, read from the ID token or else from userinfo. Default `groups`. Used only with `OIDC_GROUP_SYNC=true`. |
-| `OIDC_GROUP_PREFIX` | Prefix of the groups that grant tenant roles; a trailing `/` is added if missing. Default `ptv/`. Used only with `OIDC_GROUP_SYNC=true`. |
+| `OIDC_GROUP_PREFIX` | Prefix of the groups hierarchy; leading `/` is stripped and a trailing `/` is added if missing. Default `parish/`. Matches the structure used by Tavaranpaikka. |
+| `OIDC_GROUP_APP` | Comma-separated list of application names recognized in `<prefix><tenant-slug>/<app>-<role>`. Default `ptv,ptv-mcp`. |
+| `OIDC_GROUP_ROLE_MAP` | Optional JSON string matching Tavaranpaikka's `OIDC_GROUP_ROLE_MAP` (e.g. `{"parish/riihimaki":"viewer","parish/riihimaki/ptv-publisher":"publisher"}` or multi-tenant format). |
 
 ### SSO-only mode (`AUTH_MODE=oidc`)
 
@@ -120,22 +122,34 @@ How an IdP identity finds its ptv-mcp account:
 ### Group sync (`OIDC_GROUP_SYNC=true`)
 
 With group sync on, the groups claim decides the tenant memberships that the
-IdP grants. It is checked at every SSO sign-in, for the account that
-signed in:
+IdP grants. It matches the structure used by Tavaranpaikka:
+`parish/<tenant-slug>[/<app>-<role>]`. It is checked at every SSO sign-in, for
+the account that signed in:
 
 | Group | Grants |
 | --- | --- |
-| `<prefix><tenant-slug>` | Viewer in that tenant |
-| `<prefix><tenant-slug>/viewer` | Viewer |
-| `<prefix><tenant-slug>/contributor` | Contributor |
-| `<prefix><tenant-slug>/approver` | Approver |
-| `<prefix><tenant-slug>/publisher` | Publisher |
+| `<prefix><tenant-slug>` (e.g. `parish/riihimaki`) | Viewer in that tenant |
+| `<prefix><tenant-slug>/<app>-viewer` | Viewer |
+| `<prefix><tenant-slug>/<app>-contributor` | Contributor |
+| `<prefix><tenant-slug>/<app>-approver` | Approver |
+| `<prefix><tenant-slug>/<app>-publisher` | Publisher |
+| `<prefix><tenant-slug>/<app>-admin` or `.../tenant_admin` | Administrator (`tenant_admin`) |
 
-For example, with the default prefix, the group `ptv/example-parish/publisher`
-grants Publisher in the tenant whose slug is `example-parish`. Several groups
-for one tenant give the highest role. Groups without the prefix are ignored,
-and so are unknown tenant slugs and malformed names. Groups never grant
-Tenant Admin: that role stays a manual decision.
+App identifiers `<app>` default to `ptv` and `ptv-mcp` (customizable via
+`OIDC_GROUP_APP`). Groups for other applications sharing the same parish tree
+(e.g. `parish/riihimaki/tavaranpaikka-keeper` or `tavaranpaikka-admin`) are
+silently ignored. Leading slashes (e.g. `/parish/riihimaki`) are normalized.
+
+For example, with the default prefix `parish/`, the group `parish/riihimaki/ptv-publisher`
+grants Publisher in the tenant whose slug is `riihimaki`. A bare `parish/riihimaki`
+grants Viewer. Several groups for one tenant give the highest role. Groups without
+the prefix are ignored, and so are unknown tenant slugs. Malformed names under
+the app namespace are reported as ignored and logged.
+
+Alternatively, explicit JSON mapping can be provided via `OIDC_GROUP_ROLE_MAP`,
+matching Tavaranpaikka's structure:
+`{"parish/riihimaki":"viewer","parish/riihimaki/ptv-publisher":"publisher","parish/riihimaki/ptv-admin":"tenant_admin"}`
+or multi-tenant `{"parish/riihimaki":{"org":"riihimaki","role":"viewer"}}`.
 
 - **Manual rows win.** A membership that a tenant admin set by hand (or
   changed in the UI) is never changed or removed by a group. Changing a role

@@ -87,8 +87,14 @@ export interface OidcConfig {
 export interface OidcGroupSyncConfig {
   /** `OIDC_GROUPS_CLAIM`: the claim (ID token, else userinfo) that lists the user's groups. */
   claim: string;
-  /** `OIDC_GROUP_PREFIX`, always ending in `/`: group names are `<prefix><tenant-slug>[/<role>]`. */
+  /** `OIDC_GROUP_PREFIX`, always ending in `/`: group names are `<prefix><tenant-slug>[/<app>-<role>]`. Default `'parish/'`. */
   prefix: string;
+  /** App names matched in `<prefix><tenant-slug>/<app>-<role>`. Defaults to `['ptv', 'ptv-mcp']`. */
+  apps?: string[];
+  /** Optional explicit group-to-role JSON mapping matching Tavaranpaikka's OIDC_GROUP_ROLE_MAP. */
+  groupRoleMap?: Record<string, string | { org?: string; role?: string }>;
+  /** Default tenant slug for simple groupRoleMap entries. */
+  defaultTenantSlug?: string;
 }
 
 /** Normalize DOMAIN_PATH. Empty and "/" both mean a root installation. */
@@ -194,16 +200,48 @@ export function loadOidcConfig(
   };
 }
 
-/** `OIDC_GROUP_SYNC` and its claim and prefix; undefined when off. */
+/** `OIDC_GROUP_SYNC` or `OIDC_GROUP_ROLE_MAP` and its claim and prefix; undefined when off. */
 function loadGroupSyncConfig(env: NodeJS.ProcessEnv): OidcGroupSyncConfig | undefined {
-  if (!parseBoolean('OIDC_GROUP_SYNC', env.OIDC_GROUP_SYNC, false)) return undefined;
+  const syncEnabled = parseBoolean('OIDC_GROUP_SYNC', env.OIDC_GROUP_SYNC, false);
+  const rawGroupRoleMap = env.OIDC_GROUP_ROLE_MAP?.trim();
+  let groupRoleMap: Record<string, string | { org?: string; role?: string }> | undefined;
+  if (rawGroupRoleMap) {
+    try {
+      groupRoleMap = JSON.parse(rawGroupRoleMap);
+      if (typeof groupRoleMap !== 'object' || groupRoleMap === null || Array.isArray(groupRoleMap)) {
+        throw new Error();
+      }
+    } catch {
+      throw new Error('Invalid OIDC_GROUP_ROLE_MAP: must be valid JSON object');
+    }
+  }
+
+  if (!syncEnabled && !groupRoleMap) return undefined;
+
   const claim = env.OIDC_GROUPS_CLAIM?.trim() || 'groups';
-  const rawPrefix = (env.OIDC_GROUP_PREFIX ?? '').trim() || 'ptv/';
+  const rawPrefix = (env.OIDC_GROUP_PREFIX ?? '').trim() || 'parish/';
   if (/\s/.test(rawPrefix)) {
     throw new Error('Invalid OIDC_GROUP_PREFIX: must not contain whitespace');
   }
-  const prefix = rawPrefix.endsWith('/') ? rawPrefix : `${rawPrefix}/`;
-  return { claim, prefix };
+  const prefix = rawPrefix.replace(/^\/+/, '').replace(/\/+$/, '') + '/';
+
+  const appsRaw = env.OIDC_GROUP_APP?.trim();
+  const apps = appsRaw
+    ? appsRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    : ['ptv', 'ptv-mcp'];
+
+  const defaultTenantSlug =
+    env.DEFAULT_TENANT_SLUG?.trim() ||
+    env.DEFAULT_ORGANIZATION_SLUG?.trim() ||
+    'riihimaki';
+
+  return {
+    claim,
+    prefix,
+    apps,
+    ...(groupRoleMap ? { groupRoleMap } : {}),
+    defaultTenantSlug,
+  };
 }
 
 /** `AUTH_MODE`. Throws when it conflicts with whether OIDC is configured. */

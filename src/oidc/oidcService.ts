@@ -259,7 +259,7 @@ export class OidcService {
     const sync = this.options.groupSync;
     if (!sync) return { ignored: [] };
 
-    const { grants, ignored } = parseGroupGrants(groups ?? [], sync.prefix);
+    const { grants, ignored } = parseGroupGrants(groups ?? [], sync);
     const slugs = [...grants.keys()];
     const tenantRows =
       slugs.length > 0

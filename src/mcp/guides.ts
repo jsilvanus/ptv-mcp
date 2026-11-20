@@ -79,7 +79,7 @@ export function readGuide(topic: GuideTopic): string {
   const cached = cache.get(topic);
   if (cached !== undefined) return cached;
   const raw = readFileSync(new URL(GUIDES[topic].file, repoRoot), 'utf8');
-  const text = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n+/, '');
+  const text = raw.replace(/^---[\s\S]*?---\s*/, '');
   cache.set(topic, text);
   return text;
 }

@@ -1,52 +1,191 @@
 /**
- * Maps the IdP's groups to tenant roles (`OIDC_GROUP_SYNC`, phase B of the
- * sign-in plan). A group named `<prefix><tenant-slug>` grants Viewer in that
- * tenant; `<prefix><tenant-slug>/<role>` grants the role. Tenant Admin is
- * never granted from a group: it stays a manual decision.
+ * Maps the IdP's groups to tenant roles (`OIDC_GROUP_SYNC`, matching the structure
+ * used by Tavaranpaikka: `parish/<tenant-slug>[/<app>-<role>]`).
+ *
+ * - A group named `<prefix><tenant-slug>` (e.g. `parish/riihimaki` or `/parish/riihimaki`)
+ *   grants Viewer in that tenant.
+ * - A group named `<prefix><tenant-slug>/<app>-<role>` (e.g. `parish/riihimaki/ptv-publisher`
+ *   or `parish/riihimaki/ptv-mcp-contributor`) grants the named role.
+ * - Role `admin` is accepted as an alias for `tenant_admin` (matching Tavaranpaikka's convention).
+ * - App-scoped groups for other applications (e.g. `parish/riihimaki/tavaranpaikka-keeper`)
+ *   are ignored silently.
+ * - Explicit mapping via `groupRoleMap` (matching Tavaranpaikka's `OIDC_GROUP_ROLE_MAP`)
+ *   is supported as well.
  *
  * Pure: the database side lives in `OidcService.syncGroupMemberships`.
  */
 
-/** The roles a group may grant, lowest first. */
-export const GROUP_ROLES = ['viewer', 'contributor', 'approver', 'publisher'] as const;
+import { ROLE_RANK } from '../auth/rbac.js';
+
+export const GROUP_ROLES = [
+  'viewer',
+  'contributor',
+  'approver',
+  'publisher',
+  'tenant_admin',
+] as const;
 export type GroupRole = (typeof GROUP_ROLES)[number];
 
 export interface GroupGrants {
   /** Tenant slug to the highest role its groups grant. */
   grants: Map<string, GroupRole>;
-  /** Groups under the prefix that name no grant (malformed, or a role a group may not grant). */
+  /** Groups under the prefix that name no grant (malformed, or unknown role for this app). */
   ignored: string[];
 }
 
-const GROUP_PATTERN = /^([^/]+)(?:\/([^/]+))?$/;
-
-function isGroupRole(value: string): value is GroupRole {
-  return (GROUP_ROLES as readonly string[]).includes(value);
+export interface GroupGrantsOptions {
+  prefix?: string;
+  apps?: readonly string[];
+  groupRoleMap?: Record<string, string | { org?: string; role?: string }>;
+  defaultTenantSlug?: string;
 }
 
-/** Groups outside the prefix are someone else's and are skipped silently. */
-export function parseGroupGrants(groups: readonly string[], prefix: string): GroupGrants {
-  const grants = new Map<string, GroupRole>();
-  const ignored: string[] = [];
-  for (const group of groups) {
-    if (!group.startsWith(prefix)) continue;
-    const match = GROUP_PATTERN.exec(group.slice(prefix.length));
-    const slug = match?.[1];
-    if (!match || !slug) {
-      ignored.push(group);
-      continue;
-    }
-    const suffix = match[2];
-    const role: string = suffix === undefined ? 'viewer' : suffix;
-    if (!isGroupRole(role)) {
-      ignored.push(group);
-      continue;
-    }
-    const current = grants.get(slug);
-    if (!current || GROUP_ROLES.indexOf(role) > GROUP_ROLES.indexOf(current)) {
-      grants.set(slug, role);
+export function normalizeRole(value: string): GroupRole | undefined {
+  const lower = value.trim().toLowerCase();
+  if (lower === 'admin') return 'tenant_admin';
+  if ((GROUP_ROLES as readonly string[]).includes(lower)) {
+    return lower as GroupRole;
+  }
+  return undefined;
+}
+
+export function parseGroupGrants(
+  groups: readonly string[],
+  prefixOrOptions: string | GroupGrantsOptions = 'parish/',
+): GroupGrants {
+  const options: GroupGrantsOptions =
+    typeof prefixOrOptions === 'string'
+      ? { prefix: prefixOrOptions }
+      : prefixOrOptions;
+
+  const rawPrefix = (options.prefix ?? 'parish/').trim();
+  const cleanPrefix = rawPrefix.replace(/^\/+/, '').replace(/\/+$/, '') + '/';
+
+  // Sort apps by length descending so longer prefixes match first (e.g. "ptv-mcp" before "ptv")
+  const rawApps = options.apps && options.apps.length > 0 ? options.apps : ['ptv', 'ptv-mcp'];
+  const apps = [...rawApps]
+    .map((a) => a.toLowerCase().trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  const defaultTenantSlug = options.defaultTenantSlug || 'riihimaki';
+
+  const normalizedMap = new Map<string, { org: string; role: GroupRole }>();
+  if (options.groupRoleMap) {
+    for (const [k, v] of Object.entries(options.groupRoleMap)) {
+      const cleanKey = k.replace(/^\/+/, '');
+      if (typeof v === 'string') {
+        const role = normalizeRole(v);
+        if (role) normalizedMap.set(cleanKey, { org: defaultTenantSlug, role });
+      } else if (v && typeof v === 'object' && v.role) {
+        const role = normalizeRole(v.role);
+        if (role) {
+          normalizedMap.set(cleanKey, { org: v.org || defaultTenantSlug, role });
+        }
+      }
     }
   }
+
+  const grants = new Map<string, GroupRole>();
+  const ignored: string[] = [];
+
+  for (const rawGroup of groups) {
+    if (typeof rawGroup !== 'string') continue;
+    const group = rawGroup.replace(/^\/+/, '');
+
+    // 1. Check explicit groupRoleMap first
+    if (normalizedMap.has(group)) {
+      const entry = normalizedMap.get(group)!;
+      const current = grants.get(entry.org);
+      if (!current || ROLE_RANK[entry.role] > ROLE_RANK[current]) {
+        grants.set(entry.org, entry.role);
+      }
+      continue;
+    }
+
+    // 2. Convention-based parsing: must start with prefix
+    if (!group.startsWith(cleanPrefix)) {
+      continue;
+    }
+
+    const remainder = group.slice(cleanPrefix.length);
+    if (!remainder) {
+      ignored.push(rawGroup);
+      continue;
+    }
+
+    const parts = remainder.split('/');
+    if (parts.length === 1) {
+      const slug = parts[0];
+      if (!slug) {
+        ignored.push(rawGroup);
+        continue;
+      }
+      const role: GroupRole = 'viewer';
+      const current = grants.get(slug);
+      if (!current || ROLE_RANK[role] > ROLE_RANK[current]) {
+        grants.set(slug, role);
+      }
+      continue;
+    }
+
+    if (parts.length === 2) {
+      const [slug, suffix] = parts;
+      if (!slug || !suffix) {
+        ignored.push(rawGroup);
+        continue;
+      }
+
+      // Check if suffix matches <app>-<role>
+      let matchedApp = false;
+      let matchedRole: GroupRole | undefined;
+
+      for (const app of apps) {
+        const appPrefix = `${app}-`;
+        if (suffix.toLowerCase().startsWith(appPrefix)) {
+          matchedApp = true;
+          const roleStr = suffix.slice(appPrefix.length);
+          matchedRole = normalizeRole(roleStr);
+          break;
+        }
+      }
+
+      if (matchedApp) {
+        if (matchedRole) {
+          const current = grants.get(slug);
+          if (!current || ROLE_RANK[matchedRole] > ROLE_RANK[current]) {
+            grants.set(slug, matchedRole);
+          }
+        } else {
+          // Group explicitly targeted this app, but named an invalid role
+          ignored.push(rawGroup);
+        }
+        continue;
+      }
+
+      // If suffix contains a hyphen, it's scoped to another app (e.g. tavaranpaikka-keeper):
+      // silently skip.
+      if (suffix.includes('-')) {
+        continue;
+      }
+
+      // Otherwise check if suffix directly names a role (for backwards compatibility with prefix "ptv/")
+      const directRole = normalizeRole(suffix);
+      if (directRole) {
+        const current = grants.get(slug);
+        if (!current || ROLE_RANK[directRole] > ROLE_RANK[current]) {
+          grants.set(slug, directRole);
+        }
+      } else {
+        ignored.push(rawGroup);
+      }
+      continue;
+    }
+
+    // More than 2 segments (e.g. parish/riihimaki/ptv/publisher or parish/a/b/c)
+    ignored.push(rawGroup);
+  }
+
   return { grants, ignored };
 }
 

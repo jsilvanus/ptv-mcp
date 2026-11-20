@@ -26,7 +26,7 @@ describe('OIDC group sync at sign-in', () => {
   const apps: FastifyInstance[] = [];
 
   function oidcConfig(
-    groupSync: OidcGroupSyncConfig | null = { claim: 'groups', prefix: 'ptv/' },
+    groupSync: OidcGroupSyncConfig | null = { claim: 'groups', prefix: 'parish/' },
   ): OidcConfig {
     return {
       issuer: idp.issuer,
@@ -122,7 +122,7 @@ describe('OIDC group sync at sign-in', () => {
     const instance = await app(oidcConfig());
     const a = await tenantSlug('grp-a');
     const b = await tenantSlug('grp-b');
-    const userId = await userWithGroups([`ptv/${a.slug}/publisher`, `ptv/${b.slug}`]);
+    const userId = await userWithGroups([`parish/${a.slug}/ptv-publisher`, `parish/${b.slug}`]);
 
     const response = await signIn(instance);
 
@@ -148,10 +148,10 @@ describe('OIDC group sync at sign-in', () => {
     const instance = await app(oidcConfig());
     const a = await tenantSlug('grp-c');
     const b = await tenantSlug('grp-d');
-    const userId = await userWithGroups([`ptv/${a.slug}/publisher`, `ptv/${b.slug}/approver`]);
+    const userId = await userWithGroups([`parish/${a.slug}/ptv-publisher`, `parish/${b.slug}/ptv-approver`]);
     await signIn(instance);
 
-    sendGroups([`ptv/${a.slug}/contributor`]);
+    sendGroups([`parish/${a.slug}/ptv-contributor`]);
     await signIn(instance);
 
     expect(await rowsFor(userId)).toEqual([
@@ -162,7 +162,7 @@ describe('OIDC group sync at sign-in', () => {
   it('removes every group-granted membership when the groups claim is absent', async () => {
     const instance = await app(oidcConfig());
     const a = await tenantSlug('grp-e');
-    const userId = await userWithGroups([`ptv/${a.slug}/viewer`]);
+    const userId = await userWithGroups([`parish/${a.slug}/ptv-viewer`]);
     await signIn(instance);
     expect(await rowsFor(userId)).toHaveLength(1);
 
@@ -176,7 +176,7 @@ describe('OIDC group sync at sign-in', () => {
     const instance = await app(oidcConfig());
     const a = await tenantSlug('grp-f');
     const b = await tenantSlug('grp-g');
-    const userId = await userWithGroups([`ptv/${a.slug}/publisher`]);
+    const userId = await userWithGroups([`parish/${a.slug}/ptv-publisher`]);
     await db.insert(memberships).values([
       { userId, tenantId: a.tenantId, role: 'contributor', source: 'manual' },
       { userId, tenantId: b.tenantId, role: 'tenant_admin', source: 'manual' },
@@ -194,25 +194,28 @@ describe('OIDC group sync at sign-in', () => {
     expect(rows).toHaveLength(2);
   });
 
-  it('never grants Tenant Admin from a group, and skips tenants that do not exist', async () => {
+  it('grants Tenant Admin from an admin group, and skips other apps and unknown tenants', async () => {
     const instance = await app(oidcConfig());
     const a = await tenantSlug('grp-h');
     const userId = await userWithGroups([
-      `ptv/${a.slug}/tenant_admin`,
-      'ptv/no-such-tenant/publisher',
+      `parish/${a.slug}/ptv-admin`,
+      `parish/${a.slug}/tavaranpaikka-keeper`,
+      'parish/no-such-tenant/ptv-publisher',
       'unrelated/group',
     ]);
 
     const response = await signIn(instance);
 
     expect(response.statusCode).toBe(302);
-    expect(await rowsFor(userId)).toEqual([]);
+    expect(await rowsFor(userId)).toEqual([
+      { tenantId: a.tenantId, role: 'tenant_admin', source: 'oidc' },
+    ]);
   });
 
   it('grants nothing when OIDC_GROUP_SYNC is off', async () => {
     const instance = await app(oidcConfig(null));
     const a = await tenantSlug('grp-i');
-    const userId = await userWithGroups([`ptv/${a.slug}/publisher`]);
+    const userId = await userWithGroups([`parish/${a.slug}/ptv-publisher`]);
 
     const response = await signIn(instance);
 
