@@ -4,20 +4,17 @@
 # - manual run (workflow_dispatch) only: deploy that image to the shared VPS, after an
 #   approval on the `production` environment. Pushes never deploy.
 #
-# Deploy flow: copy deploy/docker-compose.yml to DEPLOY_PATH, provision the app's
-# role and database on the shared Postgres (riksunsrk/infra), write a chmod 600 .env,
+# Deploy flow: copy deploy/docker-compose.yml to DEPLOY_PATH, write a chmod 600 .env,
 # pull, `up -d` (the one-shot `migrate` service runs first), then wait for the
 # container healthcheck and verify https://<DOMAIN><DOMAIN_PATH>/health.
 #
 # Required GitHub Environment `production` secrets:
 #   SSH_PRIVATE_KEY, GHCR_TOKEN (read:packages), DB_PASSWORD (app DB role password),
-#   DB_SUDO_PASSWORD (infra Postgres superuser password), MASTER_ENCRYPTION_KEY,
-#   JWT_SECRET (base64, >= 32 bytes decoded)
+#   MASTER_ENCRYPTION_KEY, JWT_SECRET (base64, >= 32 bytes decoded)
 # Optional production secrets: OIDC_CLIENT_SECRET, PTV_V11_OAUTH_CLIENT_SECRET
 #
 # Required `production` variables: VM_HOST, VM_USER, DEPLOY_PATH (app directory on
-# the VPS), DEPLOY_DB_PATH (riksunsrk/infra database directory), APP_NAME (use
-# ptv_mcp, which gives role ptv_mcp_user and database ptv_mcp_db; no hyphen), DOMAIN
+# the VPS), APP_NAME (use ptv_mcp, which gives role ptv_mcp_user and database ptv_mcp_db; no hyphen), DOMAIN
 # Optional `production` variables: DOMAIN_PATH (default `/`, or e.g. `/ptv-mcp`), VM_SSH_PORT (default 22), GHCR_USER (default the
 # triggering actor; must own GHCR_TOKEN), LOG_LEVEL, REQUIRE_VERIFIED_EMAIL,
 # PTV_V11_OAUTH_CLIENT_ID, PTV_V11_OAUTH_REDIRECT_URI, AUTH_MODE, OIDC_ISSUER,
@@ -103,24 +100,20 @@ jobs:
           target: ${{ vars.DEPLOY_PATH }}
           strip_components: 1
 
-      # Derived values only: base64 and URL-encoded forms of the passwords. Each is
-      # masked before it reaches GITHUB_ENV. The raw secrets never leave this step's env.
+      # Derived value only: URL-encoded form of the DB password, masked before it reaches
+      # GITHUB_ENV. The raw secret never leaves this step's env.
       - name: Prepare derived secrets
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_SUDO_PASSWORD: ${{ secrets.DB_SUDO_PASSWORD }}
         run: |
           node -e '
             const { appendFileSync } = require("node:fs");
             const pw = process.env.DB_PASSWORD;
-            const sudo = process.env.DB_SUDO_PASSWORD;
-            if (!pw || !sudo) {
-              console.error("DB_PASSWORD and DB_SUDO_PASSWORD secrets must be set");
+            if (!pw) {
+              console.error("DB_PASSWORD secret must be set");
               process.exit(1);
             }
             const values = {
-              DB_PASSWORD_B64: Buffer.from(pw).toString("base64"),
-              DB_SUDO_PASSWORD_B64: Buffer.from(sudo).toString("base64"),
               DB_PASSWORD_URLENC: encodeURIComponent(pw),
             };
             for (const [name, value] of Object.entries(values)) {
@@ -128,38 +121,6 @@ jobs:
               appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
             }
           '
-
-      - name: Provision app database and cluster role
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          DEPLOY_DB_PATH: ${{ vars.DEPLOY_DB_PATH }}
-          APP_NAME: ${{ vars.APP_NAME }}
-        with:
-          host: ${{ vars.VM_HOST }}
-          username: ${{ vars.VM_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.VM_SSH_PORT || 22 }}
-          envs: DEPLOY_DB_PATH,APP_NAME,DB_PASSWORD_B64,DB_SUDO_PASSWORD_B64
-          script: |
-            set -eu
-            DB_PW="$(printf '%s' "$DB_PASSWORD_B64" | base64 -d)"
-            DB_SUDO_PW="$(printf '%s' "$DB_SUDO_PASSWORD_B64" | base64 -d)"
-
-            # Per-app role and database on the shared Postgres (riksunsrk/infra; idempotent).
-            docker compose -f "$DEPLOY_DB_PATH/docker-compose.yml" exec -T postgres \
-              env APP_NAME="$APP_NAME" APP_PASSWORD="$DB_PW" PGUSER=postgres PGPASSWORD="$DB_SUDO_PW" \
-              sh /scripts/create-app-user.sh
-
-            # Cluster role the migrations GRANT to (idempotent; see scripts/bootstrap-roles.sql).
-            docker compose -f "$DEPLOY_DB_PATH/docker-compose.yml" exec -T postgres \
-              env PGPASSWORD="$DB_SUDO_PW" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-            DO $$
-            BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ptv_mcp_app') THEN
-                CREATE ROLE ptv_mcp_app NOLOGIN NOBYPASSRLS;
-              END IF;
-            END $$;
-            SQL
 
       - name: Write .env, pull image, start services
         uses: appleboy/ssh-action@v1.2.0
